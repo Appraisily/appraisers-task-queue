@@ -1,15 +1,26 @@
 const fetch = require('node-fetch');
+const jwt = require('jsonwebtoken');
 const { config } = require('../config');
 
 class TaskQueueService {
+  generateAuthToken() {
+    if (!config.JWT_SECRET) {
+      throw new Error('JWT secret not initialized');
+    }
+    return jwt.sign({ service: 'task-queue' }, config.JWT_SECRET, { expiresIn: '1h' });
+  }
+
   async processTask(id, appraisalValue, description) {
     try {
       console.log(`Processing task for appraisal ID ${id}`);
       
+      const token = this.generateAuthToken();
+      
       const response = await fetch(`${config.BACKEND_API_URL}/api/appraisals/${id}/complete-process`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           value: appraisalValue,
@@ -46,10 +57,13 @@ class TaskQueueService {
 
   async notifyFailure(taskData) {
     try {
+      const token = this.generateAuthToken();
+      
       const response = await fetch(`${config.BACKEND_API_URL}/api/notifications/task-failure`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           appraisalId: taskData.id,
