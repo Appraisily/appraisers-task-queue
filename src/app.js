@@ -6,7 +6,10 @@ const { initializeProcessor } = require('./processor');
 const app = express();
 
 const corsOptions = {
-  origin: 'https://appraisers-frontend-856401495068.us-central1.run.app',
+  origin: [
+    'https://appraisers-frontend-856401495068.us-central1.run.app',
+    'https://jazzy-lollipop-0a3217.netlify.app'
+  ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
