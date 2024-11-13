@@ -4,17 +4,28 @@ const taskQueueService = require('./services/taskQueueService');
 
 async function initializeProcessor() {
   try {
+    console.log('Initializing Pub/Sub processor...');
+    
     const pubsub = new PubSub({
       projectId: config.GOOGLE_CLOUD_PROJECT_ID,
     });
 
     const subscriptionName = 'appraisal-tasks-subscription';
+    console.log(`Connecting to Pub/Sub subscription: ${subscriptionName}`);
+    
     const subscription = pubsub.subscription(subscriptionName);
+
+    // Verify subscription exists
+    const [exists] = await subscription.exists();
+    if (!exists) {
+      throw new Error(`Subscription ${subscriptionName} does not exist`);
+    }
+    console.log(`Successfully connected to subscription: ${subscriptionName}`);
 
     const messageHandler = async (message) => {
       try {
         const data = JSON.parse(message.data.toString());
-        console.log('Message received:', data);
+        console.log('New message received:', { id: data.id, timestamp: new Date().toISOString() });
 
         const { id, appraisalValue, description } = data;
 
@@ -24,7 +35,7 @@ async function initializeProcessor() {
 
         await taskQueueService.processTask(id, appraisalValue, description);
         message.ack();
-        console.log(`Task processed and acknowledged: ${id}`);
+        console.log(`✓ Task processed and acknowledged: ${id}`);
       } catch (error) {
         console.error('Error processing message:', error);
         const taskData = {
@@ -34,15 +45,18 @@ async function initializeProcessor() {
         };
         await taskQueueService.handleFailedTask(taskData);
         message.ack(); // Acknowledge to prevent infinite retries
+        console.log(`✗ Task failed and moved to DLQ: ${taskData.id}`);
       }
     };
 
     subscription.on('message', messageHandler);
+    console.log('Message handler registered and listening for new messages...');
+
     subscription.on('error', (error) => {
       console.error('Pub/Sub subscription error:', error);
     });
 
-    console.log('Task Queue processor initialized successfully');
+    console.log('Task Queue processor initialized and actively listening for messages');
   } catch (error) {
     console.error('Error initializing processor:', error);
     throw error;
