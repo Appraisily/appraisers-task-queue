@@ -1,11 +1,9 @@
 const { PubSub } = require('@google-cloud/pubsub');
 const { config } = require('./config');
-const { initializeSheets } = require('./services/googleSheets');
-const appraisalService = require('./services/appraisalService');
+const taskQueueService = require('./services/taskQueueService');
 
 async function initializeProcessor() {
   try {
-    const sheets = await initializeSheets();
     const pubsub = new PubSub({
       projectId: config.GOOGLE_CLOUD_PROJECT_ID,
     });
@@ -21,16 +19,21 @@ async function initializeProcessor() {
         const { id, appraisalValue, description } = data;
 
         if (!id || !appraisalValue || !description) {
-          throw new Error('Incomplete data in message.');
+          throw new Error('Incomplete task data');
         }
 
-        await appraisalService.processAppraisal(id, appraisalValue, description);
+        await taskQueueService.processTask(id, appraisalValue, description);
         message.ack();
-        console.log(`Message processed and acknowledged: ${id}`);
+        console.log(`Task processed and acknowledged: ${id}`);
       } catch (error) {
         console.error('Error processing message:', error);
-        await publishToFailedTopic(message.data.toString());
-        message.ack();
+        const taskData = {
+          id: data?.id,
+          error: error.message,
+          originalMessage: message.data.toString()
+        };
+        await taskQueueService.handleFailedTask(taskData);
+        message.ack(); // Acknowledge to prevent infinite retries
       }
     };
 
@@ -43,26 +46,6 @@ async function initializeProcessor() {
   } catch (error) {
     console.error('Error initializing processor:', error);
     throw error;
-  }
-}
-
-async function publishToFailedTopic(messageData) {
-  try {
-    const pubsub = new PubSub({
-      projectId: config.GOOGLE_CLOUD_PROJECT_ID,
-    });
-    
-    const failedTopicName = 'appraisals-failed';
-    const failedTopic = pubsub.topic(failedTopicName);
-
-    const [exists] = await failedTopic.exists();
-    if (!exists) {
-      await failedTopic.create();
-    }
-
-    await failedTopic.publish(Buffer.from(messageData));
-  } catch (error) {
-    console.error('Error publishing to failed topic:', error);
   }
 }
 
