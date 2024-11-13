@@ -35,18 +35,40 @@ async function initializeProcessor() {
         ackDeadlineSeconds: 30,
         expirationPolicy: {
           ttl: null
+        },
+        retryPolicy: {
+          minimumBackoff: {
+            seconds: 10
+          },
+          maximumBackoff: {
+            seconds: 600
+          }
         }
       });
       console.log(`Subscription ${subscriptionName} created successfully`);
     }
-    console.log(`Successfully connected to subscription: ${subscriptionName}`);
+
+    // Get subscription metadata to verify settings
+    const [metadata] = await subscription.getMetadata();
+    console.log('Subscription metadata:', {
+      name: metadata.name,
+      topic: metadata.topic,
+      pushConfig: metadata.pushConfig,
+      ackDeadlineSeconds: metadata.ackDeadlineSeconds,
+      messageRetentionDuration: metadata.messageRetentionDuration,
+      expirationPolicy: metadata.expirationPolicy
+    });
 
     const messageHandler = async (message) => {
       let parsedData;
       
       try {
+        console.log('Raw message received:', message.id);
+        console.log('Message attributes:', message.attributes);
+        console.log('Message publish time:', message.publishTime);
+        
         parsedData = JSON.parse(message.data.toString());
-        console.log('New message received:', parsedData);
+        console.log('Parsed message data:', parsedData);
 
         if (!parsedData.id) {
           throw new Error('Missing required field: id');
@@ -80,20 +102,42 @@ async function initializeProcessor() {
 
     // Configure subscription settings
     subscription.on('message', messageHandler);
+    
+    // Enhanced error handling
     subscription.on('error', (error) => {
       console.error('Pub/Sub subscription error:', error);
+      // Attempt to reconnect on error
+      setTimeout(() => {
+        console.log('Attempting to reconnect to Pub/Sub...');
+        subscription.removeListener('message', messageHandler);
+        subscription.on('message', messageHandler);
+      }, 5000);
     });
 
     // Set up flow control to prevent overwhelming the service
     await subscription.setOptions({
       flowControl: {
         maxMessages: 100,
-        allowExcessMessages: false
+        allowExcessMessages: false,
+        maxExtension: 600
       }
     });
 
-    console.log('Message handler registered and listening for new messages...');
-    console.log('Task Queue processor initialized and actively listening for messages');
+    // Periodic health check
+    setInterval(async () => {
+      try {
+        const [isActive] = await subscription.exists();
+        console.log(`Subscription health check - Active: ${isActive}`);
+        if (!isActive) {
+          throw new Error('Subscription no longer active');
+        }
+      } catch (error) {
+        console.error('Subscription health check failed:', error);
+      }
+    }, 60000); // Check every minute
+
+    console.log('Message handler registered and actively listening for new messages');
+    console.log(`Subscription ${subscriptionName} is ready to process messages`);
   } catch (error) {
     console.error('Error initializing processor:', error);
     throw error;
