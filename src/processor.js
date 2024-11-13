@@ -10,15 +10,34 @@ async function initializeProcessor() {
       projectId: config.GOOGLE_CLOUD_PROJECT_ID,
     });
 
+    // Define subscription name
+    const topicName = 'appraisal-tasks';
     const subscriptionName = 'appraisal-tasks-subscription';
-    console.log(`Connecting to Pub/Sub subscription: ${subscriptionName}`);
-    
-    const subscription = pubsub.subscription(subscriptionName);
 
+    console.log(`Checking Pub/Sub topic: ${topicName}`);
+    const topic = pubsub.topic(topicName);
+    const [topicExists] = await topic.exists();
+    
+    if (!topicExists) {
+      console.error(`Topic ${topicName} does not exist!`);
+      throw new Error(`Topic ${topicName} not found`);
+    }
+    console.log(`Topic ${topicName} found`);
+
+    console.log(`Connecting to Pub/Sub subscription: ${subscriptionName}`);
+    const subscription = pubsub.subscription(subscriptionName);
+    
     // Verify subscription exists
     const [exists] = await subscription.exists();
     if (!exists) {
-      throw new Error(`Subscription ${subscriptionName} does not exist`);
+      console.log(`Subscription ${subscriptionName} does not exist, creating...`);
+      await topic.createSubscription(subscriptionName, {
+        ackDeadlineSeconds: 30,
+        expirationPolicy: {
+          ttl: null
+        }
+      });
+      console.log(`Subscription ${subscriptionName} created successfully`);
     }
     console.log(`Successfully connected to subscription: ${subscriptionName}`);
 
@@ -31,7 +50,7 @@ async function initializeProcessor() {
 
         const { id, appraisalValue, description } = parsedData;
 
-        if (!id || !appraisalValue || !description) {
+        if (!id) {
           throw new Error('Incomplete task data');
         }
 
@@ -56,13 +75,21 @@ async function initializeProcessor() {
       }
     };
 
+    // Configure subscription settings
     subscription.on('message', messageHandler);
-    console.log('Message handler registered and listening for new messages...');
-
     subscription.on('error', (error) => {
       console.error('Pub/Sub subscription error:', error);
     });
 
+    // Set up flow control to prevent overwhelming the service
+    await subscription.setOptions({
+      flowControl: {
+        maxMessages: 100,
+        allowExcessMessages: false
+      }
+    });
+
+    console.log('Message handler registered and listening for new messages...');
     console.log('Task Queue processor initialized and actively listening for messages');
   } catch (error) {
     console.error('Error initializing processor:', error);
