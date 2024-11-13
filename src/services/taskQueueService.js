@@ -18,7 +18,8 @@ class TaskQueueService {
       });
 
       if (!response.ok) {
-        throw new Error(`Backend API error: ${response.statusText}`);
+        const errorText = await response.text();
+        throw new Error(`Backend API error: ${response.statusText} - ${errorText}`);
       }
 
       console.log(`Task processed successfully for appraisal ID ${id}`);
@@ -30,6 +31,11 @@ class TaskQueueService {
   }
 
   async handleFailedTask(taskData) {
+    if (!taskData || !taskData.id) {
+      console.error('Invalid task data received:', taskData);
+      return;
+    }
+
     try {
       console.log(`Handling failed task for appraisal ID ${taskData.id}`);
       await this.notifyFailure(taskData);
@@ -40,7 +46,7 @@ class TaskQueueService {
 
   async notifyFailure(taskData) {
     try {
-      await fetch(`${config.BACKEND_API_URL}/api/notifications/task-failure`, {
+      const response = await fetch(`${config.BACKEND_API_URL}/api/notifications/task-failure`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -50,8 +56,14 @@ class TaskQueueService {
           error: taskData.error
         })
       });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Notification API error: ${response.statusText} - ${errorText}`);
+      }
     } catch (error) {
       console.error('Error notifying task failure:', error);
+      throw error;
     }
   }
 }

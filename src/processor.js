@@ -23,11 +23,13 @@ async function initializeProcessor() {
     console.log(`Successfully connected to subscription: ${subscriptionName}`);
 
     const messageHandler = async (message) => {
+      let parsedData;
+      
       try {
-        const data = JSON.parse(message.data.toString());
-        console.log('New message received:', { id: data.id, timestamp: new Date().toISOString() });
+        parsedData = JSON.parse(message.data.toString());
+        console.log('New message received:', { id: parsedData.id, timestamp: new Date().toISOString() });
 
-        const { id, appraisalValue, description } = data;
+        const { id, appraisalValue, description } = parsedData;
 
         if (!id || !appraisalValue || !description) {
           throw new Error('Incomplete task data');
@@ -38,14 +40,19 @@ async function initializeProcessor() {
         console.log(`✓ Task processed and acknowledged: ${id}`);
       } catch (error) {
         console.error('Error processing message:', error);
-        const taskData = {
-          id: data?.id,
-          error: error.message,
-          originalMessage: message.data.toString()
-        };
-        await taskQueueService.handleFailedTask(taskData);
+        
+        if (parsedData) {
+          await taskQueueService.handleFailedTask({
+            id: parsedData.id,
+            error: error.message,
+            originalMessage: message.data.toString()
+          });
+          console.log(`✗ Task failed and moved to DLQ: ${parsedData.id}`);
+        } else {
+          console.error('Failed to parse message data:', message.data.toString());
+        }
+        
         message.ack(); // Acknowledge to prevent infinite retries
-        console.log(`✗ Task failed and moved to DLQ: ${taskData.id}`);
       }
     };
 
