@@ -46,21 +46,24 @@ async function initializeProcessor() {
       
       try {
         parsedData = JSON.parse(message.data.toString());
-        console.log('New message received:', { id: parsedData.id, timestamp: new Date().toISOString() });
+        console.log('New message received:', parsedData);
 
-        const { id, appraisalValue, description } = parsedData;
-
-        if (!id) {
-          throw new Error('Incomplete task data');
+        if (!parsedData.id) {
+          throw new Error('Missing required field: id');
         }
 
-        await taskQueueService.processTask(id, appraisalValue, description);
+        await taskQueueService.processTask(
+          parsedData.id,
+          parsedData.appraisalValue,
+          parsedData.description
+        );
+        
         message.ack();
-        console.log(`✓ Task processed and acknowledged: ${id}`);
+        console.log(`✓ Task processed and acknowledged: ${parsedData.id}`);
       } catch (error) {
         console.error('Error processing message:', error);
         
-        if (parsedData) {
+        if (parsedData?.id) {
           await taskQueueService.handleFailedTask({
             id: parsedData.id,
             error: error.message,

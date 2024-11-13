@@ -8,11 +8,15 @@ class TaskQueueService {
       if (!config.JWT_SECRET) {
         throw new Error('JWT secret not initialized');
       }
-      const token = jwt.sign({ service: 'task-queue' }, config.JWT_SECRET, { expiresIn: '1h' });
-      console.log('JWT token generated successfully');
+      const token = jwt.sign(
+        { role: 'worker' }, // Required role for worker authentication
+        config.JWT_SECRET,
+        { expiresIn: '1h' }
+      );
+      console.log('Worker JWT token generated successfully');
       return token;
     } catch (error) {
-      console.error('Failed to generate JWT token:', error);
+      console.error('Failed to generate worker JWT token:', error);
       throw error;
     }
   }
@@ -23,7 +27,7 @@ class TaskQueueService {
       console.log('Task data:', { id, appraisalValue, description });
       
       const token = this.generateAuthToken();
-      console.log('Authorization token generated');
+      console.log('Worker authorization token generated');
       
       const url = `${config.BACKEND_API_URL}/api/appraisals/${id}/complete-process`;
       console.log('Making request to:', url);
@@ -35,19 +39,19 @@ class TaskQueueService {
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          value: appraisalValue,
-          description: description
+          appraisalValue,
+          description
         })
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
+        const errorData = await response.json();
         console.error('Backend response error:', {
           status: response.status,
           statusText: response.statusText,
-          body: errorText
+          error: errorData
         });
-        throw new Error(`Backend API error: ${response.statusText} - ${errorText}`);
+        throw new Error(`Backend API error: ${response.statusText} - ${JSON.stringify(errorData)}`);
       }
 
       const result = await response.json();
@@ -76,7 +80,7 @@ class TaskQueueService {
   async notifyFailure(taskData) {
     try {
       const token = this.generateAuthToken();
-      console.log('Notifying task failure with token');
+      console.log('Notifying task failure with worker token');
       
       const response = await fetch(`${config.BACKEND_API_URL}/api/notifications/task-failure`, {
         method: 'POST',
@@ -91,13 +95,13 @@ class TaskQueueService {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
+        const errorData = await response.json();
         console.error('Notification error response:', {
           status: response.status,
           statusText: response.statusText,
-          body: errorText
+          error: errorData
         });
-        throw new Error(`Notification API error: ${response.statusText} - ${errorText}`);
+        throw new Error(`Notification API error: ${response.statusText} - ${JSON.stringify(errorData)}`);
       }
 
       console.log('Task failure notification sent successfully');
