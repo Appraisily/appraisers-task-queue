@@ -6,12 +6,10 @@ class TaskQueueService {
     try {
       console.log(`Processing task for appraisal ID ${id}`);
       
-      // Call appraisers-backend to process the appraisal
       const response = await fetch(`${config.BACKEND_API_URL}/api/appraisals/${id}/complete-process`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${config.API_KEY}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           value: appraisalValue,
@@ -34,20 +32,10 @@ class TaskQueueService {
   async handleFailedTask(taskData) {
     try {
       console.log(`Handling failed task for appraisal ID ${taskData.id}`);
-      
-      // Send to DLQ and notify monitoring system
-      await this.publishToDLQ(taskData);
       await this.notifyFailure(taskData);
     } catch (error) {
       console.error('Error handling failed task:', error);
-      throw error;
     }
-  }
-
-  async publishToDLQ(taskData) {
-    // Implementation for publishing to Dead Letter Queue
-    // This will be handled by the PubSub configuration
-    console.log(`Task sent to DLQ: ${JSON.stringify(taskData)}`);
   }
 
   async notifyFailure(taskData) {
@@ -55,8 +43,7 @@ class TaskQueueService {
       await fetch(`${config.BACKEND_API_URL}/api/notifications/task-failure`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${config.API_KEY}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           appraisalId: taskData.id,
