@@ -62,7 +62,7 @@ class TaskQueueService {
       // Check if response is JSON
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) {
-        throw new Error(`Invalid response type: ${contentType}`);
+        throw new Error(`Invalid response type: ${contentType}. Expected application/json`);
       }
 
       const responseData = await response.json();
@@ -96,6 +96,7 @@ class TaskQueueService {
       console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       console.error(`Appraisal ID: ${id}`);
       console.error('Error:', error.message);
+      console.error('Stack:', error.stack);
       console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
       throw error;
     }

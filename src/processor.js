@@ -45,6 +45,7 @@ async function initializeProcessor() {
 
     messageHandler = async (message) => {
       let parsedData;
+      let taskData;
       
       try {
         console.log('Raw message received:', message.id);
@@ -54,35 +55,46 @@ async function initializeProcessor() {
         parsedData = JSON.parse(message.data.toString());
         console.log('Parsed message data:', parsedData);
 
-        if (!parsedData.id || !parsedData.appraisalValue || !parsedData.description) {
-          throw new Error('Missing required fields: id, appraisalValue, or description');
+        // Extract task data from the message
+        if (parsedData.type === 'COMPLETE_APPRAISAL' && parsedData.data) {
+          taskData = {
+            id: parsedData.data.id,
+            appraisalValue: parsedData.data.appraisalValue,
+            description: parsedData.data.description
+          };
+        } else {
+          throw new Error('Invalid message type or missing data property');
+        }
+
+        if (!taskData.id || !taskData.appraisalValue || !taskData.description) {
+          throw new Error('Missing required fields in data: id, appraisalValue, or description');
         }
 
         await taskQueueService.processTask(
-          parsedData.id,
-          parsedData.appraisalValue,
-          parsedData.description,
+          taskData.id,
+          taskData.appraisalValue,
+          taskData.description,
           message.id
         );
         
         message.ack();
-        console.log(`✓ Task processed and acknowledged: ${parsedData.id}`);
+        console.log(`✓ Task processed and acknowledged: ${taskData.id}`);
       } catch (error) {
         console.error('Error processing message:', error);
         
         try {
-          if (parsedData?.id) {
+          if (taskData?.id || (parsedData?.data?.id)) {
             // Publish to failed tasks topic
             const failedTopic = pubsub.topic(failedTopicName);
             const failedMessage = {
-              id: parsedData.id,
+              id: taskData?.id || parsedData?.data?.id,
               originalMessage: message.data.toString(),
               error: error.message,
               timestamp: new Date().toISOString()
             };
             
             await failedTopic.publish(Buffer.from(JSON.stringify(failedMessage)));
-            console.log(`Message moved to failed topic: ${parsedData.id}`);
+            console.log(`Message moved to failed topic: ${taskData?.id || parsedData?.data?.id}`);
           } else {
             console.error('Failed to parse message data:', message.data.toString());
           }
