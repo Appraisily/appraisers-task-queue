@@ -10,7 +10,6 @@ async function initializeProcessor() {
       projectId: config.GOOGLE_CLOUD_PROJECT_ID,
     });
 
-    // Define subscription name
     const topicName = 'appraisal-tasks';
     const subscriptionName = 'appraisal-tasks-subscription';
 
@@ -27,37 +26,12 @@ async function initializeProcessor() {
     console.log(`Connecting to Pub/Sub subscription: ${subscriptionName}`);
     const subscription = pubsub.subscription(subscriptionName);
     
-    // Verify subscription exists
     const [exists] = await subscription.exists();
     if (!exists) {
       console.log(`Subscription ${subscriptionName} does not exist, creating...`);
-      await topic.createSubscription(subscriptionName, {
-        ackDeadlineSeconds: 30,
-        expirationPolicy: {
-          ttl: null
-        },
-        retryPolicy: {
-          minimumBackoff: {
-            seconds: 10
-          },
-          maximumBackoff: {
-            seconds: 600
-          }
-        }
-      });
+      await topic.createSubscription(subscriptionName);
       console.log(`Subscription ${subscriptionName} created successfully`);
     }
-
-    // Get subscription metadata to verify settings
-    const [metadata] = await subscription.getMetadata();
-    console.log('Subscription metadata:', {
-      name: metadata.name,
-      topic: metadata.topic,
-      pushConfig: metadata.pushConfig,
-      ackDeadlineSeconds: metadata.ackDeadlineSeconds,
-      messageRetentionDuration: metadata.messageRetentionDuration,
-      expirationPolicy: metadata.expirationPolicy
-    });
 
     const messageHandler = async (message) => {
       let parsedData;
@@ -70,15 +44,15 @@ async function initializeProcessor() {
         parsedData = JSON.parse(message.data.toString());
         console.log('Parsed message data:', parsedData);
 
-        if (!parsedData.id) {
-          throw new Error('Missing required field: id');
+        if (!parsedData.id || !parsedData.appraisalValue || !parsedData.description) {
+          throw new Error('Missing required fields: id, appraisalValue, or description');
         }
 
         await taskQueueService.processTask(
           parsedData.id,
           parsedData.appraisalValue,
           parsedData.description,
-          message.id // Pass the message ID to track processed messages
+          message.id
         );
         
         message.ack();
@@ -92,7 +66,6 @@ async function initializeProcessor() {
             error: error.message,
             originalMessage: message.data.toString()
           });
-          console.log(`✗ Task failed and moved to DLQ: ${parsedData.id}`);
         } else {
           console.error('Failed to parse message data:', message.data.toString());
         }
@@ -101,41 +74,16 @@ async function initializeProcessor() {
       }
     };
 
-    // Configure subscription settings
     subscription.on('message', messageHandler);
     
-    // Enhanced error handling
     subscription.on('error', (error) => {
       console.error('Pub/Sub subscription error:', error);
-      // Attempt to reconnect on error
       setTimeout(() => {
         console.log('Attempting to reconnect to Pub/Sub...');
         subscription.removeListener('message', messageHandler);
         subscription.on('message', messageHandler);
       }, 5000);
     });
-
-    // Set up flow control to prevent overwhelming the service
-    await subscription.setOptions({
-      flowControl: {
-        maxMessages: 100,
-        allowExcessMessages: false,
-        maxExtension: 600
-      }
-    });
-
-    // Periodic health check
-    setInterval(async () => {
-      try {
-        const [isActive] = await subscription.exists();
-        console.log(`Subscription health check - Active: ${isActive}`);
-        if (!isActive) {
-          throw new Error('Subscription no longer active');
-        }
-      } catch (error) {
-        console.error('Subscription health check failed:', error);
-      }
-    }, 60000); // Check every minute
 
     console.log('Message handler registered and actively listening for new messages');
     console.log(`Subscription ${subscriptionName} is ready to process messages`);

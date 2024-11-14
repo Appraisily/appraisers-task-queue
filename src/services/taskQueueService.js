@@ -54,18 +54,18 @@ class TaskQueueService {
         })
       });
 
+      const responseData = await response.json();
+
       if (!response.ok) {
-        const errorData = await response.json();
         console.error('Backend response error:', {
           status: response.status,
           statusText: response.statusText,
-          error: errorData
+          error: responseData
         });
-        throw new Error(`Backend API error: ${response.statusText} - ${JSON.stringify(errorData)}`);
+        throw new Error(`Backend API error: ${response.statusText} - ${JSON.stringify(responseData)}`);
       }
 
-      const result = await response.json();
-      console.log(`Task processed successfully for appraisal ID ${id}`, result);
+      console.log(`Task processed successfully for appraisal ID ${id}`, responseData);
       
       // Add message ID to processed set after successful processing
       this.processedMessageIds.add(messageId);
@@ -76,7 +76,7 @@ class TaskQueueService {
         idsToRemove.forEach(id => this.processedMessageIds.delete(id));
       }
 
-      return result;
+      return responseData;
     } catch (error) {
       console.error(`Error processing task for appraisal ${id}:`, error);
       throw error;
@@ -92,6 +92,7 @@ class TaskQueueService {
     try {
       console.log(`Handling failed task for appraisal ID ${taskData.id}`);
       await this.notifyFailure(taskData);
+      console.log(`✗ Task failed and moved to DLQ: ${taskData.id}`);
     } catch (error) {
       console.error('Error handling failed task:', error);
     }
@@ -114,14 +115,15 @@ class TaskQueueService {
         })
       });
 
+      const responseData = await response.json();
+
       if (!response.ok) {
-        const errorData = await response.json();
         console.error('Notification error response:', {
           status: response.status,
           statusText: response.statusText,
-          error: errorData
+          error: responseData
         });
-        throw new Error(`Notification API error: ${response.statusText} - ${JSON.stringify(errorData)}`);
+        throw new Error(`Notification API error: ${response.statusText} - ${JSON.stringify(responseData)}`);
       }
 
       console.log('Task failure notification sent successfully');
