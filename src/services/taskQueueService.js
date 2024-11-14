@@ -17,7 +17,6 @@ class TaskQueueService {
         config.JWT_SECRET,
         { expiresIn: '1h' }
       );
-      console.log('Worker JWT token generated successfully');
       return token;
     } catch (error) {
       console.error('Failed to generate worker JWT token:', error);
@@ -28,19 +27,24 @@ class TaskQueueService {
   async processTask(id, appraisalValue, description, messageId) {
     // Skip if we've already processed this message
     if (this.processedMessageIds.has(messageId)) {
-      console.log(`Skipping already processed message: ${messageId}`);
+      console.log(`📝 Skipping duplicate message ID: ${messageId}`);
       return;
     }
 
     try {
-      console.log(`Processing task for appraisal ID ${id}`);
-      console.log('Task data:', { id, appraisalValue, description });
+      console.log('\n🔔 NEW MESSAGE RECEIVED');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('📨 Message ID:', messageId);
+      console.log('📋 Task Details:');
+      console.log(`   • Appraisal ID: ${id}`);
+      console.log(`   • Value: ${appraisalValue}`);
+      console.log(`   • Description: ${description}`);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       
       const token = this.generateAuthToken();
-      console.log('Worker authorization token generated');
       
       const url = `${config.BACKEND_API_URL}/api/appraisals/process-worker`;
-      console.log('Making request to:', url);
+      console.log('🌐 Sending request to:', url);
 
       const response = await fetch(url, {
         method: 'POST',
@@ -58,15 +62,18 @@ class TaskQueueService {
       const responseData = await response.json();
 
       if (!response.ok || !responseData.success) {
-        console.error('Backend response error:', {
-          status: response.status,
-          statusText: response.statusText,
-          error: responseData
-        });
+        console.error('\n❌ Backend Response Error:');
+        console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.error(`Status: ${response.status} (${response.statusText})`);
+        console.error('Error:', responseData);
+        console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
         throw new Error(responseData.message || `Backend API error: ${response.statusText}`);
       }
 
-      console.log(`Task processed successfully for appraisal ID ${id}`, responseData);
+      console.log('\n✅ Task Processed Successfully');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('Response:', responseData);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
       
       // Add message ID to processed set after successful processing
       this.processedMessageIds.add(messageId);
@@ -79,30 +86,33 @@ class TaskQueueService {
 
       return responseData;
     } catch (error) {
-      console.error(`Error processing task for appraisal ${id}:`, error);
+      console.error('\n❌ Task Processing Error:');
+      console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.error(`Appraisal ID: ${id}`);
+      console.error('Error:', error.message);
+      console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
       throw error;
     }
   }
 
   async handleFailedTask(taskData) {
     if (!taskData || !taskData.id) {
-      console.error('Invalid task data received:', taskData);
+      console.error('❌ Invalid task data received:', taskData);
       return;
     }
 
     try {
-      console.log(`Handling failed task for appraisal ID ${taskData.id}`);
+      console.log(`⚠️ Handling failed task for appraisal ID ${taskData.id}`);
       await this.notifyFailure(taskData);
-      console.log(`✗ Task failed and moved to DLQ: ${taskData.id}`);
+      console.log(`📤 Task moved to DLQ: ${taskData.id}`);
     } catch (error) {
-      console.error('Error handling failed task:', error);
+      console.error('❌ Error handling failed task:', error);
     }
   }
 
   async notifyFailure(taskData) {
     try {
       const token = this.generateAuthToken();
-      console.log('Notifying task failure with worker token');
       
       const response = await fetch(`${config.BACKEND_API_URL}/api/notifications/task-failure`, {
         method: 'POST',
@@ -119,17 +129,17 @@ class TaskQueueService {
       const responseData = await response.json();
 
       if (!response.ok) {
-        console.error('Notification error response:', {
-          status: response.status,
-          statusText: response.statusText,
-          error: responseData
-        });
-        throw new Error(`Notification API error: ${response.statusText} - ${JSON.stringify(responseData)}`);
+        console.error('\n❌ Notification Error:');
+        console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.error(`Status: ${response.status} (${response.statusText})`);
+        console.error('Error:', responseData);
+        console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+        throw new Error(`Notification API error: ${response.statusText}`);
       }
 
-      console.log('Task failure notification sent successfully');
+      console.log('✅ Task failure notification sent successfully');
     } catch (error) {
-      console.error('Error notifying task failure:', error);
+      console.error('❌ Error notifying task failure:', error);
       throw error;
     }
   }
