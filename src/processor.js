@@ -19,6 +19,7 @@ async function initializeProcessor() {
     
     console.log(`Checking Pub/Sub topics...`);
     const topic = pubsub.topic(topicName);
+    const failedTopic = pubsub.topic(failedTopicName);
     const [topicExists] = await topic.exists();
     
     if (!topicExists) {
@@ -83,32 +84,30 @@ async function initializeProcessor() {
         console.error('Error processing message:', error);
         
         try {
-          if (taskData?.id || (parsedData?.data?.id)) {
-            // Publish to failed tasks topic
-            const failedTopic = pubsub.topic(failedTopicName);
-            const failedMessage = {
-              id: taskData?.id || parsedData?.data?.id,
-              originalMessage: message.data.toString(),
-              error: error.message,
-              timestamp: new Date().toISOString()
-            };
-            
-            await failedTopic.publish(Buffer.from(JSON.stringify(failedMessage)));
-            console.log(`Message moved to failed topic: ${taskData?.id || parsedData?.data?.id}`);
-          } else {
-            console.error('Failed to parse message data:', message.data.toString());
-          }
+          // Always move failed messages to the error topic
+          const failedMessage = {
+            id: taskData?.id || parsedData?.data?.id || 'unknown',
+            originalMessage: message.data.toString(),
+            error: error.message,
+            timestamp: new Date().toISOString()
+          };
+          
+          await failedTopic.publish(Buffer.from(JSON.stringify(failedMessage)));
+          console.log(`Message moved to failed topic: ${failedMessage.id}`);
+          
+          // Always acknowledge the message to prevent it from blocking the queue
+          message.ack();
+          console.log('Failed message acknowledged and moved to error topic');
         } catch (pubsubError) {
           console.error('Error publishing to failed topic:', pubsubError);
+          // Still acknowledge the message even if publishing to failed topic fails
+          message.ack();
+          console.log('Message acknowledged despite error publishing to failed topic');
         }
-        
-        // Always acknowledge the original message to prevent infinite retries
-        message.ack();
-        console.log('Original message acknowledged after failure');
       }
     };
 
-    // Configure subscription settings
+    // Configure subscription settings with error handling
     subscription.setOptions({
       flowControl: {
         maxMessages: 1,
@@ -116,6 +115,7 @@ async function initializeProcessor() {
       }
     });
     
+    // Add error handler for subscription
     subscription.on('error', async (error) => {
       console.error('Pub/Sub subscription error:', error);
       await reconnectSubscription();
