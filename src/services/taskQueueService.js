@@ -59,6 +59,12 @@ class TaskQueueService {
         })
       });
 
+      // Check if response is JSON
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error(`Invalid response type: ${contentType}`);
+      }
+
       const responseData = await response.json();
 
       if (!response.ok || !responseData.success) {
@@ -91,55 +97,6 @@ class TaskQueueService {
       console.error(`Appraisal ID: ${id}`);
       console.error('Error:', error.message);
       console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-      throw error;
-    }
-  }
-
-  async handleFailedTask(taskData) {
-    if (!taskData || !taskData.id) {
-      console.error('❌ Invalid task data received:', taskData);
-      return;
-    }
-
-    try {
-      console.log(`⚠️ Handling failed task for appraisal ID ${taskData.id}`);
-      await this.notifyFailure(taskData);
-      console.log(`📤 Task moved to DLQ: ${taskData.id}`);
-    } catch (error) {
-      console.error('❌ Error handling failed task:', error);
-    }
-  }
-
-  async notifyFailure(taskData) {
-    try {
-      const token = this.generateAuthToken();
-      
-      const response = await fetch(`${config.BACKEND_API_URL}/api/notifications/task-failure`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          appraisalId: taskData.id,
-          error: taskData.error
-        })
-      });
-
-      const responseData = await response.json();
-
-      if (!response.ok) {
-        console.error('\n❌ Notification Error:');
-        console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.error(`Status: ${response.status} (${response.statusText})`);
-        console.error('Error:', responseData);
-        console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-        throw new Error(`Notification API error: ${response.statusText}`);
-      }
-
-      console.log('✅ Task failure notification sent successfully');
-    } catch (error) {
-      console.error('❌ Error notifying task failure:', error);
       throw error;
     }
   }

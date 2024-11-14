@@ -4,19 +4,20 @@ const taskQueueService = require('./services/taskQueueService');
 
 let subscription;
 let messageHandler;
+let pubsub;
 
 async function initializeProcessor() {
   try {
     console.log('Initializing Pub/Sub processor...');
     
-    const pubsub = new PubSub({
+    pubsub = new PubSub({
       projectId: config.GOOGLE_CLOUD_PROJECT_ID,
     });
 
     const topicName = 'appraisal-tasks';
-    const subscriptionName = 'appraisal-tasks-subscription';
-
-    console.log(`Checking Pub/Sub topic: ${topicName}`);
+    const failedTopicName = 'appraisals-failed';
+    
+    console.log(`Checking Pub/Sub topics...`);
     const topic = pubsub.topic(topicName);
     const [topicExists] = await topic.exists();
     
@@ -26,14 +27,14 @@ async function initializeProcessor() {
     }
     console.log(`Topic ${topicName} found`);
 
-    console.log(`Connecting to Pub/Sub subscription: ${subscriptionName}`);
-    subscription = topic.subscription(subscriptionName);
+    console.log(`Connecting to Pub/Sub subscription...`);
+    subscription = topic.subscription('appraisal-tasks-subscription');
     
     const [exists] = await subscription.exists();
     if (!exists) {
-      console.log(`Subscription ${subscriptionName} does not exist, creating...`);
-      await topic.createSubscription(subscriptionName);
-      console.log(`Subscription ${subscriptionName} created successfully`);
+      console.log(`Subscription does not exist, creating...`);
+      await topic.createSubscription('appraisal-tasks-subscription');
+      console.log(`Subscription created successfully`);
     }
 
     // Close existing subscription if it exists
@@ -69,24 +70,33 @@ async function initializeProcessor() {
       } catch (error) {
         console.error('Error processing message:', error);
         
-        if (parsedData?.id) {
-          await taskQueueService.handleFailedTask({
-            id: parsedData.id,
-            error: error.message,
-            originalMessage: message.data.toString()
-          });
-        } else {
-          console.error('Failed to parse message data:', message.data.toString());
+        try {
+          if (parsedData?.id) {
+            // Publish to failed tasks topic
+            const failedTopic = pubsub.topic(failedTopicName);
+            const failedMessage = {
+              id: parsedData.id,
+              originalMessage: message.data.toString(),
+              error: error.message,
+              timestamp: new Date().toISOString()
+            };
+            
+            await failedTopic.publish(Buffer.from(JSON.stringify(failedMessage)));
+            console.log(`Message moved to failed topic: ${parsedData.id}`);
+          } else {
+            console.error('Failed to parse message data:', message.data.toString());
+          }
+        } catch (pubsubError) {
+          console.error('Error publishing to failed topic:', pubsubError);
         }
         
-        message.ack(); // Acknowledge to prevent infinite retries
+        // Always acknowledge the original message to prevent infinite retries
+        message.ack();
+        console.log('Original message acknowledged after failure');
       }
     };
 
     // Configure subscription settings
-    subscription.on('message', messageHandler);
-    
-    // Enable flow control to prevent overwhelming the worker
     subscription.setOptions({
       flowControl: {
         maxMessages: 1,
@@ -96,12 +106,13 @@ async function initializeProcessor() {
     
     subscription.on('error', async (error) => {
       console.error('Pub/Sub subscription error:', error);
-      // Attempt to reconnect
       await reconnectSubscription();
     });
 
+    subscription.on('message', messageHandler);
+    
     console.log('Message handler registered and actively listening for new messages');
-    console.log(`Subscription ${subscriptionName} is ready to process messages`);
+    console.log(`Subscription is ready to process messages`);
   } catch (error) {
     console.error('Error initializing processor:', error);
     throw error;
