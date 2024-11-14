@@ -39,7 +39,7 @@ class TaskQueueService {
       const token = this.generateAuthToken();
       console.log('Worker authorization token generated');
       
-      const url = `${config.BACKEND_API_URL}/api/appraisals/${id}/complete-process`;
+      const url = `${config.BACKEND_API_URL}/api/appraisals/process-worker`;
       console.log('Making request to:', url);
 
       const response = await fetch(url, {
@@ -49,6 +49,7 @@ class TaskQueueService {
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
+          id,
           appraisalValue,
           description
         })
@@ -56,13 +57,13 @@ class TaskQueueService {
 
       const responseData = await response.json();
 
-      if (!response.ok) {
+      if (!response.ok || !responseData.success) {
         console.error('Backend response error:', {
           status: response.status,
           statusText: response.statusText,
           error: responseData
         });
-        throw new Error(`Backend API error: ${response.statusText} - ${JSON.stringify(responseData)}`);
+        throw new Error(responseData.message || `Backend API error: ${response.statusText}`);
       }
 
       console.log(`Task processed successfully for appraisal ID ${id}`, responseData);
