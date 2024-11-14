@@ -77,7 +77,8 @@ async function initializeProcessor() {
         await taskQueueService.processTask(
           parsedData.id,
           parsedData.appraisalValue,
-          parsedData.description
+          parsedData.description,
+          message.id // Pass the message ID to track processed messages
         );
         
         message.ack();

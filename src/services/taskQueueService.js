@@ -3,13 +3,17 @@ const jwt = require('jsonwebtoken');
 const { config } = require('../config');
 
 class TaskQueueService {
+  constructor() {
+    this.processedMessageIds = new Set();
+  }
+
   generateAuthToken() {
     try {
       if (!config.JWT_SECRET) {
         throw new Error('JWT secret not initialized');
       }
       const token = jwt.sign(
-        { role: 'worker' }, // Required role for worker authentication
+        { role: 'worker' },
         config.JWT_SECRET,
         { expiresIn: '1h' }
       );
@@ -21,7 +25,13 @@ class TaskQueueService {
     }
   }
 
-  async processTask(id, appraisalValue, description) {
+  async processTask(id, appraisalValue, description, messageId) {
+    // Skip if we've already processed this message
+    if (this.processedMessageIds.has(messageId)) {
+      console.log(`Skipping already processed message: ${messageId}`);
+      return;
+    }
+
     try {
       console.log(`Processing task for appraisal ID ${id}`);
       console.log('Task data:', { id, appraisalValue, description });
@@ -56,6 +66,16 @@ class TaskQueueService {
 
       const result = await response.json();
       console.log(`Task processed successfully for appraisal ID ${id}`, result);
+      
+      // Add message ID to processed set after successful processing
+      this.processedMessageIds.add(messageId);
+      
+      // Cleanup old message IDs (keep last 1000)
+      if (this.processedMessageIds.size > 1000) {
+        const idsToRemove = Array.from(this.processedMessageIds).slice(0, this.processedMessageIds.size - 1000);
+        idsToRemove.forEach(id => this.processedMessageIds.delete(id));
+      }
+
       return result;
     } catch (error) {
       console.error(`Error processing task for appraisal ${id}:`, error);
