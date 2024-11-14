@@ -2,6 +2,9 @@ const { PubSub } = require('@google-cloud/pubsub');
 const { config } = require('./config');
 const taskQueueService = require('./services/taskQueueService');
 
+let subscription;
+let messageHandler;
+
 async function initializeProcessor() {
   try {
     console.log('Initializing Pub/Sub processor...');
@@ -24,7 +27,7 @@ async function initializeProcessor() {
     console.log(`Topic ${topicName} found`);
 
     console.log(`Connecting to Pub/Sub subscription: ${subscriptionName}`);
-    const subscription = pubsub.subscription(subscriptionName);
+    subscription = topic.subscription(subscriptionName);
     
     const [exists] = await subscription.exists();
     if (!exists) {
@@ -33,7 +36,13 @@ async function initializeProcessor() {
       console.log(`Subscription ${subscriptionName} created successfully`);
     }
 
-    const messageHandler = async (message) => {
+    // Close existing subscription if it exists
+    if (messageHandler) {
+      console.log('Closing existing subscription...');
+      await subscription.removeListener('message', messageHandler);
+    }
+
+    messageHandler = async (message) => {
       let parsedData;
       
       try {
@@ -74,15 +83,21 @@ async function initializeProcessor() {
       }
     };
 
+    // Configure subscription settings
     subscription.on('message', messageHandler);
     
-    subscription.on('error', (error) => {
+    // Enable flow control to prevent overwhelming the worker
+    subscription.setOptions({
+      flowControl: {
+        maxMessages: 1,
+        allowExcessMessages: false
+      }
+    });
+    
+    subscription.on('error', async (error) => {
       console.error('Pub/Sub subscription error:', error);
-      setTimeout(() => {
-        console.log('Attempting to reconnect to Pub/Sub...');
-        subscription.removeListener('message', messageHandler);
-        subscription.on('message', messageHandler);
-      }, 5000);
+      // Attempt to reconnect
+      await reconnectSubscription();
     });
 
     console.log('Message handler registered and actively listening for new messages');
@@ -92,5 +107,29 @@ async function initializeProcessor() {
     throw error;
   }
 }
+
+async function reconnectSubscription() {
+  try {
+    console.log('Attempting to reconnect to Pub/Sub...');
+    if (messageHandler && subscription) {
+      await subscription.removeListener('message', messageHandler);
+    }
+    await initializeProcessor();
+    console.log('Successfully reconnected to Pub/Sub');
+  } catch (error) {
+    console.error('Error reconnecting to Pub/Sub:', error);
+    // Retry after delay
+    setTimeout(reconnectSubscription, 5000);
+  }
+}
+
+// Handle graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('Received SIGTERM signal. Cleaning up...');
+  if (messageHandler && subscription) {
+    await subscription.removeListener('message', messageHandler);
+  }
+  process.exit(0);
+});
 
 module.exports = { initializeProcessor };
