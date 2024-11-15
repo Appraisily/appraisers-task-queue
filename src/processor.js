@@ -37,7 +37,6 @@ async function initializeProcessor() {
       console.log(`Subscription created successfully`);
     }
 
-    // Close existing subscription if it exists
     if (messageHandler) {
       console.log('Closing existing subscription...');
       await subscription.removeListener('message', messageHandler);
@@ -45,6 +44,7 @@ async function initializeProcessor() {
 
     messageHandler = async (message) => {
       let parsedData;
+      let taskData;
       
       try {
         console.log('Raw message received:', message.id);
@@ -54,27 +54,37 @@ async function initializeProcessor() {
         parsedData = JSON.parse(message.data.toString());
         console.log('Parsed message data:', parsedData);
 
+        // Extract task data based on message structure
+        if (parsedData.type === 'COMPLETE_APPRAISAL' && parsedData.data) {
+          taskData = {
+            id: parsedData.data.id,
+            appraisalValue: parsedData.data.appraisalValue,
+            description: parsedData.data.description
+          };
+        } else {
+          throw new Error('Invalid message type or missing data property');
+        }
+
         // Validate required fields
-        if (!parsedData.id || !parsedData.appraisalValue || !parsedData.description) {
-          throw new Error('Missing required fields: id, appraisalValue, or description');
+        if (!taskData.id || !taskData.appraisalValue || !taskData.description) {
+          throw new Error('Missing required fields in data: id, appraisalValue, or description');
         }
 
         await taskQueueService.processTask(
-          parsedData.id,
-          parsedData.appraisalValue,
-          parsedData.description,
+          taskData.id,
+          taskData.appraisalValue,
+          taskData.description,
           message.id
         );
         
         message.ack();
-        console.log(`✓ Task processed and acknowledged: ${parsedData.id}`);
+        console.log(`✓ Task processed and acknowledged: ${taskData.id}`);
       } catch (error) {
         console.error('Error processing message:', error);
         
         try {
-          // Move failed messages to the error topic
           const failedMessage = {
-            id: parsedData?.id || 'unknown',
+            id: taskData?.id || parsedData?.data?.id || 'unknown',
             originalMessage: message.data.toString(),
             error: error.message,
             timestamp: new Date().toISOString()
@@ -83,7 +93,6 @@ async function initializeProcessor() {
           await failedTopic.publish(Buffer.from(JSON.stringify(failedMessage)));
           console.log(`Message moved to failed topic: ${failedMessage.id}`);
           
-          // Acknowledge the message to prevent it from blocking the queue
           message.ack();
           console.log('Failed message acknowledged and moved to error topic');
         } catch (pubsubError) {
@@ -94,7 +103,6 @@ async function initializeProcessor() {
       }
     };
 
-    // Configure subscription settings with error handling
     subscription.setOptions({
       flowControl: {
         maxMessages: 1,
@@ -102,7 +110,6 @@ async function initializeProcessor() {
       }
     });
     
-    // Add error handler for subscription
     subscription.on('error', async (error) => {
       console.error('Pub/Sub subscription error:', error);
       await reconnectSubscription();
