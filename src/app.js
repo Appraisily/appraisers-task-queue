@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const { initializeConfig } = require('./config');
-const { initializeProcessor } = require('./processor');
+const { initializeProcessor, closeProcessor } = require('./processor');
 
 const app = express();
 let server;
@@ -47,13 +47,22 @@ async function startServer() {
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('Received SIGTERM signal. Starting graceful shutdown...');
-  if (server) {
-    server.close(() => {
-      console.log('HTTP server closed');
+  try {
+    // Close Pub/Sub subscription first
+    await closeProcessor();
+    
+    // Then close HTTP server
+    if (server) {
+      server.close(() => {
+        console.log('HTTP server closed');
+        process.exit(0);
+      });
+    } else {
       process.exit(0);
-    });
-  } else {
-    process.exit(0);
+    }
+  } catch (error) {
+    console.error('Error during shutdown:', error);
+    process.exit(1);
   }
 });
 

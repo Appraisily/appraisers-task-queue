@@ -2,9 +2,10 @@ const { PubSub } = require('@google-cloud/pubsub');
 const { config } = require('./config');
 const taskQueueService = require('./services/taskQueueService');
 
-let isInitialized = false;
 let subscription;
 let messageHandler;
+let isInitialized = false;
+let reconnectAttempts = 0;
 let reconnectTimeout;
 
 async function initializeProcessor() {
@@ -112,13 +113,6 @@ async function initializeProcessor() {
       await reconnectSubscription();
     });
 
-    subscription.setOptions({
-      flowControl: {
-        maxMessages: 1,
-        allowExcessMessages: false
-      }
-    });
-
     subscription.on('message', messageHandler);
     
     console.log('Message handler registered and actively listening for new messages');
@@ -156,6 +150,14 @@ async function reconnectSubscription() {
   }, backoffTime);
 }
 
-let reconnectAttempts = 0;
+async function closeProcessor() {
+  if (subscription && messageHandler) {
+    console.log('Closing Pub/Sub subscription...');
+    await subscription.removeListener('message', messageHandler);
+    await subscription.close();
+    isInitialized = false;
+    console.log('Pub/Sub subscription closed');
+  }
+}
 
-module.exports = { initializeProcessor };
+module.exports = { initializeProcessor, closeProcessor };
