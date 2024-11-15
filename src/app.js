@@ -4,6 +4,7 @@ const { initializeConfig } = require('./config');
 const { initializeProcessor } = require('./processor');
 
 const app = express();
+let server;
 
 const corsOptions = {
   origin: [
@@ -24,8 +25,6 @@ app.use(express.json());
 app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
-
-let server;
 
 async function startServer() {
   try {

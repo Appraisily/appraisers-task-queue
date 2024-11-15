@@ -5,7 +5,7 @@ const { config } = require('../config');
 
 class ApiService {
   constructor() {
-    this.baseUrl = config.BACKEND_API_URL;
+    this.baseUrl = 'https://appraisers-backend-856401495068.us-central1.run.app';
     this.jwtSecret = null;
   }
 
@@ -41,24 +41,34 @@ class ApiService {
     try {
       await this.initializeJwtSecret();
       const token = this.generateAuthToken();
+      const url = `${this.baseUrl}${endpoint}`;
+      
+      console.log(`Making ${method} request to: ${url}`);
       
       const headers = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
       };
 
-      const response = await fetch(`${this.baseUrl}${endpoint}`, {
+      const response = await fetch(url, {
         method,
         headers,
         ...(body && { body: JSON.stringify(body) })
       });
 
+      const responseData = await response.json();
+
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+        console.error('API Error Response:', {
+          status: response.status,
+          statusText: response.statusText,
+          data: responseData
+        });
+        throw new Error(responseData.message || `HTTP error! status: ${response.status}`);
       }
 
-      return await response.json();
+      console.log(`✓ ${method} ${endpoint} successful`);
+      return responseData;
     } catch (error) {
       console.error(`Error making request to ${endpoint}:`, error);
       throw error;

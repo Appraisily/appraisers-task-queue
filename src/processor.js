@@ -5,6 +5,7 @@ const taskQueueService = require('./services/taskQueueService');
 let isInitialized = false;
 let subscription;
 let messageHandler;
+let reconnectTimeout;
 
 async function initializeProcessor() {
   try {
@@ -99,40 +100,62 @@ async function initializeProcessor() {
       }
     };
 
-    subscription.setOptions({
-      flowControl: {
-        maxMessages: 1,
-        allowExcessMessages: false
-      }
-    });
-    
     subscription.on('error', async (error) => {
       console.error('Pub/Sub subscription error:', error);
       isInitialized = false;
       await reconnectSubscription();
     });
 
+    subscription.on('close', async () => {
+      console.log('Subscription closed unexpectedly, attempting to reconnect...');
+      isInitialized = false;
+      await reconnectSubscription();
+    });
+
+    subscription.setOptions({
+      flowControl: {
+        maxMessages: 1,
+        allowExcessMessages: false
+      }
+    });
+
     subscription.on('message', messageHandler);
     
     console.log('Message handler registered and actively listening for new messages');
     console.log(`Subscription is ready to process messages`);
+    
     isInitialized = true;
   } catch (error) {
     console.error('Error initializing processor:', error);
     isInitialized = false;
-    throw error;
+    await reconnectSubscription();
   }
 }
 
 async function reconnectSubscription() {
-  try {
-    console.log('Attempting to reconnect to Pub/Sub...');
-    await initializeProcessor();
-    console.log('Successfully reconnected to Pub/Sub');
-  } catch (error) {
-    console.error('Error reconnecting to Pub/Sub:', error);
-    setTimeout(reconnectSubscription, 5000);
+  // Clear any existing timeout
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
   }
+
+  // Exponential backoff starting at 5 seconds, max 2 minutes
+  const backoffTime = Math.min(5000 * Math.pow(2, reconnectAttempts), 120000);
+  console.log(`Attempting to reconnect in ${backoffTime/1000} seconds...`);
+
+  reconnectTimeout = setTimeout(async () => {
+    try {
+      console.log('Attempting to reconnect to Pub/Sub...');
+      await initializeProcessor();
+      console.log('Successfully reconnected to Pub/Sub');
+      reconnectAttempts = 0;
+    } catch (error) {
+      console.error('Error reconnecting to Pub/Sub:', error);
+      reconnectAttempts++;
+      await reconnectSubscription();
+    }
+  }, backoffTime);
 }
+
+let reconnectAttempts = 0;
 
 module.exports = { initializeProcessor };
