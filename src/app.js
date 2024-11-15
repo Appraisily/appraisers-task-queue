@@ -25,19 +25,36 @@ app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
+let server;
+
 async function startServer() {
   try {
     await initializeConfig();
-    await initializeProcessor();
     
     const PORT = process.env.PORT || 8080;
-    app.listen(PORT, '0.0.0.0', () => {
+    server = app.listen(PORT, '0.0.0.0', () => {
       console.log(`Task Queue service running on port ${PORT}`);
     });
+
+    // Initialize processor after server is running
+    await initializeProcessor();
   } catch (error) {
     console.error('Error starting server:', error);
     process.exit(1);
   }
 }
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('Received SIGTERM signal. Starting graceful shutdown...');
+  if (server) {
+    server.close(() => {
+      console.log('HTTP server closed');
+      process.exit(0);
+    });
+  } else {
+    process.exit(0);
+  }
+});
 
 startServer();

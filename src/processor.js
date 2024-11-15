@@ -5,8 +5,14 @@ const taskQueueService = require('./services/taskQueueService');
 let subscription;
 let messageHandler;
 let pubsub;
+let isInitialized = false;
 
 async function initializeProcessor() {
+  if (isInitialized) {
+    console.log('Processor already initialized, skipping...');
+    return;
+  }
+
   try {
     console.log('Initializing Pub/Sub processor...');
     
@@ -35,11 +41,6 @@ async function initializeProcessor() {
       console.log(`Subscription does not exist, creating...`);
       await topic.createSubscription('appraisal-tasks-subscription');
       console.log(`Subscription created successfully`);
-    }
-
-    if (messageHandler) {
-      console.log('Closing existing subscription...');
-      await subscription.removeListener('message', messageHandler);
     }
 
     messageHandler = async (message) => {
@@ -108,15 +109,18 @@ async function initializeProcessor() {
     
     subscription.on('error', async (error) => {
       console.error('Pub/Sub subscription error:', error);
+      isInitialized = false;
       await reconnectSubscription();
     });
 
     subscription.on('message', messageHandler);
     
+    isInitialized = true;
     console.log('Message handler registered and actively listening for new messages');
     console.log(`Subscription is ready to process messages`);
   } catch (error) {
     console.error('Error initializing processor:', error);
+    isInitialized = false;
     throw error;
   }
 }
@@ -134,13 +138,5 @@ async function reconnectSubscription() {
     setTimeout(reconnectSubscription, 5000);
   }
 }
-
-process.on('SIGTERM', async () => {
-  console.log('Received SIGTERM signal. Cleaning up...');
-  if (messageHandler && subscription) {
-    await subscription.removeListener('message', messageHandler);
-  }
-  process.exit(0);
-});
 
 module.exports = { initializeProcessor };
