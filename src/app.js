@@ -29,6 +29,7 @@ let server;
 
 async function startServer() {
   try {
+    // Initialize configuration first
     await initializeConfig();
     
     const PORT = process.env.PORT || 8080;

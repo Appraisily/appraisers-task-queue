@@ -2,21 +2,20 @@ const { PubSub } = require('@google-cloud/pubsub');
 const { config } = require('./config');
 const taskQueueService = require('./services/taskQueueService');
 
+let isInitialized = false;
 let subscription;
 let messageHandler;
-let pubsub;
-let isInitialized = false;
 
 async function initializeProcessor() {
-  if (isInitialized) {
-    console.log('Processor already initialized, skipping...');
-    return;
-  }
-
   try {
+    if (isInitialized) {
+      console.log('Processor already initialized, skipping...');
+      return;
+    }
+
     console.log('Initializing Pub/Sub processor...');
     
-    pubsub = new PubSub({
+    const pubsub = new PubSub({
       projectId: config.GOOGLE_CLOUD_PROJECT_ID,
     });
 
@@ -115,9 +114,9 @@ async function initializeProcessor() {
 
     subscription.on('message', messageHandler);
     
-    isInitialized = true;
     console.log('Message handler registered and actively listening for new messages');
     console.log(`Subscription is ready to process messages`);
+    isInitialized = true;
   } catch (error) {
     console.error('Error initializing processor:', error);
     isInitialized = false;
@@ -128,9 +127,6 @@ async function initializeProcessor() {
 async function reconnectSubscription() {
   try {
     console.log('Attempting to reconnect to Pub/Sub...');
-    if (messageHandler && subscription) {
-      await subscription.removeListener('message', messageHandler);
-    }
     await initializeProcessor();
     console.log('Successfully reconnected to Pub/Sub');
   } catch (error) {
