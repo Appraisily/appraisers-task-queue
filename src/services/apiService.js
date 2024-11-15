@@ -7,6 +7,8 @@ class ApiService {
   constructor() {
     this.baseUrl = 'https://appraisers-backend-856401495068.us-central1.run.app';
     this.jwtSecret = null;
+    this.retryCount = 3;
+    this.retryDelay = 1000; // Start with 1 second delay
   }
 
   async initializeJwtSecret() {
@@ -37,13 +39,13 @@ class ApiService {
     }
   }
 
-  async makeAuthenticatedRequest(endpoint, method = 'POST', body = null) {
+  async makeAuthenticatedRequest(endpoint, method = 'POST', body = null, attempt = 1) {
     try {
       await this.initializeJwtSecret();
       const token = this.generateAuthToken();
       const url = `${this.baseUrl}${endpoint}`;
       
-      console.log(`Making ${method} request to: ${url}`);
+      console.log(`Making ${method} request to: ${url} (attempt ${attempt}/${this.retryCount})`);
       
       const headers = {
         'Content-Type': 'application/json',
@@ -59,6 +61,14 @@ class ApiService {
       const responseData = await response.json();
 
       if (!response.ok) {
+        // If it's a token error and not the last attempt, retry
+        if (response.status === 401 && attempt < this.retryCount) {
+          console.log('Token expired or invalid, retrying with new token...');
+          this.jwtSecret = null; // Force new token generation
+          await new Promise(resolve => setTimeout(resolve, this.retryDelay * attempt));
+          return this.makeAuthenticatedRequest(endpoint, method, body, attempt + 1);
+        }
+
         console.error('API Error Response:', {
           status: response.status,
           statusText: response.statusText,
@@ -70,6 +80,13 @@ class ApiService {
       console.log(`✓ ${method} ${endpoint} successful`);
       return responseData;
     } catch (error) {
+      // Retry on network errors
+      if (error.name === 'FetchError' && attempt < this.retryCount) {
+        console.log(`Network error, retrying in ${this.retryDelay * attempt}ms...`);
+        await new Promise(resolve => setTimeout(resolve, this.retryDelay * attempt));
+        return this.makeAuthenticatedRequest(endpoint, method, body, attempt + 1);
+      }
+
       console.error(`Error making request to ${endpoint}:`, error);
       throw error;
     }

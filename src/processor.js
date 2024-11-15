@@ -7,9 +7,15 @@ let messageHandler;
 let isInitialized = false;
 let reconnectAttempts = 0;
 let reconnectTimeout;
+let isShuttingDown = false;
 
 async function initializeProcessor() {
   try {
+    if (isShuttingDown) {
+      console.log('Processor is shutting down, skipping initialization');
+      return;
+    }
+
     if (isInitialized) {
       console.log('Processor already initialized, skipping...');
       return;
@@ -104,29 +110,42 @@ async function initializeProcessor() {
     subscription.on('error', async (error) => {
       console.error('Pub/Sub subscription error:', error);
       isInitialized = false;
-      await reconnectSubscription();
+      if (!isShuttingDown) {
+        await reconnectSubscription();
+      }
     });
 
     subscription.on('close', async () => {
-      console.log('Subscription closed unexpectedly, attempting to reconnect...');
+      console.log('Subscription closed unexpectedly');
       isInitialized = false;
-      await reconnectSubscription();
+      if (!isShuttingDown) {
+        await reconnectSubscription();
+      }
     });
 
+    // Set message handler and enable flow control
     subscription.on('message', messageHandler);
     
     console.log('Message handler registered and actively listening for new messages');
     console.log(`Subscription is ready to process messages`);
     
     isInitialized = true;
+    reconnectAttempts = 0; // Reset attempts on successful connection
   } catch (error) {
     console.error('Error initializing processor:', error);
     isInitialized = false;
-    await reconnectSubscription();
+    if (!isShuttingDown) {
+      await reconnectSubscription();
+    }
   }
 }
 
 async function reconnectSubscription() {
+  if (isShuttingDown) {
+    console.log('System is shutting down, skipping reconnection');
+    return;
+  }
+
   // Clear any existing timeout
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
@@ -134,10 +153,18 @@ async function reconnectSubscription() {
 
   // Exponential backoff starting at 5 seconds, max 2 minutes
   const backoffTime = Math.min(5000 * Math.pow(2, reconnectAttempts), 120000);
-  console.log(`Attempting to reconnect in ${backoffTime/1000} seconds...`);
+  console.log(`Attempting to reconnect in ${backoffTime/1000} seconds... (attempt ${reconnectAttempts + 1})`);
 
   reconnectTimeout = setTimeout(async () => {
     try {
+      if (subscription) {
+        try {
+          await subscription.close();
+        } catch (error) {
+          console.error('Error closing existing subscription:', error);
+        }
+      }
+
       console.log('Attempting to reconnect to Pub/Sub...');
       await initializeProcessor();
       console.log('Successfully reconnected to Pub/Sub');
@@ -145,18 +172,32 @@ async function reconnectSubscription() {
     } catch (error) {
       console.error('Error reconnecting to Pub/Sub:', error);
       reconnectAttempts++;
-      await reconnectSubscription();
+      if (!isShuttingDown) {
+        await reconnectSubscription();
+      }
     }
   }, backoffTime);
 }
 
 async function closeProcessor() {
+  isShuttingDown = true;
+  
+  // Clear any pending reconnection attempts
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+  }
+
   if (subscription && messageHandler) {
     console.log('Closing Pub/Sub subscription...');
-    await subscription.removeListener('message', messageHandler);
-    await subscription.close();
-    isInitialized = false;
-    console.log('Pub/Sub subscription closed');
+    try {
+      subscription.removeListener('message', messageHandler);
+      await subscription.close();
+      isInitialized = false;
+      console.log('Pub/Sub subscription closed');
+    } catch (error) {
+      console.error('Error closing subscription:', error);
+      throw error;
+    }
   }
 }
 
