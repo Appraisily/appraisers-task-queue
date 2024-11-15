@@ -54,16 +54,12 @@ async function initializeProcessor() {
         parsedData = JSON.parse(message.data.toString());
         console.log('Parsed message data:', parsedData);
 
-        // Extract task data based on message structure
-        if (parsedData.type === 'COMPLETE_APPRAISAL' && parsedData.data) {
-          taskData = {
-            id: parsedData.data.id,
-            appraisalValue: parsedData.data.appraisalValue,
-            description: parsedData.data.description
-          };
-        } else {
-          throw new Error('Invalid message type or missing data property');
-        }
+        // Extract task data directly from parsed message
+        taskData = {
+          id: parsedData.id,
+          appraisalValue: parsedData.appraisalValue,
+          description: parsedData.description
+        };
 
         // Validate required fields
         if (!taskData.id || !taskData.appraisalValue || !taskData.description) {
@@ -84,7 +80,7 @@ async function initializeProcessor() {
         
         try {
           const failedMessage = {
-            id: taskData?.id || parsedData?.data?.id || 'unknown',
+            id: taskData?.id || parsedData?.id || 'unknown',
             originalMessage: message.data.toString(),
             error: error.message,
             timestamp: new Date().toISOString()
