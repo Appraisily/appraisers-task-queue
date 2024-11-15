@@ -23,7 +23,6 @@ async function initializeProcessor() {
     const [topicExists] = await topic.exists();
     
     if (!topicExists) {
-      console.error(`Topic ${topicName} does not exist!`);
       throw new Error(`Topic ${topicName} not found`);
     }
     console.log(`Topic ${topicName} found`);
@@ -46,7 +45,6 @@ async function initializeProcessor() {
 
     messageHandler = async (message) => {
       let parsedData;
-      let taskData;
       
       try {
         console.log('Raw message received:', message.id);
@@ -56,37 +54,27 @@ async function initializeProcessor() {
         parsedData = JSON.parse(message.data.toString());
         console.log('Parsed message data:', parsedData);
 
-        // Extract task data from the message
-        if (parsedData.type === 'COMPLETE_APPRAISAL' && parsedData.data) {
-          taskData = {
-            id: parsedData.data.id,
-            appraisalValue: parsedData.data.appraisalValue,
-            description: parsedData.data.description
-          };
-        } else {
-          throw new Error('Invalid message type or missing data property');
-        }
-
-        if (!taskData.id || !taskData.appraisalValue || !taskData.description) {
-          throw new Error('Missing required fields in data: id, appraisalValue, or description');
+        // Validate required fields
+        if (!parsedData.id || !parsedData.appraisalValue || !parsedData.description) {
+          throw new Error('Missing required fields: id, appraisalValue, or description');
         }
 
         await taskQueueService.processTask(
-          taskData.id,
-          taskData.appraisalValue,
-          taskData.description,
+          parsedData.id,
+          parsedData.appraisalValue,
+          parsedData.description,
           message.id
         );
         
         message.ack();
-        console.log(`✓ Task processed and acknowledged: ${taskData.id}`);
+        console.log(`✓ Task processed and acknowledged: ${parsedData.id}`);
       } catch (error) {
         console.error('Error processing message:', error);
         
         try {
-          // Always move failed messages to the error topic
+          // Move failed messages to the error topic
           const failedMessage = {
-            id: taskData?.id || parsedData?.data?.id || 'unknown',
+            id: parsedData?.id || 'unknown',
             originalMessage: message.data.toString(),
             error: error.message,
             timestamp: new Date().toISOString()
@@ -95,7 +83,7 @@ async function initializeProcessor() {
           await failedTopic.publish(Buffer.from(JSON.stringify(failedMessage)));
           console.log(`Message moved to failed topic: ${failedMessage.id}`);
           
-          // Always acknowledge the message to prevent it from blocking the queue
+          // Acknowledge the message to prevent it from blocking the queue
           message.ack();
           console.log('Failed message acknowledged and moved to error topic');
         } catch (pubsubError) {
