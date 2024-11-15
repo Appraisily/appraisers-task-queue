@@ -88,7 +88,6 @@ async function initializeProcessor() {
           console.log('Failed message acknowledged and moved to error topic');
         } catch (pubsubError) {
           console.error('Error publishing to failed topic:', pubsubError);
-          // Still acknowledge the message even if publishing to failed topic fails
           message.ack();
           console.log('Message acknowledged despite error publishing to failed topic');
         }
@@ -129,12 +128,10 @@ async function reconnectSubscription() {
     console.log('Successfully reconnected to Pub/Sub');
   } catch (error) {
     console.error('Error reconnecting to Pub/Sub:', error);
-    // Retry after delay
     setTimeout(reconnectSubscription, 5000);
   }
 }
 
-// Handle graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('Received SIGTERM signal. Cleaning up...');
   if (messageHandler && subscription) {
