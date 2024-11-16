@@ -49,7 +49,9 @@ class TaskQueueService {
       console.error('Error:', error.message);
       console.error('Stack:', error.stack);
       console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-      throw error;
+      
+      // Don't rethrow the error - this prevents the subscription from closing
+      return { success: false, error: error.message };
     }
   }
 }

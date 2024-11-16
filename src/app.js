@@ -65,7 +65,6 @@ async function startServer() {
         isHealthy = true;
       } catch (recoveryError) {
         console.error('Recovery failed:', recoveryError);
-        process.exit(1);
       }
     });
 
@@ -80,10 +79,8 @@ process.on('SIGTERM', async () => {
   console.log('Received SIGTERM signal. Starting graceful shutdown...');
   isHealthy = false;
   try {
-    // Close Pub/Sub subscription first
     await closeProcessor();
     
-    // Then close HTTP server
     if (server) {
       server.close(() => {
         console.log('HTTP server closed');
@@ -98,16 +95,29 @@ process.on('SIGTERM', async () => {
   }
 });
 
-// Handle uncaught exceptions
+// Handle uncaught exceptions without exiting
 process.on('uncaughtException', async (error) => {
   console.error('Uncaught exception:', error);
   isHealthy = false;
   try {
-    await closeProcessor();
-    process.exit(1);
-  } catch (shutdownError) {
-    console.error('Error during emergency shutdown:', shutdownError);
-    process.exit(1);
+    // Don't close the processor, just try to recover
+    await initializeProcessor();
+    isHealthy = true;
+  } catch (recoveryError) {
+    console.error('Error during recovery:', recoveryError);
+  }
+});
+
+// Handle unhandled promise rejections without exiting
+process.on('unhandledRejection', async (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  isHealthy = false;
+  try {
+    // Don't close the processor, just try to recover
+    await initializeProcessor();
+    isHealthy = true;
+  } catch (recoveryError) {
+    console.error('Error during recovery:', recoveryError);
   }
 });
 
