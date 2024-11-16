@@ -5,6 +5,7 @@ const { initializeProcessor, closeProcessor } = require('./processor');
 
 const app = express();
 let server;
+let isHealthy = false;
 
 const corsOptions = {
   origin: [
@@ -22,8 +23,21 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
+// Enhanced health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).send('OK');
+  if (isHealthy) {
+    res.status(200).json({
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime()
+    });
+  } else {
+    res.status(503).json({
+      status: 'unhealthy',
+      timestamp: new Date().toISOString(),
+      message: 'Service is starting or recovering'
+    });
+  }
 });
 
 async function startServer() {
@@ -38,6 +52,23 @@ async function startServer() {
 
     // Initialize processor after server is running
     await initializeProcessor();
+    isHealthy = true;
+
+    // Handle server errors
+    server.on('error', async (error) => {
+      console.error('Server error:', error);
+      isHealthy = false;
+      // Attempt graceful recovery
+      try {
+        await closeProcessor();
+        await initializeProcessor();
+        isHealthy = true;
+      } catch (recoveryError) {
+        console.error('Recovery failed:', recoveryError);
+        process.exit(1);
+      }
+    });
+
   } catch (error) {
     console.error('Error starting server:', error);
     process.exit(1);
@@ -47,6 +78,7 @@ async function startServer() {
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('Received SIGTERM signal. Starting graceful shutdown...');
+  isHealthy = false;
   try {
     // Close Pub/Sub subscription first
     await closeProcessor();
@@ -62,6 +94,19 @@ process.on('SIGTERM', async () => {
     }
   } catch (error) {
     console.error('Error during shutdown:', error);
+    process.exit(1);
+  }
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', async (error) => {
+  console.error('Uncaught exception:', error);
+  isHealthy = false;
+  try {
+    await closeProcessor();
+    process.exit(1);
+  } catch (shutdownError) {
+    console.error('Error during emergency shutdown:', shutdownError);
     process.exit(1);
   }
 });

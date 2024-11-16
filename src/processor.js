@@ -6,11 +6,38 @@ let subscription;
 let messageHandler;
 let isInitialized = false;
 let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 10;
-const BASE_RETRY_DELAY = 5000; // 5 seconds
 let reconnectTimeout;
 let isShuttingDown = false;
 let keepAliveInterval;
+let healthCheckInterval;
+
+const MAX_RECONNECT_ATTEMPTS = 10;
+const BASE_RETRY_DELAY = 5000; // 5 seconds
+const HEALTH_CHECK_INTERVAL = 15000; // 15 seconds
+const SUBSCRIPTION_NAME = 'appraisal-tasks-subscription';
+
+async function checkSubscriptionHealth() {
+  try {
+    if (!subscription || isShuttingDown) return;
+
+    const [metadata] = await subscription.getMetadata();
+    console.log('Subscription health check:', {
+      name: metadata.name,
+      topic: metadata.topic,
+      pushConfig: metadata.pushConfig,
+      messageRetentionDuration: metadata.messageRetentionDuration,
+      active: true
+    });
+
+    // If we get here, the subscription is healthy
+    isInitialized = true;
+    reconnectAttempts = 0;
+  } catch (error) {
+    console.error('Health check failed:', error);
+    isInitialized = false;
+    await reconnectSubscription();
+  }
+}
 
 async function initializeProcessor() {
   try {
@@ -51,10 +78,30 @@ async function initializeProcessor() {
     console.log(`Topic ${topicName} found`);
 
     console.log(`Connecting to Pub/Sub subscription...`);
-    subscription = topic.subscription('appraisal-tasks-subscription', {
+
+    // Configure subscription with proper settings
+    const subscriptionConfig = {
+      name: SUBSCRIPTION_NAME,
+      topic: topicName,
+      ackDeadline: 600, // 10 minutes
+      messageRetentionDuration: { seconds: 604800 }, // 7 days
+      expirationPolicy: { ttl: null }, // Never expire
+      enableMessageOrdering: true,
+      deadLetterPolicy: {
+        deadLetterTopic: `projects/${config.GOOGLE_CLOUD_PROJECT_ID}/topics/${failedTopicName}`,
+        maxDeliveryAttempts: 5
+      },
+      retryPolicy: {
+        minimumBackoff: { seconds: 10 },
+        maximumBackoff: { seconds: 600 }
+      }
+    };
+
+    subscription = topic.subscription(SUBSCRIPTION_NAME, {
       flowControl: {
         maxMessages: 100,
-        allowExcessMessages: false
+        allowExcessMessages: false,
+        maxExtension: 600
       },
       ackDeadline: 600, // 10 minutes
       streamingOptions: {
@@ -66,14 +113,15 @@ async function initializeProcessor() {
     const [exists] = await subscription.exists();
     if (!exists) {
       console.log(`Subscription does not exist, creating...`);
-      await topic.createSubscription('appraisal-tasks-subscription', {
-        ackDeadline: 600,
-        deadLetterPolicy: {
-          deadLetterTopic: failedTopic.name,
-          maxDeliveryAttempts: 5
-        }
-      });
+      [subscription] = await topic.createSubscription(SUBSCRIPTION_NAME, subscriptionConfig);
       console.log(`Subscription created successfully`);
+    } else {
+      // Update existing subscription settings
+      const [metadata] = await subscription.getMetadata();
+      await subscription.setMetadata({
+        ...metadata,
+        ...subscriptionConfig
+      });
     }
 
     messageHandler = async (message) => {
@@ -151,6 +199,15 @@ async function initializeProcessor() {
     // Set message handler and enable flow control
     subscription.on('message', messageHandler);
     
+    // Set up health check interval
+    if (healthCheckInterval) {
+      clearInterval(healthCheckInterval);
+    }
+    
+    healthCheckInterval = setInterval(async () => {
+      await checkSubscriptionHealth();
+    }, HEALTH_CHECK_INTERVAL);
+
     // Set up keep-alive ping
     if (keepAliveInterval) {
       clearInterval(keepAliveInterval);
@@ -173,7 +230,7 @@ async function initializeProcessor() {
     console.log(`Subscription is ready to process messages`);
     
     isInitialized = true;
-    reconnectAttempts = 0; // Reset attempts on successful connection
+    reconnectAttempts = 0;
   } catch (error) {
     console.error('Error initializing processor:', error);
     isInitialized = false;
@@ -240,6 +297,10 @@ async function closeProcessor() {
     clearInterval(keepAliveInterval);
   }
   
+  if (healthCheckInterval) {
+    clearInterval(healthCheckInterval);
+  }
+
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
   }
