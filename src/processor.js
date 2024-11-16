@@ -6,8 +6,11 @@ let subscription;
 let messageHandler;
 let isInitialized = false;
 let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10;
+const BASE_RETRY_DELAY = 5000; // 5 seconds
 let reconnectTimeout;
 let isShuttingDown = false;
+let keepAliveInterval;
 
 async function initializeProcessor() {
   try {
@@ -25,6 +28,13 @@ async function initializeProcessor() {
     
     const pubsub = new PubSub({
       projectId: config.GOOGLE_CLOUD_PROJECT_ID,
+      maxRetries: 5,
+      retry: {
+        retries: 5,
+        maxRetries: 5,
+        maxRetryDelay: 60000, // 1 minute
+        totalTimeout: 600000 // 10 minutes
+      }
     });
 
     const topicName = 'appraisal-tasks';
@@ -41,12 +51,28 @@ async function initializeProcessor() {
     console.log(`Topic ${topicName} found`);
 
     console.log(`Connecting to Pub/Sub subscription...`);
-    subscription = topic.subscription('appraisal-tasks-subscription');
+    subscription = topic.subscription('appraisal-tasks-subscription', {
+      flowControl: {
+        maxMessages: 100,
+        allowExcessMessages: false
+      },
+      ackDeadline: 600, // 10 minutes
+      streamingOptions: {
+        maxStreams: 5,
+        timeout: 600000 // 10 minutes
+      }
+    });
     
     const [exists] = await subscription.exists();
     if (!exists) {
       console.log(`Subscription does not exist, creating...`);
-      await topic.createSubscription('appraisal-tasks-subscription');
+      await topic.createSubscription('appraisal-tasks-subscription', {
+        ackDeadline: 600,
+        deadLetterPolicy: {
+          deadLetterTopic: failedTopic.name,
+          maxDeliveryAttempts: 5
+        }
+      });
       console.log(`Subscription created successfully`);
     }
 
@@ -62,16 +88,14 @@ async function initializeProcessor() {
         parsedData = JSON.parse(message.data.toString());
         console.log('Parsed message data:', parsedData);
 
-        // Extract task data directly from parsed message
         taskData = {
           id: parsedData.id,
           appraisalValue: parsedData.appraisalValue,
           description: parsedData.description
         };
 
-        // Validate required fields
         if (!taskData.id || !taskData.appraisalValue || !taskData.description) {
-          throw new Error('Missing required fields in data: id, appraisalValue, or description');
+          throw new Error('Missing required fields in data');
         }
 
         await taskQueueService.processTask(
@@ -107,6 +131,7 @@ async function initializeProcessor() {
       }
     };
 
+    // Set up error handling and automatic reconnection
     subscription.on('error', async (error) => {
       console.error('Pub/Sub subscription error:', error);
       isInitialized = false;
@@ -125,6 +150,24 @@ async function initializeProcessor() {
 
     // Set message handler and enable flow control
     subscription.on('message', messageHandler);
+    
+    // Set up keep-alive ping
+    if (keepAliveInterval) {
+      clearInterval(keepAliveInterval);
+    }
+    
+    keepAliveInterval = setInterval(async () => {
+      try {
+        if (!isInitialized && !isShuttingDown) {
+          console.log('Keep-alive check: Subscription not initialized, attempting reconnection...');
+          await reconnectSubscription();
+        } else {
+          console.log('Keep-alive check: Subscription is healthy');
+        }
+      } catch (error) {
+        console.error('Error in keep-alive check:', error);
+      }
+    }, 30000); // Check every 30 seconds
     
     console.log('Message handler registered and actively listening for new messages');
     console.log(`Subscription is ready to process messages`);
@@ -146,14 +189,24 @@ async function reconnectSubscription() {
     return;
   }
 
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    console.error(`Maximum reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Manual intervention required.`);
+    process.exit(1); // Force restart through Cloud Run
+    return;
+  }
+
   // Clear any existing timeout
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
   }
 
-  // Exponential backoff starting at 5 seconds, max 2 minutes
-  const backoffTime = Math.min(5000 * Math.pow(2, reconnectAttempts), 120000);
-  console.log(`Attempting to reconnect in ${backoffTime/1000} seconds... (attempt ${reconnectAttempts + 1})`);
+  // Exponential backoff with jitter
+  const delay = Math.min(
+    BASE_RETRY_DELAY * Math.pow(2, reconnectAttempts) * (1 + Math.random() * 0.1),
+    300000 // Max 5 minutes
+  );
+  
+  console.log(`Attempting to reconnect in ${delay/1000} seconds... (attempt ${reconnectAttempts + 1}/${MAX_RECONNECT_ATTEMPTS})`);
 
   reconnectTimeout = setTimeout(async () => {
     try {
@@ -176,13 +229,17 @@ async function reconnectSubscription() {
         await reconnectSubscription();
       }
     }
-  }, backoffTime);
+  }, delay);
 }
 
 async function closeProcessor() {
   isShuttingDown = true;
   
-  // Clear any pending reconnection attempts
+  // Clear intervals and timeouts
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+  }
+  
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
   }
