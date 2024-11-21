@@ -1,11 +1,12 @@
 const express = require('express');
 const cors = require('cors');
+const { createLogger } = require('./utils/logger');
 const { initializeConfig } = require('./config');
-const { initializeProcessor, closeProcessor } = require('./processor');
+const { PubSubManager } = require('./services/pubSubManager');
 
+const logger = createLogger('app');
 const app = express();
-let server;
-let isHealthy = false;
+let pubSubManager;
 
 const corsOptions = {
   origin: [
@@ -23,102 +24,50 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
-// Enhanced health check endpoint
 app.get('/health', (req, res) => {
-  if (isHealthy) {
-    res.status(200).json({
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime()
-    });
-  } else {
-    res.status(503).json({
-      status: 'unhealthy',
-      timestamp: new Date().toISOString(),
-      message: 'Service is starting or recovering'
-    });
-  }
+  const isHealthy = pubSubManager?.isHealthy() ?? false;
+  const status = isHealthy ? 200 : 503;
+  
+  res.status(status).json({
+    status: isHealthy ? 'healthy' : 'unhealthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    pubsub: pubSubManager?.getStatus() ?? 'not_initialized'
+  });
 });
 
 async function startServer() {
   try {
-    // Initialize configuration first
     await initializeConfig();
     
     const PORT = process.env.PORT || 8080;
-    server = app.listen(PORT, '0.0.0.0', () => {
-      console.log(`Task Queue service running on port ${PORT}`);
+    app.listen(PORT, '0.0.0.0', () => {
+      logger.info(`Task Queue service running on port ${PORT}`);
     });
 
-    // Initialize processor after server is running
-    await initializeProcessor();
-    isHealthy = true;
-
-    // Handle server errors
-    server.on('error', async (error) => {
-      console.error('Server error:', error);
-      isHealthy = false;
-      // Attempt graceful recovery
-      try {
-        await closeProcessor();
-        await initializeProcessor();
-        isHealthy = true;
-      } catch (recoveryError) {
-        console.error('Recovery failed:', recoveryError);
-      }
-    });
+    pubSubManager = new PubSubManager();
+    await pubSubManager.initialize();
 
   } catch (error) {
-    console.error('Error starting server:', error);
+    logger.error('Failed to start server:', error);
     process.exit(1);
   }
 }
 
-// Graceful shutdown
 process.on('SIGTERM', async () => {
-  console.log('Received SIGTERM signal. Starting graceful shutdown...');
-  isHealthy = false;
-  try {
-    await closeProcessor();
-    
-    if (server) {
-      server.close(() => {
-        console.log('HTTP server closed');
-        process.exit(0);
-      });
-    } else {
-      process.exit(0);
-    }
-  } catch (error) {
-    console.error('Error during shutdown:', error);
-    process.exit(1);
-  }
+  logger.info('Received SIGTERM signal. Starting graceful shutdown...');
+  await pubSubManager?.shutdown();
+  process.exit(0);
 });
 
-// Handle uncaught exceptions without exiting
-process.on('uncaughtException', async (error) => {
-  console.error('Uncaught exception:', error);
-  isHealthy = false;
-  try {
-    // Don't close the processor, just try to recover
-    await initializeProcessor();
-    isHealthy = true;
-  } catch (recoveryError) {
-    console.error('Error during recovery:', recoveryError);
-  }
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught exception:', error);
+  pubSubManager?.handleError(error);
 });
 
-// Handle unhandled promise rejections without exiting
-process.on('unhandledRejection', async (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  isHealthy = false;
-  try {
-    // Don't close the processor, just try to recover
-    await initializeProcessor();
-    isHealthy = true;
-  } catch (recoveryError) {
-    console.error('Error during recovery:', recoveryError);
-  }
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection:', reason);
+  pubSubManager?.handleError(reason);
 });
 
 startServer();
