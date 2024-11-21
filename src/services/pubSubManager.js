@@ -20,14 +20,11 @@ class PubSubManager {
 
   async initialize() {
     try {
-      this.logger.info('Initializing PubSub connection...', {
-        projectId: config.GOOGLE_CLOUD_PROJECT_ID,
-        mainTopic: PUBSUB_CONFIG.topics.main
-      });
+      this.logger.info('Initializing PubSub connection...');
 
       this.pubsub = new PubSub({
         projectId: config.GOOGLE_CLOUD_PROJECT_ID,
-        keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+        credentials: config.PUBSUB_CREDENTIALS,
         maxRetries: PUBSUB_CONFIG.retry.maxAttempts
       });
 
@@ -40,9 +37,7 @@ class PubSubManager {
     } catch (error) {
       this.logger.error('Failed to initialize PubSub:', {
         error: error.message,
-        stack: error.stack,
-        code: error.code,
-        details: error.details || 'No additional details'
+        stack: error.stack
       });
       await this.handleConnectionError(error);
     }
@@ -50,7 +45,6 @@ class PubSubManager {
 
   async verifyPubSubAccess() {
     try {
-      const [topics] = await this.pubsub.getTopics();
       const topic = this.pubsub.topic(PUBSUB_CONFIG.topics.main);
       const [exists] = await topic.exists();
       
@@ -62,8 +56,7 @@ class PubSubManager {
     } catch (error) {
       this.logger.error('PubSub access verification failed:', {
         error: error.message,
-        code: error.code,
-        details: error.details || 'No additional details'
+        code: error.code
       });
       throw error;
     }
@@ -72,7 +65,9 @@ class PubSubManager {
   async setupSubscription() {
     try {
       const topic = this.pubsub.topic(PUBSUB_CONFIG.topics.main);
-      this.subscription = topic.subscription(PUBSUB_CONFIG.subscription.name);
+      this.subscription = topic.subscription(PUBSUB_CONFIG.subscription.name, {
+        flowControl: PUBSUB_CONFIG.flowControl
+      });
       
       const [exists] = await this.subscription.exists();
       if (!exists) {
@@ -91,7 +86,7 @@ class PubSubManager {
             messageId: message.id,
             error: error.message
           });
-          message.ack(); // Acknowledge to prevent infinite retries
+          message.ack(); // Always acknowledge to prevent infinite retries
           await this.handleMessageError(message, error);
         }
       };
@@ -103,8 +98,7 @@ class PubSubManager {
     } catch (error) {
       this.logger.error('Failed to setup subscription:', {
         error: error.message,
-        code: error.code,
-        details: error.details || 'No additional details'
+        code: error.code
       });
       throw error;
     }
@@ -129,6 +123,7 @@ class PubSubManager {
 
       this.retryTimeout = setTimeout(async () => {
         try {
+          this._status = 'reconnecting';
           await this.initialize();
           this.retryAttempts = 0;
         } catch (retryError) {
@@ -137,6 +132,7 @@ class PubSubManager {
       }, delay);
     } else {
       this.logger.error('Max retry attempts reached. Manual intervention required.');
+      this._status = 'failed';
       process.exit(1);
     }
   }
@@ -144,8 +140,7 @@ class PubSubManager {
   async handleSubscriptionError(error) {
     this.logger.error('Subscription error:', {
       error: error.message,
-      code: error.code,
-      details: error.details || 'No additional details'
+      code: error.code
     });
     
     if (!this.isShuttingDown) {
