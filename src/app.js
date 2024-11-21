@@ -56,24 +56,18 @@ async function startServer() {
 
 process.on('SIGTERM', async () => {
   logger.info('Received SIGTERM signal. Starting graceful shutdown...');
-  if (pubSubManager) {
-    await pubSubManager.shutdown();
-  }
+  await pubSubManager?.shutdown();
   process.exit(0);
 });
 
 process.on('uncaughtException', (error) => {
   logger.error('Uncaught exception:', error);
-  if (pubSubManager) {
-    pubSubManager.handleError(error);
-  }
+  pubSubManager?.handleError(error);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   logger.error('Unhandled Rejection:', reason);
-  if (pubSubManager) {
-    pubSubManager.handleError(reason);
-  }
+  pubSubManager?.handleError(reason);
 });
 
 startServer();
