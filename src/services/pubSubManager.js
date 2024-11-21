@@ -16,7 +16,6 @@ class PubSubManager {
     this.healthCheckInterval = null;
     this._status = 'initializing';
     this.messageHandler = null;
-    this.flowControlledSubscription = null;
   }
 
   async initialize() {
@@ -26,7 +25,6 @@ class PubSubManager {
         mainTopic: PUBSUB_CONFIG.topics.main
       });
 
-      // Initialize PubSub client with explicit credentials
       this.pubsub = new PubSub({
         projectId: config.GOOGLE_CLOUD_PROJECT_ID,
         keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
@@ -52,52 +50,192 @@ class PubSubManager {
 
   async verifyPubSubAccess() {
     try {
-      // Log authentication method being used
-      this.logger.info('Verifying PubSub authentication...', {
-        usingExplicitCredentials: !!process.env.GOOGLE_APPLICATION_CREDENTIALS,
-        projectId: config.GOOGLE_CLOUD_PROJECT_ID
-      });
-
-      // Test PubSub API access
-      const [projectExists] = await this.pubsub.getProjectId();
-      if (!projectExists) {
-        throw new Error(`Project ${config.GOOGLE_CLOUD_PROJECT_ID} not found or no access`);
-      }
-      
-      // List all topics to verify permissions
       const [topics] = await this.pubsub.getTopics();
-      this.logger.info('Successfully listed topics', {
-        topicCount: topics.length
-      });
-      
-      // Verify main topic exists
       const topic = this.pubsub.topic(PUBSUB_CONFIG.topics.main);
       const [exists] = await topic.exists();
       
       if (!exists) {
-        this.logger.error(`Required topic ${PUBSUB_CONFIG.topics.main} does not exist`, {
-          availableTopics: topics.map(t => t.name)
-        });
         throw new Error(`Topic ${PUBSUB_CONFIG.topics.main} not found`);
       }
 
-      this.logger.info('PubSub access verified successfully', {
-        topic: PUBSUB_CONFIG.topics.main,
-        exists: true
-      });
+      this.logger.info('PubSub access verified successfully');
     } catch (error) {
       this.logger.error('PubSub access verification failed:', {
         error: error.message,
         code: error.code,
-        details: error.details || 'No additional details',
-        stack: error.stack,
-        authMethod: process.env.GOOGLE_APPLICATION_CREDENTIALS ? 'explicit' : 'implicit'
+        details: error.details || 'No additional details'
       });
       throw error;
     }
   }
 
-  // ... rest of the class implementation remains the same ...
+  async setupSubscription() {
+    try {
+      const topic = this.pubsub.topic(PUBSUB_CONFIG.topics.main);
+      this.subscription = topic.subscription(PUBSUB_CONFIG.subscription.name);
+      
+      const [exists] = await this.subscription.exists();
+      if (!exists) {
+        [this.subscription] = await topic.createSubscription(
+          PUBSUB_CONFIG.subscription.name,
+          PUBSUB_CONFIG.subscription.settings
+        );
+      }
+
+      this.messageHandler = async (message) => {
+        try {
+          await this.processor.processMessage(message);
+          message.ack();
+        } catch (error) {
+          this.logger.error('Error processing message:', {
+            messageId: message.id,
+            error: error.message
+          });
+          message.ack(); // Acknowledge to prevent infinite retries
+          await this.handleMessageError(message, error);
+        }
+      };
+
+      this.subscription.on('message', this.messageHandler);
+      this.subscription.on('error', this.handleSubscriptionError.bind(this));
+
+      this.logger.info('Subscription setup complete');
+    } catch (error) {
+      this.logger.error('Failed to setup subscription:', {
+        error: error.message,
+        code: error.code,
+        details: error.details || 'No additional details'
+      });
+      throw error;
+    }
+  }
+
+  async handleConnectionError(error) {
+    if (this.isShuttingDown) return;
+
+    const delay = Math.min(
+      PUBSUB_CONFIG.retry.initialDelay * Math.pow(PUBSUB_CONFIG.retry.backoffMultiplier, this.retryAttempts),
+      PUBSUB_CONFIG.retry.maxDelay
+    );
+
+    this.retryAttempts++;
+    
+    if (this.retryAttempts <= PUBSUB_CONFIG.retry.maxAttempts) {
+      this.logger.info(`Attempting reconnection in ${delay}ms (attempt ${this.retryAttempts}/${PUBSUB_CONFIG.retry.maxAttempts})`);
+      
+      if (this.retryTimeout) {
+        clearTimeout(this.retryTimeout);
+      }
+
+      this.retryTimeout = setTimeout(async () => {
+        try {
+          await this.initialize();
+          this.retryAttempts = 0;
+        } catch (retryError) {
+          await this.handleConnectionError(retryError);
+        }
+      }, delay);
+    } else {
+      this.logger.error('Max retry attempts reached. Manual intervention required.');
+      process.exit(1);
+    }
+  }
+
+  async handleSubscriptionError(error) {
+    this.logger.error('Subscription error:', {
+      error: error.message,
+      code: error.code,
+      details: error.details || 'No additional details'
+    });
+    
+    if (!this.isShuttingDown) {
+      await this.handleConnectionError(error);
+    }
+  }
+
+  async handleMessageError(message, error) {
+    try {
+      const failedTopic = this.pubsub.topic(PUBSUB_CONFIG.topics.failed);
+      const [exists] = await failedTopic.exists();
+      
+      if (!exists) {
+        await failedTopic.create();
+      }
+
+      await failedTopic.publish(message.data);
+      
+      this.logger.info('Message moved to failed topic', {
+        messageId: message.id,
+        failedTopic: PUBSUB_CONFIG.topics.failed
+      });
+    } catch (dlqError) {
+      this.logger.error('Failed to move message to DLQ:', {
+        messageId: message.id,
+        error: dlqError.message
+      });
+    }
+  }
+
+  async startHealthCheck() {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+    }
+
+    this.healthCheckInterval = setInterval(async () => {
+      try {
+        if (!this.subscription || this.isShuttingDown) return;
+
+        const [metadata] = await this.subscription.getMetadata();
+        this.logger.debug('Health check passed', { subscription: metadata.name });
+      } catch (error) {
+        this.logger.error('Health check failed:', {
+          error: error.message,
+          code: error.code
+        });
+        await this.handleConnectionError(error);
+      }
+    }, PUBSUB_CONFIG.healthCheck.interval);
+  }
+
+  async shutdown() {
+    this.isShuttingDown = true;
+    this._status = 'shutting_down';
+
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+    }
+
+    if (this.retryTimeout) {
+      clearTimeout(this.retryTimeout);
+    }
+
+    if (this.subscription && this.messageHandler) {
+      this.subscription.removeListener('message', this.messageHandler);
+      await this.subscription.close();
+      this.logger.info('Subscription closed');
+    }
+
+    this._status = 'shutdown';
+  }
+
+  handleError(error) {
+    this.logger.error('System error:', {
+      error: error.message,
+      stack: error.stack
+    });
+    
+    if (!this.isShuttingDown) {
+      this.handleConnectionError(error);
+    }
+  }
+
+  isHealthy() {
+    return this._status === 'connected';
+  }
+
+  getStatus() {
+    return this._status;
+  }
 }
 
 module.exports = { PubSubManager };
