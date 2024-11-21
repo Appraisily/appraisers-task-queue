@@ -5,6 +5,33 @@ const { createLogger } = require('../utils/logger');
 const config = {};
 const logger = createLogger('config');
 
+async function loadServiceAccountKey() {
+  try {
+    const secretClient = new SecretManagerServiceClient();
+    const secretName = `projects/${config.GOOGLE_CLOUD_PROJECT_ID}/secrets/pubsub-service-account/versions/latest`;
+    
+    logger.info('Loading PubSub service account from Secret Manager...');
+    const [version] = await secretClient.accessSecretVersion({ name: secretName });
+    const credentials = version.payload.data.toString('utf8');
+    
+    // Save credentials to a temporary file
+    const fs = require('fs');
+    const path = require('path');
+    const tempPath = path.join(process.cwd(), 'temp-credentials.json');
+    fs.writeFileSync(tempPath, credentials);
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = tempPath;
+    
+    logger.info('PubSub service account loaded successfully');
+  } catch (error) {
+    logger.error('Failed to load PubSub service account:', {
+      error: error.message,
+      code: error.code,
+      details: error.details || 'No additional details'
+    });
+    throw new Error('Could not initialize PubSub authentication');
+  }
+}
+
 async function loadJwtSecret() {
   try {
     const secretClient = new SecretManagerServiceClient();
@@ -27,7 +54,7 @@ async function loadJwtSecret() {
     logger.error('Failed to load JWT secret:', {
       error: error.message,
       code: error.code,
-      details: error.details
+      details: error.details || 'No additional details'
     });
     throw new Error('Could not initialize JWT authentication');
   }
@@ -48,12 +75,16 @@ async function initializeConfig() {
       backendUrl: config.BACKEND_API_URL
     });
 
+    // Load service account first
+    await loadServiceAccountKey();
     await loadJwtSecret();
+    
     logger.info('Configuration initialized successfully');
   } catch (error) {
     logger.error('Error initializing configuration:', {
       error: error.message,
-      stack: error.stack
+      stack: error.stack,
+      details: error.details || 'No additional details'
     });
     throw error;
   }

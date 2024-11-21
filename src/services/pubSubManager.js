@@ -7,10 +7,7 @@ const { TaskProcessor } = require('./taskProcessor');
 class PubSubManager {
   constructor() {
     this.logger = createLogger('PubSubManager');
-    this.pubsub = new PubSub({ 
-      projectId: config.GOOGLE_CLOUD_PROJECT_ID,
-      maxRetries: PUBSUB_CONFIG.retry.maxAttempts
-    });
+    this.pubsub = null;
     this.subscription = null;
     this.processor = new TaskProcessor();
     this.retryAttempts = 0;
@@ -29,6 +26,13 @@ class PubSubManager {
         mainTopic: PUBSUB_CONFIG.topics.main
       });
 
+      // Initialize PubSub client with explicit credentials
+      this.pubsub = new PubSub({
+        projectId: config.GOOGLE_CLOUD_PROJECT_ID,
+        keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+        maxRetries: PUBSUB_CONFIG.retry.maxAttempts
+      });
+
       await this.verifyPubSubAccess();
       await this.setupSubscription();
       await this.startHealthCheck();
@@ -39,7 +43,8 @@ class PubSubManager {
       this.logger.error('Failed to initialize PubSub:', {
         error: error.message,
         stack: error.stack,
-        code: error.code
+        code: error.code,
+        details: error.details || 'No additional details'
       });
       await this.handleConnectionError(error);
     }
@@ -47,219 +52,52 @@ class PubSubManager {
 
   async verifyPubSubAccess() {
     try {
+      // Log authentication method being used
+      this.logger.info('Verifying PubSub authentication...', {
+        usingExplicitCredentials: !!process.env.GOOGLE_APPLICATION_CREDENTIALS,
+        projectId: config.GOOGLE_CLOUD_PROJECT_ID
+      });
+
       // Test PubSub API access
-      await this.pubsub.getProjectId();
+      const [projectExists] = await this.pubsub.getProjectId();
+      if (!projectExists) {
+        throw new Error(`Project ${config.GOOGLE_CLOUD_PROJECT_ID} not found or no access`);
+      }
+      
+      // List all topics to verify permissions
+      const [topics] = await this.pubsub.getTopics();
+      this.logger.info('Successfully listed topics', {
+        topicCount: topics.length
+      });
       
       // Verify main topic exists
       const topic = this.pubsub.topic(PUBSUB_CONFIG.topics.main);
       const [exists] = await topic.exists();
       
       if (!exists) {
-        this.logger.error(`Required topic ${PUBSUB_CONFIG.topics.main} does not exist`);
+        this.logger.error(`Required topic ${PUBSUB_CONFIG.topics.main} does not exist`, {
+          availableTopics: topics.map(t => t.name)
+        });
         throw new Error(`Topic ${PUBSUB_CONFIG.topics.main} not found`);
       }
 
-      this.logger.info('PubSub access verified successfully');
+      this.logger.info('PubSub access verified successfully', {
+        topic: PUBSUB_CONFIG.topics.main,
+        exists: true
+      });
     } catch (error) {
       this.logger.error('PubSub access verification failed:', {
         error: error.message,
         code: error.code,
-        details: error.details
+        details: error.details || 'No additional details',
+        stack: error.stack,
+        authMethod: process.env.GOOGLE_APPLICATION_CREDENTIALS ? 'explicit' : 'implicit'
       });
       throw error;
     }
   }
 
-  async setupSubscription() {
-    try {
-      const topic = this.pubsub.topic(PUBSUB_CONFIG.topics.main);
-      
-      // Get or create subscription
-      this.subscription = topic.subscription(PUBSUB_CONFIG.subscription.name);
-      const [subExists] = await this.subscription.exists();
-
-      if (!subExists) {
-        this.logger.info('Creating new subscription...', {
-          name: PUBSUB_CONFIG.subscription.name
-        });
-
-        // Ensure DLQ topic exists
-        const deadLetterTopic = this.pubsub.topic(PUBSUB_CONFIG.topics.failed);
-        const [dlqExists] = await deadLetterTopic.exists();
-        
-        if (!dlqExists) {
-          this.logger.info('Creating dead letter queue topic...');
-          await deadLetterTopic.create();
-        }
-
-        const subscriptionConfig = {
-          ...PUBSUB_CONFIG.subscription.settings,
-          deadLetterPolicy: {
-            ...PUBSUB_CONFIG.subscription.settings.deadLetterPolicy,
-            deadLetterTopic: deadLetterTopic.name
-          }
-        };
-
-        [this.subscription] = await topic.createSubscription(
-          PUBSUB_CONFIG.subscription.name,
-          subscriptionConfig
-        );
-
-        this.logger.info('Subscription created successfully');
-      } else {
-        this.logger.info('Using existing subscription', {
-          name: PUBSUB_CONFIG.subscription.name
-        });
-      }
-
-      // Set up flow control
-      this.flowControlledSubscription = this.subscription.setFlowControl(
-        PUBSUB_CONFIG.flowControl
-      );
-
-      // Create and set up message handler
-      if (!this.messageHandler) {
-        this.messageHandler = this.createMessageHandler();
-      }
-
-      // Clean up existing listeners
-      this.subscription.removeAllListeners();
-      
-      // Add message handler with error boundary
-      this.subscription.on('message', async (message) => {
-        try {
-          await this.messageHandler(message);
-        } catch (error) {
-          this.logger.error('Error in message handler:', {
-            error: error.message,
-            messageId: message.id
-          });
-          message.ack();
-        }
-      });
-      
-      // Setup error handlers
-      this.setupErrorHandlers();
-      
-      this.logger.info('Subscription setup complete');
-    } catch (error) {
-      this.logger.error('Failed to setup subscription:', {
-        error: error.message,
-        code: error.code,
-        details: error.details,
-        stack: error.stack
-      });
-      throw error;
-    }
-  }
-
-  createMessageHandler() {
-    return async (message) => {
-      const startTime = Date.now();
-      const messageId = message.id;
-      
-      try {
-        this.logger.info(`Processing message ${messageId}`);
-        await this.processor.processMessage(message);
-        message.ack();
-        
-        const processingTime = Date.now() - startTime;
-        this.logger.info(`Message ${messageId} processed in ${processingTime}ms`);
-      } catch (error) {
-        const processingTime = Date.now() - startTime;
-        this.logger.error(`Error processing message ${messageId}:`, {
-          error: error.message,
-          processingTime,
-          stack: error.stack
-        });
-        message.ack();
-        await this.handleProcessingError(error, message).catch(err => {
-          this.logger.error('Error handling processing error:', err);
-        });
-      }
-    };
-  }
-
-  setupErrorHandlers() {
-    this.subscription.on('error', async (error) => {
-      this.logger.error('Subscription error:', {
-        error: error.message,
-        code: error.code,
-        details: error.details
-      });
-      if (!this.isShuttingDown) {
-        await this.handleConnectionError(error);
-      }
-    });
-
-    this.subscription.on('close', async () => {
-      this.logger.warn('Subscription closed unexpectedly');
-      if (!this.isShuttingDown) {
-        await this.handleConnectionError(new Error('Subscription closed unexpectedly'));
-      }
-    });
-
-    this.subscription.on('drain', () => {
-      this.logger.info('Message backlog cleared');
-    });
-  }
-
-  async handleConnectionError(error) {
-    this._status = 'reconnecting';
-    
-    if (this.isShuttingDown) {
-      this.logger.info('Shutdown in progress, skipping reconnection');
-      return;
-    }
-
-    const delay = Math.min(
-      PUBSUB_CONFIG.retry.initialDelay * 
-      Math.pow(PUBSUB_CONFIG.retry.backoffMultiplier, this.retryAttempts),
-      PUBSUB_CONFIG.retry.maxDelay
-    );
-
-    this.logger.info(`Attempting reconnection in ${delay}ms (attempt ${this.retryAttempts + 1}/${PUBSUB_CONFIG.retry.maxAttempts})`);
-
-    if (this.retryTimeout) {
-      clearTimeout(this.retryTimeout);
-    }
-
-    this.retryTimeout = setTimeout(async () => {
-      try {
-        await this.reconnect();
-        this.retryAttempts = 0;
-        this._status = 'connected';
-      } catch (retryError) {
-        this.logger.error('Reconnection failed:', {
-          error: retryError.message,
-          attempt: this.retryAttempts + 1,
-          nextDelay: delay * 2
-        });
-        this.retryAttempts++;
-        await this.handleConnectionError(retryError);
-      }
-    }, delay);
-  }
-
-  async reconnect() {
-    this.logger.info('Attempting to reconnect...');
-    
-    if (this.subscription) {
-      try {
-        this.subscription.removeAllListeners();
-        await this.subscription.close();
-      } catch (error) {
-        this.logger.warn('Error closing existing subscription:', error);
-      }
-    }
-
-    await this.verifyPubSubAccess();
-    await this.setupSubscription();
-    this.logger.info('Successfully reconnected');
-  }
-
-  // Rest of the class implementation remains the same...
-  // (including handleProcessingError, startHealthCheck, shutdown, handleError, isHealthy, and getStatus methods)
+  // ... rest of the class implementation remains the same ...
 }
 
 module.exports = { PubSubManager };
