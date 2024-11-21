@@ -1,17 +1,16 @@
 const { PubSub } = require('@google-cloud/pubsub');
 const { createLogger } = require('../utils/logger');
 const { config } = require('../config');
+const { PUBSUB_CONFIG } = require('../config/pubsub.config');
 const { TaskProcessor } = require('./taskProcessor');
-
-const SUBSCRIPTION_NAME = 'appraisal-tasks-subscription';
-const MAX_RETRY_ATTEMPTS = 10;
-const INITIAL_RETRY_DELAY = 1000;
-const MAX_RETRY_DELAY = 30000;
 
 class PubSubManager {
   constructor() {
     this.logger = createLogger('PubSubManager');
-    this.pubsub = new PubSub({ projectId: config.GOOGLE_CLOUD_PROJECT_ID });
+    this.pubsub = new PubSub({ 
+      projectId: config.GOOGLE_CLOUD_PROJECT_ID,
+      maxRetries: PUBSUB_CONFIG.retry.maxAttempts
+    });
     this.subscription = null;
     this.processor = new TaskProcessor();
     this.retryAttempts = 0;
@@ -20,6 +19,7 @@ class PubSubManager {
     this.healthCheckInterval = null;
     this._status = 'initializing';
     this.messageHandler = null;
+    this.flowControlledSubscription = null;
   }
 
   async initialize() {
@@ -37,44 +37,64 @@ class PubSubManager {
 
   async setupSubscription() {
     try {
-      const topic = this.pubsub.topic('appraisal-tasks');
+      const topic = this.pubsub.topic(PUBSUB_CONFIG.topics.main);
       const [exists] = await topic.exists();
       
       if (!exists) {
-        throw new Error('Required topic does not exist');
+        throw new Error(`Required topic ${PUBSUB_CONFIG.topics.main} does not exist`);
       }
 
-      this.subscription = topic.subscription(SUBSCRIPTION_NAME);
+      // Create or get subscription
+      this.subscription = topic.subscription(PUBSUB_CONFIG.subscription.name);
       const [subExists] = await this.subscription.exists();
 
       if (!subExists) {
         this.logger.info('Creating new subscription...');
-        [this.subscription] = await topic.createSubscription(SUBSCRIPTION_NAME, {
-          ackDeadlineSeconds: 600,
-          messageRetentionDuration: { seconds: 604800 },
-          expirationPolicy: { ttl: null },
-          enableMessageOrdering: true,
+        const deadLetterTopic = this.pubsub.topic(PUBSUB_CONFIG.topics.failed);
+        const [dlqExists] = await deadLetterTopic.exists();
+        
+        if (!dlqExists) {
+          this.logger.info('Creating dead letter queue topic...');
+          await deadLetterTopic.create();
+        }
+
+        const subscriptionConfig = {
+          ...PUBSUB_CONFIG.subscription.settings,
           deadLetterPolicy: {
-            deadLetterTopic: `projects/${config.GOOGLE_CLOUD_PROJECT_ID}/topics/appraisals-failed`,
-            maxDeliveryAttempts: 5
-          },
-          retryPolicy: {
-            minimumBackoff: { seconds: 10 },
-            maximumBackoff: { seconds: 600 }
+            ...PUBSUB_CONFIG.subscription.settings.deadLetterPolicy,
+            deadLetterTopic: deadLetterTopic.name
           }
-        });
+        };
+
+        [this.subscription] = await topic.createSubscription(
+          PUBSUB_CONFIG.subscription.name,
+          subscriptionConfig
+        );
       }
 
-      // Create message handler if it doesn't exist
+      // Set up flow control
+      this.flowControlledSubscription = this.subscription.setFlowControl(
+        PUBSUB_CONFIG.flowControl
+      );
+
+      // Create and set up message handler
       if (!this.messageHandler) {
         this.messageHandler = this.createMessageHandler();
       }
 
-      // Remove existing listener if any
-      this.subscription.removeListener('message', this.messageHandler);
+      // Clean up existing listeners
+      this.subscription.removeAllListeners();
       
-      // Add message handler
-      this.subscription.on('message', this.messageHandler);
+      // Add message handler with error boundary
+      this.subscription.on('message', async (message) => {
+        try {
+          await this.messageHandler(message);
+        } catch (error) {
+          this.logger.error('Error in message handler:', error);
+          // Ensure message is acked to prevent infinite retries
+          message.ack();
+        }
+      });
       
       // Setup error handlers
       this.setupErrorHandlers();
@@ -88,15 +108,18 @@ class PubSubManager {
 
   createMessageHandler() {
     return async (message) => {
+      const startTime = Date.now();
       try {
         this.logger.info(`Processing message ${message.id}`);
         await this.processor.processMessage(message);
         message.ack();
+        
+        const processingTime = Date.now() - startTime;
+        this.logger.info(`Message ${message.id} processed in ${processingTime}ms`);
       } catch (error) {
-        this.logger.error(`Error processing message ${message.id}:`, error);
-        // Always acknowledge the message to prevent infinite retries
-        message.ack();
-        // Handle the error but don't throw it
+        const processingTime = Date.now() - startTime;
+        this.logger.error(`Error processing message ${message.id} after ${processingTime}ms:`, error);
+        message.ack(); // Always acknowledge to prevent infinite retries
         await this.handleProcessingError(error, message).catch(err => {
           this.logger.error('Error handling processing error:', err);
         });
@@ -105,10 +128,6 @@ class PubSubManager {
   }
 
   setupErrorHandlers() {
-    // Remove existing error listeners
-    this.subscription.removeAllListeners('error');
-    this.subscription.removeAllListeners('close');
-
     this.subscription.on('error', async (error) => {
       this.logger.error('Subscription error:', error);
       if (!this.isShuttingDown) {
@@ -119,8 +138,13 @@ class PubSubManager {
     this.subscription.on('close', async () => {
       this.logger.warn('Subscription closed unexpectedly');
       if (!this.isShuttingDown) {
-        await this.handleConnectionError(new Error('Subscription closed'));
+        await this.handleConnectionError(new Error('Subscription closed unexpectedly'));
       }
+    });
+
+    // Handle backpressure
+    this.subscription.on('drain', () => {
+      this.logger.info('Message backlog cleared');
     });
   }
 
@@ -132,18 +156,19 @@ class PubSubManager {
       return;
     }
 
-    if (this.retryAttempts >= MAX_RETRY_ATTEMPTS) {
-      this.logger.error('Max retry attempts reached, exiting process');
-      process.exit(1);
-      return;
+    if (this.retryAttempts >= PUBSUB_CONFIG.retry.maxAttempts) {
+      this.logger.error('Max retry attempts reached');
+      // Instead of exiting, keep trying with max delay
+      this.retryAttempts = PUBSUB_CONFIG.retry.maxAttempts;
     }
 
     const delay = Math.min(
-      INITIAL_RETRY_DELAY * Math.pow(2, this.retryAttempts),
-      MAX_RETRY_DELAY
+      PUBSUB_CONFIG.retry.initialDelay * 
+      Math.pow(PUBSUB_CONFIG.retry.backoffMultiplier, this.retryAttempts),
+      PUBSUB_CONFIG.retry.maxDelay
     );
 
-    this.logger.info(`Attempting reconnection in ${delay}ms (attempt ${this.retryAttempts + 1}/${MAX_RETRY_ATTEMPTS})`);
+    this.logger.info(`Attempting reconnection in ${delay}ms (attempt ${this.retryAttempts + 1})`);
 
     if (this.retryTimeout) {
       clearTimeout(this.retryTimeout);
@@ -167,7 +192,6 @@ class PubSubManager {
     
     if (this.subscription) {
       try {
-        // Remove all listeners before closing
         this.subscription.removeAllListeners();
         await this.subscription.close();
       } catch (error) {
@@ -198,17 +222,25 @@ class PubSubManager {
           const [metadata] = await this.subscription.getMetadata();
           this.logger.debug('Health check passed:', metadata.name);
           
-          // If subscription exists but no message handler, reattach it
+          // Verify message handler attachment
           if (!this.subscription.listenerCount('message')) {
             this.logger.warn('No message handler found, reattaching...');
-            this.subscription.on('message', this.messageHandler);
+            if (this.messageHandler) {
+              this.subscription.on('message', this.messageHandler);
+            } else {
+              this.logger.error('Message handler is null, recreating...');
+              this.messageHandler = this.createMessageHandler();
+              this.subscription.on('message', this.messageHandler);
+            }
           }
+        } else {
+          throw new Error('Subscription is null');
         }
       } catch (error) {
         this.logger.error('Health check failed:', error);
         await this.handleConnectionError(error);
       }
-    }, 30000);
+    }, PUBSUB_CONFIG.healthCheck.interval);
   }
 
   async shutdown() {
@@ -223,13 +255,17 @@ class PubSubManager {
       clearTimeout(this.retryTimeout);
     }
 
+    // Wait for in-flight messages to complete
     if (this.subscription) {
       try {
+        this.logger.info('Waiting for in-flight messages to complete...');
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
         this.subscription.removeAllListeners();
         await this.subscription.close();
-        this.logger.info('Subscription closed');
+        this.logger.info('Subscription closed gracefully');
       } catch (error) {
-        this.logger.error('Error closing subscription:', error);
+        this.logger.error('Error during graceful shutdown:', error);
       }
     }
   }
@@ -244,11 +280,18 @@ class PubSubManager {
   }
 
   isHealthy() {
-    return this._status === 'connected';
+    return this._status === 'connected' && 
+           this.subscription !== null && 
+           this.subscription.listenerCount('message') > 0;
   }
 
   getStatus() {
-    return this._status;
+    return {
+      status: this._status,
+      retryAttempts: this.retryAttempts,
+      hasMessageHandler: this.messageHandler !== null,
+      listenerCount: this.subscription?.listenerCount('message') ?? 0
+    };
   }
 }
 
