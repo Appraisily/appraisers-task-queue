@@ -5,6 +5,7 @@ class TaskProcessor {
   constructor() {
     this.logger = createLogger('TaskProcessor');
     this.processedMessages = new Set();
+    this.failedMessages = new Set();
   }
 
   async processMessage(message) {
@@ -47,6 +48,23 @@ class TaskProcessor {
     }
   }
 
+  async addToFailedMessages(message) {
+    try {
+      const data = JSON.parse(message.data.toString());
+      this.failedMessages.add({
+        id: message.id,
+        data,
+        timestamp: new Date().toISOString(),
+        retryCount: message.deliveryAttempt || 1
+      });
+      
+      this.logger.info(`Added message ${message.id} to failed messages list`);
+      this.cleanupFailedMessages();
+    } catch (error) {
+      this.logger.error(`Error adding message ${message.id} to failed messages:`, error);
+    }
+  }
+
   validateMessageData(data) {
     return (
       data &&
@@ -64,6 +82,18 @@ class TaskProcessor {
     }
   }
 
+  cleanupFailedMessages() {
+    // Keep only last 100 failed messages
+    if (this.failedMessages.size > 100) {
+      const messages = Array.from(this.failedMessages);
+      this.failedMessages = new Set(messages.slice(-100));
+    }
+  }
+
+  getFailedMessages() {
+    return Array.from(this.failedMessages);
+  }
+
   async handleError(error, message) {
     this.logger.error('Processing error:', {
       messageId: message.id,
@@ -71,8 +101,7 @@ class TaskProcessor {
       stack: error.stack
     });
 
-    // Additional error handling logic can be added here
-    // For example, sending to a monitoring service or alerting
+    await this.addToFailedMessages(message);
   }
 }
 

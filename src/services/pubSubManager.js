@@ -7,6 +7,7 @@ const SUBSCRIPTION_NAME = 'appraisal-tasks-subscription';
 const MAX_RETRY_ATTEMPTS = 10;
 const INITIAL_RETRY_DELAY = 1000;
 const MAX_RETRY_DELAY = 30000;
+const GRACEFUL_SHUTDOWN_TIMEOUT = 30000; // 30 seconds
 
 class PubSubManager {
   constructor() {
@@ -19,6 +20,8 @@ class PubSubManager {
     this.isShuttingDown = false;
     this.healthCheckInterval = null;
     this._status = 'initializing';
+    this.activeMessages = new Set();
+    this.shutdownTimer = null;
   }
 
   async initialize() {
@@ -74,14 +77,26 @@ class PubSubManager {
 
   setupMessageHandler() {
     this.subscription.on('message', async (message) => {
+      // Add message to active set
+      this.activeMessages.add(message.id);
+
       try {
         this.logger.info(`Processing message ${message.id}`);
         await this.processor.processMessage(message);
         message.ack();
       } catch (error) {
         this.logger.error(`Error processing message ${message.id}:`, error);
+        await this.processor.addToFailedMessages(message);
         message.ack(); // Always ack to prevent infinite retries
         await this.handleProcessingError(error, message);
+      } finally {
+        // Remove message from active set
+        this.activeMessages.delete(message.id);
+        
+        // If shutting down and no more active messages, complete shutdown
+        if (this.isShuttingDown && this.activeMessages.size === 0) {
+          this.completeShutdown();
+        }
       }
     });
   }
@@ -180,15 +195,43 @@ class PubSubManager {
   }
 
   async shutdown() {
+    if (this.isShuttingDown) {
+      return;
+    }
+
     this.isShuttingDown = true;
     this._status = 'shutting_down';
     
+    // Clear any existing intervals and timeouts
     if (this.healthCheckInterval) {
       clearInterval(this.healthCheckInterval);
     }
     
     if (this.retryTimeout) {
       clearTimeout(this.retryTimeout);
+    }
+
+    if (this.shutdownTimer) {
+      clearTimeout(this.shutdownTimer);
+    }
+
+    const activeCount = this.activeMessages.size;
+    if (activeCount > 0) {
+      this.logger.info(`Waiting for ${activeCount} active messages to complete...`);
+      
+      // Set a timeout for graceful shutdown
+      this.shutdownTimer = setTimeout(() => {
+        this.logger.warn('Graceful shutdown timeout reached, forcing exit');
+        this.completeShutdown();
+      }, GRACEFUL_SHUTDOWN_TIMEOUT);
+    } else {
+      this.completeShutdown();
+    }
+  }
+
+  async completeShutdown() {
+    if (this.shutdownTimer) {
+      clearTimeout(this.shutdownTimer);
     }
 
     if (this.subscription) {
@@ -199,6 +242,11 @@ class PubSubManager {
         this.logger.error('Error closing subscription:', error);
       }
     }
+
+    // Instead of exiting, attempt to reconnect
+    this.isShuttingDown = false;
+    this._status = 'reconnecting';
+    await this.reconnect();
   }
 
   handleError(error) {
