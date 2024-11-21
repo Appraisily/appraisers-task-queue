@@ -19,6 +19,7 @@ class PubSubManager {
     this.isShuttingDown = false;
     this.healthCheckInterval = null;
     this._status = 'initializing';
+    this.messageHandler = null;
   }
 
   async initialize() {
@@ -64,32 +65,55 @@ class PubSubManager {
         });
       }
 
-      this.setupMessageHandler();
+      // Create message handler if it doesn't exist
+      if (!this.messageHandler) {
+        this.messageHandler = this.createMessageHandler();
+      }
+
+      // Remove existing listener if any
+      this.subscription.removeListener('message', this.messageHandler);
+      
+      // Add message handler
+      this.subscription.on('message', this.messageHandler);
+      
+      // Setup error handlers
       this.setupErrorHandlers();
+      
+      this.logger.info('Subscription setup complete');
     } catch (error) {
       this.logger.error('Failed to setup subscription:', error);
       throw error;
     }
   }
 
-  setupMessageHandler() {
-    this.subscription.on('message', async (message) => {
+  createMessageHandler() {
+    return async (message) => {
       try {
         this.logger.info(`Processing message ${message.id}`);
         await this.processor.processMessage(message);
         message.ack();
       } catch (error) {
         this.logger.error(`Error processing message ${message.id}:`, error);
-        message.ack(); // Always ack to prevent infinite retries
-        await this.handleProcessingError(error, message);
+        // Always acknowledge the message to prevent infinite retries
+        message.ack();
+        // Handle the error but don't throw it
+        await this.handleProcessingError(error, message).catch(err => {
+          this.logger.error('Error handling processing error:', err);
+        });
       }
-    });
+    };
   }
 
   setupErrorHandlers() {
+    // Remove existing error listeners
+    this.subscription.removeAllListeners('error');
+    this.subscription.removeAllListeners('close');
+
     this.subscription.on('error', async (error) => {
       this.logger.error('Subscription error:', error);
-      await this.handleConnectionError(error);
+      if (!this.isShuttingDown) {
+        await this.handleConnectionError(error);
+      }
     });
 
     this.subscription.on('close', async () => {
@@ -143,6 +167,8 @@ class PubSubManager {
     
     if (this.subscription) {
       try {
+        // Remove all listeners before closing
+        this.subscription.removeAllListeners();
         await this.subscription.close();
       } catch (error) {
         this.logger.warn('Error closing existing subscription:', error);
@@ -171,6 +197,12 @@ class PubSubManager {
         if (this.subscription) {
           const [metadata] = await this.subscription.getMetadata();
           this.logger.debug('Health check passed:', metadata.name);
+          
+          // If subscription exists but no message handler, reattach it
+          if (!this.subscription.listenerCount('message')) {
+            this.logger.warn('No message handler found, reattaching...');
+            this.subscription.on('message', this.messageHandler);
+          }
         }
       } catch (error) {
         this.logger.error('Health check failed:', error);
@@ -193,6 +225,7 @@ class PubSubManager {
 
     if (this.subscription) {
       try {
+        this.subscription.removeAllListeners();
         await this.subscription.close();
         this.logger.info('Subscription closed');
       } catch (error) {
