@@ -14,7 +14,9 @@ class TaskQueueService {
     }
 
     try {
+      // Initialize appraisal service first
       await appraisalService.initialize();
+      
       this._initialized = true;
       this.logger.info('Task Queue Service initialized');
     } catch (error) {
