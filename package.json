@@ -18,10 +18,10 @@
     "jsonwebtoken": "^9.0.2",
     "node-fetch": "^2.6.7",
     "openai": "^4.20.1",
+    "p-retry": "^4.6.2",
     "pino": "^8.16.2",
     "pino-pretty": "^10.2.3",
-    "retry": "^0.13.1",
-    "p-retry": "^4.6.2"
+    "retry": "^0.13.1"
   },
   "devDependencies": {
     "nodemon": "^2.0.22"

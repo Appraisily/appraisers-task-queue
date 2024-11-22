@@ -11,6 +11,10 @@ const { withRetry } = require('./utils/retry');
 const logger = createLogger('app');
 const app = express();
 let server;
+let shuttingDown = false;
+
+// Set max listeners to prevent warning
+process.setMaxListeners(20);
 
 const corsOptions = {
   origin: [
@@ -37,7 +41,13 @@ app.get('/health', (req, res) => {
     services: serviceManager.getStatus()
   };
 
-  // Always return 200 during initialization to prevent container restarts
+  // During shutdown, return 503
+  if (shuttingDown) {
+    status.status = 'shutting_down';
+    return res.status(503).json(status);
+  }
+
+  // During initialization, return 200
   if (!serviceManager.isInitialized()) {
     status.message = 'Services are still initializing';
     return res.status(200).json(status);
@@ -102,6 +112,7 @@ async function initializeServices() {
 
     // Initialize all services
     await serviceManager.initializeAll();
+    logger.info('All services initialized successfully');
 
     setupGracefulShutdown();
     return true;
@@ -112,8 +123,6 @@ async function initializeServices() {
 }
 
 function setupGracefulShutdown() {
-  let shuttingDown = false;
-
   const shutdown = async (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -144,11 +153,21 @@ function setupGracefulShutdown() {
     }
   };
 
+  // Remove any existing handlers
+  ['SIGTERM', 'SIGINT'].forEach(signal => {
+    process.removeAllListeners(signal);
+  });
+
+  // Add our handlers
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-// Error handlers
+// Remove any existing handlers
+process.removeAllListeners('uncaughtException');
+process.removeAllListeners('unhandledRejection');
+
+// Add our handlers
 process.on('uncaughtException', (error) => {
   logger.error('Uncaught exception:', error);
   process.exit(1);
