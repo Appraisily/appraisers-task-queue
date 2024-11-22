@@ -1,10 +1,9 @@
-const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
 const { createLogger } = require('../utils/logger');
+const secretManager = require('../utils/secretManager');
 
 class Config {
   constructor() {
     this.logger = createLogger('Config');
-    this.secretClient = new SecretManagerServiceClient();
     this.initialized = false;
     this.GOOGLE_SHEET_NAME = 'Pending';
 
@@ -25,81 +24,54 @@ class Config {
         throw new Error('Missing required environment variable: GOOGLE_CLOUD_PROJECT_ID');
       }
 
-      // Load all required secrets
-      const secretNames = [
-        'PENDING_APPRAISALS_SPREADSHEET_ID',
-        'WORDPRESS_API_URL',
-        'wp_username',
-        'wp_app_password',
-        'SENDGRID_API_KEY',
-        'SENDGRID_EMAIL',
-        'SENDGRID_SECRET_NAME',
-        'SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED',
-        'OPENAI_API_KEY',
-        'service-account-json'
-      ];
-
-      const secrets = await Promise.all(
-        secretNames.map(name => this.getSecret(name))
-      );
-
-      // Map secrets to config properties
-      [
-        this.PENDING_APPRAISALS_SPREADSHEET_ID,
-        this.WORDPRESS_API_URL,
-        this.WORDPRESS_USERNAME,
-        this.WORDPRESS_APP_PASSWORD,
-        this.SENDGRID_API_KEY,
-        this.SENDGRID_EMAIL,
-        this.SENDGRID_SECRET_NAME,
-        this.SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED,
-        this.OPENAI_API_KEY,
-        this.SERVICE_ACCOUNT_JSON
-      ] = secrets;
-
-      // Validate required secrets
+      // Define required secrets with descriptions
       const requiredSecrets = [
-        'PENDING_APPRAISALS_SPREADSHEET_ID',
-        'WORDPRESS_API_URL',
-        'WORDPRESS_USERNAME',
-        'WORDPRESS_APP_PASSWORD',
-        'SENDGRID_API_KEY',
-        'SENDGRID_EMAIL',
-        'SERVICE_ACCOUNT_JSON'
+        { name: 'PENDING_APPRAISALS_SPREADSHEET_ID', required: true },
+        { name: 'WORDPRESS_API_URL', required: true },
+        { name: 'wp_username', required: true },
+        { name: 'wp_app_password', required: true },
+        { name: 'SENDGRID_API_KEY', required: true },
+        { name: 'SENDGRID_EMAIL', required: true },
+        { name: 'SENDGRID_SECRET_NAME', required: false },
+        { name: 'SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED', required: false },
+        { name: 'OPENAI_API_KEY', required: true },
+        { name: 'service-account-json', required: true }
       ];
 
-      for (const secret of requiredSecrets) {
-        if (!this[secret]) {
-          throw new Error(`Missing required secret: ${secret}`);
+      // Load secrets sequentially to avoid overwhelming Secret Manager
+      for (const { name, required } of requiredSecrets) {
+        try {
+          const value = await secretManager.getSecret(name);
+          const configKey = name.replace(/-/g, '_').toUpperCase();
+          this[configKey] = value;
+          this.logger.info(`Loaded secret: ${name}`);
+        } catch (error) {
+          if (required) {
+            throw error;
+          }
+          this.logger.warn(`Optional secret ${name} not found:`, error.message);
         }
+      }
+
+      // Validate all required secrets are loaded
+      const missingSecrets = requiredSecrets
+        .filter(({ name, required }) => required && !this[name.replace(/-/g, '_').toUpperCase()]);
+
+      if (missingSecrets.length > 0) {
+        throw new Error(`Missing required secrets: ${missingSecrets.map(s => s.name).join(', ')}`);
       }
 
       this.initialized = true;
       this.logger.info('Configuration initialized successfully');
     } catch (error) {
+      this.initialized = false;
       this.logger.error('Failed to initialize configuration:', error);
       throw error;
     }
   }
 
-  async getSecret(secretName, timeoutSeconds = 60) {
-    try {
-      const name = `projects/${this.GOOGLE_CLOUD_PROJECT_ID}/secrets/${secretName}/versions/latest`;
-      
-      const [version] = await this.secretClient.accessSecretVersion({
-        name,
-        timeout: timeoutSeconds * 1000
-      });
-
-      if (!version || !version.payload || !version.payload.data) {
-        throw new Error(`Secret ${secretName} not found or empty`);
-      }
-
-      return version.payload.data.toString('utf8');
-    } catch (error) {
-      this.logger.error(`Error getting secret ${secretName}:`, error);
-      throw error;
-    }
+  isInitialized() {
+    return this.initialized;
   }
 }
 
