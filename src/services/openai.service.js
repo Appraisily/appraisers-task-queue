@@ -10,7 +10,7 @@ class OpenAIService {
 
   async initialize() {
     try {
-      const apiKey = await getSecret('openai-api-key');
+      const apiKey = await getSecret('OPENAI_API_KEY');
       this.client = new OpenAI({ apiKey });
       this.logger.info('OpenAI service initialized');
     } catch (error) {
