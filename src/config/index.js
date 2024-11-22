@@ -1,55 +1,90 @@
 const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
-const jwt = require('jsonwebtoken');
+const { createLogger } = require('../utils/logger');
 
-const config = {};
+class Config {
+  constructor() {
+    this.logger = createLogger('Config');
+    this.secretClient = new SecretManagerServiceClient();
+    this.initialized = false;
 
-async function loadJwtSecret() {
-  try {
-    const secretClient = new SecretManagerServiceClient();
-    const secretName = `projects/${config.GOOGLE_CLOUD_PROJECT_ID}/secrets/jwt-secret/versions/latest`;
-    
-    console.log('Loading JWT secret from Secret Manager...');
-    const [version] = await secretClient.accessSecretVersion({ name: secretName });
-    config.JWT_SECRET = version.payload.data.toString('utf8');
-    
-    if (!config.JWT_SECRET) {
-      throw new Error('JWT secret is empty');
+    // Required environment variables
+    this.GOOGLE_CLOUD_PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT_ID;
+
+    // Default values that can be overridden by secrets
+    this.BACKEND_API_URL = 'https://appraisers-backend-856401495068.us-central1.run.app';
+    this.GOOGLE_SHEET_NAME = 'Pending';
+  }
+
+  async initialize() {
+    if (this.initialized) {
+      return;
     }
-    console.log('JWT secret loaded successfully');
-    
-    // Verify the secret is valid for JWT signing
-    const testToken = jwt.sign({ test: true }, config.JWT_SECRET, { expiresIn: '10s' });
-    jwt.verify(testToken, config.JWT_SECRET);
-    console.log('JWT secret verified and working correctly');
-  } catch (error) {
-    console.error('Failed to load JWT secret:', error);
-    throw new Error('Could not initialize JWT authentication');
+
+    try {
+      this.logger.info('Initializing configuration...');
+
+      // Validate required environment variables
+      if (!this.GOOGLE_CLOUD_PROJECT_ID) {
+        throw new Error('Missing required environment variable: GOOGLE_CLOUD_PROJECT_ID');
+      }
+
+      // Load all secrets with increased timeout
+      const [
+        spreadsheetId,
+        wordpressUrl,
+        wpUsername,
+        wpPassword,
+        sendgridApiKey,
+        sendgridEmail,
+        sendgridSecretName,
+        sendgridTemplate,
+        openaiApiKey
+      ] = await Promise.all([
+        this.getSecret('PENDING_APPRAISALS_SPREADSHEET_ID'),
+        this.getSecret('WORDPRESS_API_URL'),
+        this.getSecret('wp_username'),
+        this.getSecret('wp_app_password'),
+        this.getSecret('SENDGRID_API_KEY'),
+        this.getSecret('SENDGRID_EMAIL'),
+        this.getSecret('SENDGRID_SECRET_NAME'),
+        this.getSecret('SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED'),
+        this.getSecret('OPENAI_API_KEY')
+      ]);
+
+      // Set configuration from secrets
+      this.PENDING_APPRAISALS_SPREADSHEET_ID = spreadsheetId;
+      this.WORDPRESS_API_URL = wordpressUrl;
+      this.WORDPRESS_USERNAME = wpUsername;
+      this.WORDPRESS_APP_PASSWORD = wpPassword;
+      this.SENDGRID_API_KEY = sendgridApiKey;
+      this.SENDGRID_EMAIL = sendgridEmail;
+      this.SENDGRID_SECRET_NAME = sendgridSecretName;
+      this.SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED = sendgridTemplate;
+      this.OPENAI_API_KEY = openaiApiKey;
+
+      this.initialized = true;
+      this.logger.info('Configuration initialized successfully');
+    } catch (error) {
+      this.logger.error('Failed to initialize configuration:', error);
+      throw error;
+    }
+  }
+
+  async getSecret(secretName, timeoutSeconds = 60) {
+    try {
+      const name = `projects/${this.GOOGLE_CLOUD_PROJECT_ID}/secrets/${secretName}/versions/latest`;
+      
+      const [version] = await this.secretClient.accessSecretVersion({
+        name,
+        timeout: timeoutSeconds * 1000 // Convert to milliseconds
+      });
+
+      return version.payload.data.toString('utf8');
+    } catch (error) {
+      this.logger.error(`Error getting secret ${secretName}:`, error);
+      throw error;
+    }
   }
 }
 
-async function initializeConfig() {
-  try {
-    // Essential environment variables
-    config.GOOGLE_CLOUD_PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT_ID;
-    config.BACKEND_API_URL = 'https://appraisers-backend-856401495068.us-central1.run.app';
-
-    if (!config.GOOGLE_CLOUD_PROJECT_ID) {
-      throw new Error('Required environment variables are not set');
-    }
-
-    console.log('Environment variables loaded:', {
-      projectId: config.GOOGLE_CLOUD_PROJECT_ID,
-      backendUrl: config.BACKEND_API_URL
-    });
-
-    // Load JWT secret first
-    await loadJwtSecret();
-
-    console.log('Configuration initialized successfully');
-  } catch (error) {
-    console.error('Error initializing configuration:', error);
-    throw error;
-  }
-}
-
-module.exports = { config, initializeConfig };
+module.exports = new Config();

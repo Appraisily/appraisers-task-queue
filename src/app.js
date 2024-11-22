@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const { createLogger } = require('./utils/logger');
-const { initializeConfig } = require('./config');
+const config = require('./config');
 const { PubSubManager } = require('./services/pubSubManager');
 
 const logger = createLogger('app');
@@ -38,13 +38,15 @@ app.get('/health', (req, res) => {
 
 async function startServer() {
   try {
-    await initializeConfig();
+    // Initialize configuration first
+    await config.initialize();
     
     const PORT = process.env.PORT || 8080;
     app.listen(PORT, '0.0.0.0', () => {
       logger.info(`Task Queue service running on port ${PORT}`);
     });
 
+    // Initialize PubSub manager after config is ready
     pubSubManager = new PubSubManager();
     await pubSubManager.initialize();
 
@@ -62,12 +64,12 @@ process.on('SIGTERM', async () => {
 
 process.on('uncaughtException', (error) => {
   logger.error('Uncaught exception:', error);
-  pubSubManager?.handleError(error);
+  process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   logger.error('Unhandled Rejection:', reason);
-  pubSubManager?.handleError(reason);
+  process.exit(1);
 });
 
 startServer();
