@@ -2,9 +2,9 @@ const sheetsService = require('./sheets.service');
 const wordpressService = require('./wordpress.service');
 const openaiService = require('./openai.service');
 const emailService = require('./email.service');
+const pdfService = require('./pdf.service');
 const { config } = require('../config');
 const { createLogger } = require('../utils/logger');
-const fetch = require('node-fetch');
 
 class AppraisalService {
   constructor() {
@@ -13,9 +13,11 @@ class AppraisalService {
 
   async initialize() {
     try {
-      // Initialize required services
-      await sheetsService.initialize();
-      await openaiService.initialize();
+      await Promise.all([
+        sheetsService.initialize(),
+        openaiService.initialize(),
+        emailService.initialize()
+      ]);
       this.logger.info('Appraisal service initialized');
     } catch (error) {
       this.logger.error('Failed to initialize appraisal service:', error);
@@ -171,33 +173,20 @@ class AppraisalService {
 
       // Get session ID from WordPress
       const wpData = await wordpressService.getPost(postId);
-      const session_ID = wpData.acf?.session_id;
+      const sessionId = wpData.acf?.session_id;
 
-      // Call PDF generation service
-      const response = await fetch(
-        'https://appraisals-backend-856401495068.us-central1.run.app/generate-pdf',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ postId, session_ID })
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`Failed to generate PDF: ${response.statusText}`);
-      }
-
-      const data = await response.json();
+      // Generate PDF using PDF service
+      const { pdfLink, docLink } = await pdfService.generatePDF(postId, sessionId);
 
       // Update sheets with PDF and Doc links
       await sheetsService.updateValues(
         config.PENDING_APPRAISALS_SPREADSHEET_ID,
         `${config.GOOGLE_SHEET_NAME}!M${id}:N${id}`,
-        [[data.pdfLink, data.docLink]]
+        [[pdfLink, docLink]]
       );
 
       this.logger.info(`Successfully built PDF for appraisal ${id}`);
-      return data;
+      return { pdfLink, docLink };
     } catch (error) {
       this.logger.error(`Error building PDF for appraisal ${id}:`, error);
       throw error;
