@@ -47,20 +47,22 @@ app.get('/health', (req, res) => {
     return res.status(503).json(status);
   }
 
-  // During initialization, return 200
+  // During initialization, return 200 with detailed status
   if (!serviceManager.isInitialized()) {
     status.message = 'Services are still initializing';
+    status.initializationErrors = serviceManager.getInitializationErrors();
     return res.status(200).json(status);
   }
 
   // Once initialized, return actual health status
-  const isHealthy = Object.values(status.services)
-    .every(s => s === 'initialized');
+  const serviceStates = Object.values(status.services).map(s => s.state);
+  const isHealthy = serviceStates.every(state => state === 'initialized');
 
   status.status = isHealthy ? 'healthy' : 'unhealthy';
   
   if (!isHealthy) {
     status.error = 'One or more services are not initialized';
+    status.initializationErrors = serviceManager.getInitializationErrors();
   }
 
   res.status(isHealthy ? 200 : 503).json(status);
@@ -92,14 +94,36 @@ async function initializeServices() {
 
     // Initialize secret manager first
     await withRetry(
-      () => secretManager.initialize(),
+      async () => {
+        try {
+          await secretManager.initialize();
+        } catch (error) {
+          logger.error('Secret Manager initialization error:', {
+            error: error.message,
+            stack: error.stack,
+            cause: error.cause
+          });
+          throw error;
+        }
+      },
       { name: 'Secret Manager initialization', retries: 5 }
     );
     logger.info('Secret Manager initialized');
 
     // Initialize configuration
     await withRetry(
-      () => config.initialize(),
+      async () => {
+        try {
+          await config.initialize();
+        } catch (error) {
+          logger.error('Configuration initialization error:', {
+            error: error.message,
+            stack: error.stack,
+            cause: error.cause
+          });
+          throw error;
+        }
+      },
       { name: 'Configuration initialization', retries: 3 }
     );
     logger.info('Configuration initialized');
@@ -117,7 +141,12 @@ async function initializeServices() {
     setupGracefulShutdown();
     return true;
   } catch (error) {
-    logger.error('Failed to initialize services:', error);
+    logger.error('Failed to initialize services:', {
+      error: error.message,
+      stack: error.stack,
+      cause: error.cause,
+      initializationErrors: serviceManager.getInitializationErrors()
+    });
     throw error;
   }
 }
@@ -148,7 +177,10 @@ function setupGracefulShutdown() {
         process.exit(0);
       }
     } catch (error) {
-      logger.error('Error during shutdown:', error);
+      logger.error('Error during shutdown:', {
+        error: error.message,
+        stack: error.stack
+      });
       process.exit(1);
     }
   };
@@ -169,17 +201,28 @@ process.removeAllListeners('unhandledRejection');
 
 // Add our handlers
 process.on('uncaughtException', (error) => {
-  logger.error('Uncaught exception:', error);
+  logger.error('Uncaught exception:', {
+    error: error.message,
+    stack: error.stack,
+    type: error.name
+  });
   process.exit(1);
 });
 
 process.on('unhandledRejection', (reason) => {
-  logger.error('Unhandled rejection:', reason);
+  logger.error('Unhandled rejection:', {
+    reason: reason instanceof Error ? reason.message : reason,
+    stack: reason instanceof Error ? reason.stack : undefined
+  });
   process.exit(1);
 });
 
 // Start the server
 initializeServices().catch((error) => {
-  logger.error('Fatal error during initialization:', error);
+  logger.error('Fatal error during initialization:', {
+    error: error.message,
+    stack: error.stack,
+    initializationErrors: serviceManager.getInitializationErrors()
+  });
   process.exit(1);
 });
