@@ -6,7 +6,6 @@ const { PubSubManager } = require('./services/pubSubManager');
 
 const logger = createLogger('app');
 const app = express();
-let pubSubManager;
 
 const corsOptions = {
   origin: [
@@ -24,7 +23,9 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
+// Health check endpoint
 app.get('/health', (req, res) => {
+  const pubSubManager = req.app.locals.pubSubManager;
   const isHealthy = pubSubManager?.isHealthy() ?? false;
   const status = isHealthy ? 200 : 503;
   
@@ -36,19 +37,52 @@ app.get('/health', (req, res) => {
   });
 });
 
-async function startServer() {
+async function initializeServices() {
   try {
     // Initialize configuration first
     await config.initialize();
-    
+    logger.info('Configuration initialized');
+
+    // Initialize PubSub manager
+    const pubSubManager = new PubSubManager();
+    await pubSubManager.initialize();
+    logger.info('PubSub manager initialized');
+
+    return pubSubManager;
+  } catch (error) {
+    logger.error('Failed to initialize services:', error);
+    throw error;
+  }
+}
+
+async function startServer() {
+  try {
     const PORT = process.env.PORT || 8080;
-    app.listen(PORT, '0.0.0.0', () => {
+    
+    // Start listening for requests
+    const server = app.listen(PORT, '0.0.0.0', () => {
       logger.info(`Task Queue service running on port ${PORT}`);
     });
 
-    // Initialize PubSub manager after config is ready
-    pubSubManager = new PubSubManager();
-    await pubSubManager.initialize();
+    // Initialize services after server starts listening
+    const pubSubManager = await initializeServices();
+    app.locals.pubSubManager = pubSubManager;
+
+    // Graceful shutdown handler
+    process.on('SIGTERM', async () => {
+      logger.info('Received SIGTERM signal. Starting graceful shutdown...');
+      
+      try {
+        await pubSubManager?.shutdown();
+        server.close(() => {
+          logger.info('Server closed');
+          process.exit(0);
+        });
+      } catch (error) {
+        logger.error('Error during shutdown:', error);
+        process.exit(1);
+      }
+    });
 
   } catch (error) {
     logger.error('Failed to start server:', error);
@@ -56,12 +90,7 @@ async function startServer() {
   }
 }
 
-process.on('SIGTERM', async () => {
-  logger.info('Received SIGTERM signal. Starting graceful shutdown...');
-  await pubSubManager?.shutdown();
-  process.exit(0);
-});
-
+// Error handlers
 process.on('uncaughtException', (error) => {
   logger.error('Uncaught exception:', error);
   process.exit(1);
@@ -72,4 +101,5 @@ process.on('unhandledRejection', (reason, promise) => {
   process.exit(1);
 });
 
+// Start the server
 startServer();
