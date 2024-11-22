@@ -26,20 +26,30 @@ app.use(express.json());
 // Health check endpoint
 app.get('/health', (req, res) => {
   const pubSubManager = req.app.locals.pubSubManager;
-  const isHealthy = pubSubManager?.isHealthy() ?? false;
-  const status = isHealthy ? 200 : 503;
-  
-  res.status(status).json({
-    status: isHealthy ? 'healthy' : 'unhealthy',
+  const status = {
+    status: 'healthy',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    pubsub: pubSubManager?.getStatus() ?? 'not_initialized'
-  });
+    services: {
+      pubsub: pubSubManager?.getStatus() ?? 'not_initialized',
+      config: config.initialized ? 'initialized' : 'not_initialized'
+    }
+  };
+
+  const isHealthy = pubSubManager?.isHealthy() && config.initialized;
+  const statusCode = isHealthy ? 200 : 503;
+
+  if (!isHealthy) {
+    status.status = 'unhealthy';
+    status.error = 'One or more services are not initialized';
+  }
+
+  res.status(statusCode).json(status);
 });
 
 async function initializeServices() {
   try {
-    // Initialize configuration first
+    // Initialize configuration
     await config.initialize();
     logger.info('Configuration initialized');
 

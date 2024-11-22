@@ -8,6 +8,7 @@ This service handles the asynchronous processing of appraisal tasks using Google
 - Updates Google Sheets and WordPress
 - Sends email notifications via SendGrid
 - Handles failed tasks with DLQ (Dead Letter Queue)
+- Health check endpoint for monitoring
 
 ## Process Flow
 
@@ -62,6 +63,27 @@ The following secrets must be configured in Secret Manager with these exact name
 | `SENDGRID_SECRET_NAME` | SendGrid secret name |
 | `SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED` | SendGrid email template ID |
 | `OPENAI_API_KEY` | OpenAI API key |
+| `service-account-json` | Google Service Account JSON key |
+
+## Health Check
+
+The service exposes a health check endpoint at `/health` that returns:
+
+```json
+{
+  "status": "healthy",
+  "timestamp": "2024-01-01T00:00:00.000Z",
+  "uptime": 123.456,
+  "services": {
+    "pubsub": "connected",
+    "config": "initialized"
+  }
+}
+```
+
+- Returns 200 OK when healthy
+- Returns 503 Service Unavailable when unhealthy
+- Used by Cloud Run for container health monitoring
 
 ## Setup
 
