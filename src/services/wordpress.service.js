@@ -5,8 +5,22 @@ const { createLogger } = require('../utils/logger');
 class WordPressService {
   constructor() {
     this.logger = createLogger('WordPressService');
-    this.baseUrl = config.WORDPRESS_API_URL;
-    this.auth = Buffer.from(`${config.WORDPRESS_USERNAME}:${config.WORDPRESS_APP_PASSWORD}`).toString('base64');
+  }
+
+  async initialize() {
+    try {
+      if (!config.WORDPRESS_API_URL || !config.WORDPRESS_USERNAME || !config.WORDPRESS_APP_PASSWORD) {
+        throw new Error('WordPress configuration not initialized');
+      }
+      
+      this.baseUrl = config.WORDPRESS_API_URL;
+      this.auth = Buffer.from(`${config.WORDPRESS_USERNAME}:${config.WORDPRESS_APP_PASSWORD}`).toString('base64');
+      
+      this.logger.info('WordPress service initialized');
+    } catch (error) {
+      this.logger.error('Failed to initialize WordPress service:', error);
+      throw error;
+    }
   }
 
   async getPost(postId) {

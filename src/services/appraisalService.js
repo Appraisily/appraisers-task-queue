@@ -13,53 +13,20 @@ class AppraisalService {
 
   async initialize() {
     try {
+      // Initialize config first
+      await config.initialize();
+
+      // Then initialize all dependent services
       await Promise.all([
         sheetsService.initialize(),
+        wordpressService.initialize(),
         openaiService.initialize(),
         emailService.initialize()
       ]);
+      
       this.logger.info('Appraisal service initialized');
     } catch (error) {
       this.logger.error('Failed to initialize appraisal service:', error);
-      throw error;
-    }
-  }
-
-  async processAppraisal(id, appraisalValue, description) {
-    this.logger.info(`Starting appraisal process for ID ${id}`);
-    
-    try {
-      // Step 1: Set Value
-      await this.setAppraisalValue(id, appraisalValue, description);
-      this.logger.info('✓ Value set successfully');
-
-      // Step 2: Merge Descriptions
-      const mergedDescription = await this.mergeDescriptions(id, description);
-      this.logger.info('✓ Descriptions merged successfully');
-
-      // Step 3: Update Title
-      await this.updateTitle(id, mergedDescription);
-      this.logger.info('✓ Title updated successfully');
-
-      // Step 4: Insert Template
-      await this.insertTemplate(id);
-      this.logger.info('✓ Template inserted successfully');
-
-      // Step 5: Build PDF
-      await this.buildPdf(id);
-      this.logger.info('✓ PDF built successfully');
-
-      // Step 6: Send Email
-      await this.sendEmail(id);
-      this.logger.info('✓ Email sent successfully');
-
-      // Step 7: Mark as Complete
-      await this.complete(id, appraisalValue, description);
-      this.logger.info('✓ Appraisal marked as complete');
-
-      this.logger.info(`Completed appraisal process for ID ${id}`);
-    } catch (error) {
-      this.logger.error(`Error processing appraisal ${id}:`, error);
       throw error;
     }
   }
@@ -286,6 +253,45 @@ class AppraisalService {
       this.logger.info(`Successfully completed appraisal ${id}`);
     } catch (error) {
       this.logger.error(`Error completing appraisal ${id}:`, error);
+      throw error;
+    }
+  }
+
+  async processAppraisal(id, appraisalValue, description) {
+    this.logger.info(`Starting appraisal process for ID ${id}`);
+    
+    try {
+      // Step 1: Set Value
+      await this.setAppraisalValue(id, appraisalValue, description);
+      this.logger.info('✓ Value set successfully');
+
+      // Step 2: Merge Descriptions
+      const mergedDescription = await this.mergeDescriptions(id, description);
+      this.logger.info('✓ Descriptions merged successfully');
+
+      // Step 3: Update Title
+      await this.updateTitle(id, mergedDescription);
+      this.logger.info('✓ Title updated successfully');
+
+      // Step 4: Insert Template
+      await this.insertTemplate(id);
+      this.logger.info('✓ Template inserted successfully');
+
+      // Step 5: Build PDF
+      await this.buildPdf(id);
+      this.logger.info('✓ PDF built successfully');
+
+      // Step 6: Send Email
+      await this.sendEmail(id);
+      this.logger.info('✓ Email sent successfully');
+
+      // Step 7: Mark as Complete
+      await this.complete(id, appraisalValue, description);
+      this.logger.info('✓ Appraisal marked as complete');
+
+      this.logger.info(`Completed appraisal process for ID ${id}`);
+    } catch (error) {
+      this.logger.error(`Error processing appraisal ${id}:`, error);
       throw error;
     }
   }
