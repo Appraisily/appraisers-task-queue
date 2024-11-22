@@ -17,7 +17,7 @@ class Config {
     }
 
     try {
-      this.logger.info('Initializing configuration...');
+      this.logger.info('Starting configuration initialization...');
 
       // Validate required environment variables
       if (!this.GOOGLE_CLOUD_PROJECT_ID) {
@@ -38,34 +38,43 @@ class Config {
         { name: 'service-account-json', required: true }
       ];
 
+      this.logger.info(`Loading ${requiredSecrets.length} secrets...`);
+      const loadedSecrets = [];
+      const failedSecrets = [];
+
       // Load secrets sequentially to avoid overwhelming Secret Manager
       for (const { name, required } of requiredSecrets) {
         try {
           const value = await secretManager.getSecret(name);
           const configKey = name.replace(/-/g, '_').toUpperCase();
           this[configKey] = value;
-          this.logger.info(`Loaded secret: ${name}`);
+          loadedSecrets.push(name);
+          this.logger.debug(`Loaded secret: ${name}`);
         } catch (error) {
           if (required) {
+            failedSecrets.push({ name, error: error.message });
+            this.logger.error(`Failed to load required secret: ${name}`, error);
             throw error;
           }
           this.logger.warn(`Optional secret ${name} not found:`, error.message);
         }
       }
 
-      // Validate all required secrets are loaded
-      const missingSecrets = requiredSecrets
-        .filter(({ name, required }) => required && !this[name.replace(/-/g, '_').toUpperCase()]);
-
-      if (missingSecrets.length > 0) {
-        throw new Error(`Missing required secrets: ${missingSecrets.map(s => s.name).join(', ')}`);
+      // Log summary of loaded secrets
+      this.logger.info(`Successfully loaded ${loadedSecrets.length} secrets`);
+      
+      if (failedSecrets.length > 0) {
+        throw new Error(
+          `Failed to load ${failedSecrets.length} required secrets:\n` +
+          failedSecrets.map(f => `- ${f.name}: ${f.error}`).join('\n')
+        );
       }
 
       this.initialized = true;
-      this.logger.info('Configuration initialized successfully');
+      this.logger.info('Configuration initialization completed successfully');
     } catch (error) {
       this.initialized = false;
-      this.logger.error('Failed to initialize configuration:', error);
+      this.logger.error('Configuration initialization failed:', error);
       throw error;
     }
   }

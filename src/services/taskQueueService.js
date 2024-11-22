@@ -1,5 +1,6 @@
 const { createLogger } = require('../utils/logger');
 const appraisalService = require('./appraisalService');
+const { config } = require('../config');
 
 class TaskQueueService {
   constructor() {
@@ -14,11 +15,18 @@ class TaskQueueService {
     }
 
     try {
-      // Initialize appraisal service first
-      await appraisalService.initialize();
-      
+      // Wait for config to be initialized
+      if (!config.isInitialized()) {
+        throw new Error('Configuration not initialized');
+      }
+
+      // Wait for appraisal service to be initialized
+      if (!appraisalService.isInitialized()) {
+        throw new Error('Appraisal service not initialized');
+      }
+
       this._initialized = true;
-      this.logger.info('Task Queue Service initialized');
+      this.logger.info('Task Queue Service initialized successfully');
     } catch (error) {
       this._initialized = false;
       this.logger.error('Failed to initialize Task Queue Service:', error);
@@ -68,7 +76,6 @@ class TaskQueueService {
       this.logger.error('Error:', error.message);
       this.logger.error('Stack:', error.stack);
       this.logger.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-      
       throw error;
     }
   }

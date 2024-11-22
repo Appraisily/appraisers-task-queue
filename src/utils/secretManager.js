@@ -19,6 +19,8 @@ class SecretManager {
     }
 
     try {
+      this.logger.info('Initializing Secret Manager...');
+      
       // Test connection by listing secrets
       await this.client.listSecrets({
         parent: `projects/${this.projectId}`
@@ -27,6 +29,7 @@ class SecretManager {
       this.initialized = true;
       this.logger.info('Secret Manager initialized successfully');
     } catch (error) {
+      this.initialized = false;
       this.logger.error('Failed to initialize Secret Manager:', error);
       throw error;
     }
@@ -34,15 +37,17 @@ class SecretManager {
 
   async getSecret(secretName) {
     if (!this.initialized) {
-      await this.initialize();
+      throw new Error('Secret Manager not initialized');
     }
 
     try {
       // Check cache first
       if (this.cache.has(secretName)) {
+        this.logger.debug(`Using cached value for secret: ${secretName}`);
         return this.cache.get(secretName);
       }
 
+      this.logger.debug(`Fetching secret: ${secretName}`);
       const name = `projects/${this.projectId}/secrets/${secretName}/versions/latest`;
       let lastError;
 
@@ -63,7 +68,7 @@ class SecretManager {
           this.cache.set(secretName, value);
           
           if (attempt > 1) {
-            this.logger.info(`Successfully retrieved secret ${secretName} on attempt ${attempt}`);
+            this.logger.debug(`Retrieved secret ${secretName} on attempt ${attempt}`);
           }
           
           return value;
@@ -72,7 +77,10 @@ class SecretManager {
           
           if (attempt < this.retryCount) {
             const delay = this.retryDelay * Math.pow(2, attempt - 1);
-            this.logger.warn(`Failed to get secret ${secretName} (attempt ${attempt}/${this.retryCount}). Retrying in ${delay/1000}s:`, error.message);
+            this.logger.warn(
+              `Failed to get secret ${secretName} (attempt ${attempt}/${this.retryCount}). ` +
+              `Retrying in ${delay/1000}s:`, error.message
+            );
             await new Promise(resolve => setTimeout(resolve, delay));
           }
         }

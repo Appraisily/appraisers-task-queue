@@ -7,6 +7,7 @@ class ServiceManager {
     this.services = new Map();
     this.initialized = false;
     this.initializationErrors = new Map();
+    this.initializationOrder = [];
   }
 
   register(name, service) {
@@ -19,6 +20,7 @@ class ServiceManager {
     }
     
     this.services.set(name, service);
+    this.initializationOrder.push(name);
   }
 
   async initializeAll() {
@@ -27,9 +29,11 @@ class ServiceManager {
     }
 
     this.initializationErrors.clear();
-    const services = Array.from(this.services.entries());
     
-    for (const [name, service] of services) {
+    // Initialize services in the order they were registered
+    for (const name of this.initializationOrder) {
+      const service = this.services.get(name);
+      
       try {
         this.logger.info(`Starting initialization of ${name}...`);
         
@@ -78,9 +82,11 @@ class ServiceManager {
   }
 
   async shutdownAll() {
-    const services = Array.from(this.services.entries()).reverse();
+    // Shutdown in reverse order of initialization
+    const services = this.initializationOrder.slice().reverse();
     
-    for (const [name, service] of services) {
+    for (const name of services) {
+      const service = this.services.get(name);
       try {
         if (typeof service.shutdown === 'function') {
           await service.shutdown();
@@ -98,6 +104,7 @@ class ServiceManager {
     this.initialized = false;
     this.initializationErrors.clear();
     this.services.clear();
+    this.initializationOrder = [];
   }
 
   getService(name) {
