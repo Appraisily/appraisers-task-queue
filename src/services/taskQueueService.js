@@ -18,7 +18,6 @@ class TaskQueueService {
   }
 
   async processTask(id, appraisalValue, description, messageId) {
-    // Skip if we've already processed this message
     if (this.processedMessageIds.has(messageId)) {
       this.logger.info(`Skipping duplicate message ID: ${messageId}`);
       return;
@@ -34,13 +33,10 @@ class TaskQueueService {
       this.logger.info(`   • Description: ${description}`);
       this.logger.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-      // Process the appraisal using our local service
       await appraisalService.processAppraisal(id, appraisalValue, description);
 
-      // Add message ID to processed set after successful processing
       this.processedMessageIds.add(messageId);
       
-      // Cleanup old message IDs (keep last 1000)
       if (this.processedMessageIds.size > 1000) {
         const idsToRemove = Array.from(this.processedMessageIds)
           .slice(0, this.processedMessageIds.size - 1000);
@@ -61,7 +57,6 @@ class TaskQueueService {
       this.logger.error('Stack:', error.stack);
       this.logger.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
       
-      // Don't rethrow the error - this prevents the subscription from closing
       return { success: false, error: error.message };
     }
   }
