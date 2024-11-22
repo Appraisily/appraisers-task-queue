@@ -78,7 +78,7 @@ async function startServer() {
   try {
     const PORT = process.env.PORT || 8080;
     
-    // Start listening for requests first
+    // Start listening for requests first so health checks can succeed
     const server = app.listen(PORT, '0.0.0.0', () => {
       logger.info(`Task Queue service running on port ${PORT}`);
     });
@@ -105,19 +105,20 @@ async function startServer() {
 
   } catch (error) {
     logger.error('Failed to start server:', error);
-    process.exit(1);
+    // Don't exit immediately to allow health checks to work
+    setTimeout(() => process.exit(1), 5000);
   }
 }
 
 // Error handlers
 process.on('uncaughtException', (error) => {
   logger.error('Uncaught exception:', error);
-  process.exit(1);
+  setTimeout(() => process.exit(1), 5000);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   logger.error('Unhandled Rejection:', reason);
-  process.exit(1);
+  setTimeout(() => process.exit(1), 5000);
 });
 
 // Start the server

@@ -25,21 +25,25 @@ class Config {
         throw new Error('Missing required environment variable: GOOGLE_CLOUD_PROJECT_ID');
       }
 
-      // Load all secrets with increased timeout
-      const secrets = await Promise.all([
-        this.getSecret('PENDING_APPRAISALS_SPREADSHEET_ID'),
-        this.getSecret('WORDPRESS_API_URL'),
-        this.getSecret('wp_username'),
-        this.getSecret('wp_app_password'),
-        this.getSecret('SENDGRID_API_KEY'),
-        this.getSecret('SENDGRID_EMAIL'),
-        this.getSecret('SENDGRID_SECRET_NAME'),
-        this.getSecret('SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED'),
-        this.getSecret('OPENAI_API_KEY'),
-        this.getSecret('service-account-json')
-      ]);
+      // Load all required secrets
+      const secretNames = [
+        'PENDING_APPRAISALS_SPREADSHEET_ID',
+        'WORDPRESS_API_URL',
+        'wp_username',
+        'wp_app_password',
+        'SENDGRID_API_KEY',
+        'SENDGRID_EMAIL',
+        'SENDGRID_SECRET_NAME',
+        'SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED',
+        'OPENAI_API_KEY',
+        'service-account-json'
+      ];
 
-      // Set configuration from secrets
+      const secrets = await Promise.all(
+        secretNames.map(name => this.getSecret(name))
+      );
+
+      // Map secrets to config properties
       [
         this.PENDING_APPRAISALS_SPREADSHEET_ID,
         this.WORDPRESS_API_URL,
@@ -84,8 +88,12 @@ class Config {
       
       const [version] = await this.secretClient.accessSecretVersion({
         name,
-        timeout: timeoutSeconds * 1000 // Convert to milliseconds
+        timeout: timeoutSeconds * 1000
       });
+
+      if (!version || !version.payload || !version.payload.data) {
+        throw new Error(`Secret ${secretName} not found or empty`);
+      }
 
       return version.payload.data.toString('utf8');
     } catch (error) {
