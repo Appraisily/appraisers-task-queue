@@ -28,7 +28,7 @@ class Config {
         throw new Error('Missing required environment variable: GOOGLE_CLOUD_PROJECT_ID');
       }
 
-      // Load all secrets with increased timeout
+      // Load all secrets with increased timeout and exact names from README
       const [
         spreadsheetId,
         wordpressUrl,

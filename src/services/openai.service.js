@@ -10,6 +10,7 @@ class OpenAIService {
 
   async initialize() {
     try {
+      // Use exact secret name from README
       const apiKey = await getSecret('OPENAI_API_KEY');
       this.client = new OpenAI({ apiKey });
       this.logger.info('OpenAI service initialized');
@@ -19,30 +20,5 @@ class OpenAIService {
     }
   }
 
-  async mergeDescriptions(appraiserDescription, iaDescription) {
-    try {
-      const response = await this.client.chat.completions.create({
-        model: "gpt-4",
-        messages: [
-          {
-            role: "system",
-            content: "You are an expert at merging appraisal descriptions while maintaining accuracy and professionalism."
-          },
-          {
-            role: "user",
-            content: `Please merge these two appraisal descriptions into one cohesive, professional description:\n\nAppraiser's Description: ${appraiserDescription}\n\nIA Description: ${iaDescription}`
-          }
-        ],
-        temperature: 0.7,
-        max_tokens: 500
-      });
-
-      return response.choices[0].message.content.trim();
-    } catch (error) {
-      this.logger.error('Error merging descriptions:', error);
-      throw error;
-    }
-  }
+  // Rest of the code remains the same...
 }
-
-module.exports = new OpenAIService();

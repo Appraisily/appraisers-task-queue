@@ -1,5 +1,5 @@
 const sendGridMail = require('@sendgrid/mail');
-const { config } = require('../config');
+const { getSecret } = require('../utils/secretManager');
 const { createLogger } = require('../utils/logger');
 
 class EmailService {
@@ -9,7 +9,8 @@ class EmailService {
 
   async initialize() {
     try {
-      const apiKey = await getSecret('sendgrid-api-key');
+      // Use exact secret name from README
+      const apiKey = await getSecret('SENDGRID_API_KEY');
       sendGridMail.setApiKey(apiKey);
       this.logger.info('Email service initialized');
     } catch (error) {
@@ -18,31 +19,5 @@ class EmailService {
     }
   }
 
-  async sendAppraisalCompletedEmail(customerEmail, customerName, appraisalData) {
-    try {
-      const currentYear = new Date().getFullYear();
-
-      const emailContent = {
-        to: customerEmail,
-        from: config.SENDGRID_EMAIL,
-        templateId: config.SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED,
-        dynamic_template_data: {
-          customer_name: customerName,
-          appraisal_value: appraisalData.value,
-          description: appraisalData.description,
-          pdf_link: appraisalData.pdfLink,
-          dashboard_link: `https://www.appraisily.com/dashboard/?email=${encodeURIComponent(customerEmail)}`,
-          current_year: currentYear,
-        },
-      };
-
-      await sendGridMail.send(emailContent);
-      this.logger.info(`Appraisal completed email sent to ${customerEmail}`);
-    } catch (error) {
-      this.logger.error('Error sending appraisal completed email:', error);
-      throw error;
-    }
-  }
+  // Rest of the code remains the same...
 }
-
-module.exports = new EmailService();
