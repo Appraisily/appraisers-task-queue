@@ -12,7 +12,7 @@ const GRACEFUL_SHUTDOWN_TIMEOUT = 30000;
 class PubSubManager {
   constructor() {
     this.logger = createLogger('PubSubManager');
-    this.pubsub = new PubSub({ projectId: config.GOOGLE_CLOUD_PROJECT_ID });
+    this.pubsub = null;
     this.subscription = null;
     this.retryAttempts = 0;
     this.retryTimeout = null;
@@ -25,15 +25,29 @@ class PubSubManager {
 
   async initialize() {
     try {
+      if (!config.initialized) {
+        throw new Error('Configuration not initialized');
+      }
+
+      if (!taskQueueService.isInitialized()) {
+        throw new Error('Task Queue Service not initialized');
+      }
+
       this.logger.info('Initializing PubSub connection...');
+      
+      this.pubsub = new PubSub({ 
+        projectId: config.GOOGLE_CLOUD_PROJECT_ID 
+      });
+
       await this.setupSubscription();
       await this.startHealthCheck();
-      await taskQueueService.initialize();
+      
       this._status = 'connected';
       this.logger.info('PubSub initialization complete');
     } catch (error) {
+      this._status = 'error';
       this.logger.error('Failed to initialize PubSub:', error);
-      await this.handleConnectionError(error);
+      throw error;
     }
   }
 
@@ -83,16 +97,15 @@ class PubSubManager {
         this.logger.info(`Processing message ${message.id}`);
         
         const data = JSON.parse(message.data.toString());
-        if (data.type !== 'COMPLETE_APPRAISAL') {
-          this.logger.info('Ignoring unknown task type:', data.type);
-          message.ack();
-          return;
+        if (!this.validateMessageData(data)) {
+          throw new Error('Invalid message data structure');
         }
 
         const { id, appraisalValue, description } = data.data;
         await taskQueueService.processTask(id, appraisalValue, description, message.id);
         
         message.ack();
+        this.logger.info(`Message ${message.id} processed successfully`);
       } catch (error) {
         this.logger.error(`Error processing message ${message.id}:`, error);
         message.ack(); // Always ack to prevent infinite retries
@@ -104,6 +117,23 @@ class PubSubManager {
         }
       }
     });
+  }
+
+  validateMessageData(messageData) {
+    if (!messageData || typeof messageData !== 'object') return false;
+    if (messageData.type !== 'COMPLETE_APPRAISAL') return false;
+    if (!messageData.data || typeof messageData.data !== 'object') return false;
+
+    const { id, appraisalValue, description } = messageData.data;
+
+    return (
+      typeof id === 'string' &&
+      typeof appraisalValue === 'number' &&
+      typeof description === 'string' &&
+      id.trim() !== '' &&
+      !isNaN(appraisalValue) &&
+      description.trim() !== ''
+    );
   }
 
   setupErrorHandlers() {
@@ -180,7 +210,7 @@ class PubSubManager {
 
     this.healthCheckInterval = setInterval(async () => {
       try {
-        if (this.subscription) {
+        if (this.subscription && !this.isShuttingDown) {
           const [metadata] = await this.subscription.getMetadata();
           this.logger.debug('Health check passed:', metadata.name);
         }
@@ -220,7 +250,7 @@ class PubSubManager {
         this.completeShutdown();
       }, GRACEFUL_SHUTDOWN_TIMEOUT);
     } else {
-      this.completeShutdown();
+      await this.completeShutdown();
     }
   }
 
@@ -239,8 +269,7 @@ class PubSubManager {
     }
 
     this.isShuttingDown = false;
-    this._status = 'reconnecting';
-    await this.reconnect();
+    this._status = 'shutdown';
   }
 
   isHealthy() {

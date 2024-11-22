@@ -3,6 +3,7 @@ const cors = require('cors');
 const { createLogger } = require('./utils/logger');
 const config = require('./config');
 const { PubSubManager } = require('./services/pubSubManager');
+const taskQueueService = require('./services/taskQueueService');
 
 const logger = createLogger('app');
 const app = express();
@@ -32,11 +33,15 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     services: {
       pubsub: pubSubManager?.getStatus() ?? 'not_initialized',
-      config: config.initialized ? 'initialized' : 'not_initialized'
+      config: config.initialized ? 'initialized' : 'not_initialized',
+      taskQueue: taskQueueService.isInitialized() ? 'initialized' : 'not_initialized'
     }
   };
 
-  const isHealthy = pubSubManager?.isHealthy() && config.initialized;
+  const isHealthy = pubSubManager?.isHealthy() && 
+                   config.initialized && 
+                   taskQueueService.isInitialized();
+  
   const statusCode = isHealthy ? 200 : 503;
 
   if (!isHealthy) {
@@ -53,11 +58,16 @@ async function initializeServices() {
     await config.initialize();
     logger.info('Configuration initialized');
 
-    // Initialize PubSub manager
+    // Initialize task queue service
+    await taskQueueService.initialize();
+    logger.info('Task Queue service initialized');
+
+    // Initialize PubSub manager last since it depends on task queue
     pubSubManager = new PubSubManager();
     await pubSubManager.initialize();
     logger.info('PubSub manager initialized');
 
+    return true;
   } catch (error) {
     logger.error('Failed to initialize services:', error);
     throw error;
@@ -75,6 +85,7 @@ async function startServer() {
 
     // Initialize services after server starts listening
     await initializeServices();
+    logger.info('All services initialized successfully');
 
     // Graceful shutdown handler
     process.on('SIGTERM', async () => {
