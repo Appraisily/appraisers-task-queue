@@ -6,6 +6,7 @@ const { PubSubManager } = require('./services/pubSubManager');
 
 const logger = createLogger('app');
 const app = express();
+let pubSubManager;
 
 const corsOptions = {
   origin: [
@@ -25,7 +26,6 @@ app.use(express.json());
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  const pubSubManager = req.app.locals.pubSubManager;
   const status = {
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -49,16 +49,15 @@ app.get('/health', (req, res) => {
 
 async function initializeServices() {
   try {
-    // Initialize configuration
+    // Initialize configuration first
     await config.initialize();
     logger.info('Configuration initialized');
 
     // Initialize PubSub manager
-    const pubSubManager = new PubSubManager();
+    pubSubManager = new PubSubManager();
     await pubSubManager.initialize();
     logger.info('PubSub manager initialized');
 
-    return pubSubManager;
   } catch (error) {
     logger.error('Failed to initialize services:', error);
     throw error;
@@ -69,14 +68,13 @@ async function startServer() {
   try {
     const PORT = process.env.PORT || 8080;
     
-    // Start listening for requests
+    // Start listening for requests first
     const server = app.listen(PORT, '0.0.0.0', () => {
       logger.info(`Task Queue service running on port ${PORT}`);
     });
 
     // Initialize services after server starts listening
-    const pubSubManager = await initializeServices();
-    app.locals.pubSubManager = pubSubManager;
+    await initializeServices();
 
     // Graceful shutdown handler
     process.on('SIGTERM', async () => {

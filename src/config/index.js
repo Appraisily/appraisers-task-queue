@@ -6,12 +6,10 @@ class Config {
     this.logger = createLogger('Config');
     this.secretClient = new SecretManagerServiceClient();
     this.initialized = false;
+    this.GOOGLE_SHEET_NAME = 'Pending';
 
     // Required environment variables
     this.GOOGLE_CLOUD_PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT_ID;
-
-    // Default values that can be overridden by secrets
-    this.GOOGLE_SHEET_NAME = 'Pending';
   }
 
   async initialize() {
@@ -54,6 +52,23 @@ class Config {
         this.OPENAI_API_KEY,
         this.SERVICE_ACCOUNT_JSON
       ] = secrets;
+
+      // Validate required secrets
+      const requiredSecrets = [
+        'PENDING_APPRAISALS_SPREADSHEET_ID',
+        'WORDPRESS_API_URL',
+        'WORDPRESS_USERNAME',
+        'WORDPRESS_APP_PASSWORD',
+        'SENDGRID_API_KEY',
+        'SENDGRID_EMAIL',
+        'SERVICE_ACCOUNT_JSON'
+      ];
+
+      for (const secret of requiredSecrets) {
+        if (!this[secret]) {
+          throw new Error(`Missing required secret: ${secret}`);
+        }
+      }
 
       this.initialized = true;
       this.logger.info('Configuration initialized successfully');
