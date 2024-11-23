@@ -38,11 +38,12 @@ class SecretManager {
         name: `projects/${this.projectId}/secrets/${name}/versions/latest`
       });
 
-      if (!version.payload.data) {
+      if (!version?.payload?.data) {
         throw new Error(`Secret ${name} is empty or invalid`);
       }
 
-      const value = version.payload.data.toString('utf8');
+      // Clean up secret value by removing any whitespace or newlines
+      const value = version.payload.data.toString('utf8').trim();
       this.logger.info(`Loaded secret: ${name}`);
       return value;
     } catch (error) {
