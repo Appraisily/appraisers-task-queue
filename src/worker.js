@@ -34,7 +34,6 @@ class PubSubWorker {
       await wordpressService.initialize();
       await openaiService.initialize();
       await emailService.initialize();
-      // Note: pdfService doesn't need initialization
 
       // Initialize PubSub
       const pubsub = new PubSub();
@@ -64,5 +63,162 @@ class PubSubWorker {
     }
   }
 
-  // Rest of the worker.js code remains the same...
+  async handleMessage(message) {
+    try {
+      this.logger.info(`Processing message ${message.id}`);
+      const rawData = message.data.toString();
+      this.logger.info(`Raw message data: ${rawData}`);
+
+      const data = JSON.parse(rawData);
+      
+      if (data.type !== 'COMPLETE_APPRAISAL' || !data.data?.id || !data.data?.appraisalValue || !data.data?.description) {
+        throw new Error('Invalid message format');
+      }
+
+      const { id, appraisalValue, description } = data.data;
+      this.logger.info(`Processing appraisal ${id}`);
+
+      await this.processAppraisal(id, appraisalValue, description);
+      
+      // Log success and acknowledge message
+      this.logger.info(`Received appraisal data:`, {
+        id,
+        value: appraisalValue,
+        descriptionLength: description.length
+      });
+
+      message.ack();
+    } catch (error) {
+      this.logger.error(`Error processing message ${message.id}:`, error);
+      await this.publishToDeadLetterQueue(message.id, rawData, error.message);
+      message.ack(); // Acknowledge to prevent retries
+    }
+  }
+
+  handleError(error) {
+    this.logger.error('Subscription error:', error);
+  }
+
+  async processAppraisal(id, value, description) {
+    try {
+      // Step 1: Set Value
+      await this.setAppraisalValue(id, value, description);
+      
+      // Step 2: Merge Descriptions
+      const iaDescription = await this.getIADescription(id);
+      const mergedDescription = await openaiService.mergeDescriptions(description, iaDescription);
+      await this.saveMergedDescription(id, mergedDescription);
+      
+      // Step 3: Update Title
+      const postId = await this.getWordPressPostId(id);
+      await wordpressService.updatePost(postId, {
+        title: `Appraisal #${id} - ${mergedDescription.substring(0, 100)}...`
+      });
+      
+      // Step 4: Insert Template
+      await this.insertTemplate(id, postId);
+      
+      // Step 5: Build PDF
+      const { pdfLink, docLink } = await pdfService.generatePDF(postId);
+      await this.updatePDFLinks(id, pdfLink, docLink);
+      
+      // Step 6: Send Email
+      const customerData = await this.getCustomerData(id);
+      await emailService.sendAppraisalCompletedEmail(
+        customerData.email,
+        customerData.name,
+        { value, pdfLink, description: mergedDescription }
+      );
+      
+      // Step 7: Complete
+      await this.complete(id);
+    } catch (error) {
+      this.logger.error(`Failed to process appraisal ${id}:`, error);
+      throw error;
+    }
+  }
+
+  async setAppraisalValue(id, value, description) {
+    await this.sheetsService.updateValues(`J${id}:K${id}`, [[value, description]]);
+  }
+
+  async getIADescription(id) {
+    const values = await this.sheetsService.getValues(`H${id}`);
+    return values[0][0];
+  }
+
+  async saveMergedDescription(id, description) {
+    await this.sheetsService.updateValues(`L${id}`, [[description]]);
+  }
+
+  async getWordPressPostId(id) {
+    const values = await this.sheetsService.getValues(`G${id}`);
+    const url = new URL(values[0][0]);
+    return url.searchParams.get('post');
+  }
+
+  async insertTemplate(id, postId) {
+    const values = await this.sheetsService.getValues(`A${id}:B${id}`);
+    const appraisalType = values[0][1] || 'RegularArt';
+    
+    const post = await wordpressService.getPost(postId);
+    let content = post.content?.rendered || '';
+    
+    if (!content.includes('[pdf_download]')) {
+      content += '\n[pdf_download]';
+    }
+    
+    if (!content.includes(`[AppraisalTemplates type="${appraisalType}"]`)) {
+      content += `\n[AppraisalTemplates type="${appraisalType}"]`;
+    }
+    
+    await wordpressService.updatePost(postId, {
+      content,
+      acf: { shortcodes_inserted: true }
+    });
+  }
+
+  async updatePDFLinks(id, pdfLink, docLink) {
+    await this.sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]]);
+  }
+
+  async getCustomerData(id) {
+    const values = await this.sheetsService.getValues(`D${id}:E${id}`);
+    return {
+      email: values[0][0],
+      name: values[0][1]
+    };
+  }
+
+  async complete(id) {
+    await this.sheetsService.updateValues(`F${id}`, [['Completed']]);
+  }
+
+  async publishToDeadLetterQueue(messageId, data, errorMessage) {
+    try {
+      const pubsub = new PubSub();
+      const dlqTopic = pubsub.topic('appraisals-failed');
+      
+      await dlqTopic.publish(Buffer.from(JSON.stringify({
+        originalMessageId: messageId,
+        data: data,
+        error: errorMessage,
+        timestamp: new Date().toISOString()
+      })));
+      
+      this.logger.info(`Message ${messageId} published to DLQ`);
+    } catch (error) {
+      this.logger.error('Failed to publish to DLQ:', error);
+    }
+  }
+
+  async shutdown() {
+    if (this.subscription) {
+      await this.subscription.close();
+      this.logger.info('PubSub worker shut down successfully');
+    }
+  }
 }
+
+// Export a singleton instance
+module.exports = new PubSubWorker();
