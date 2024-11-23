@@ -22,51 +22,66 @@ class SecretManager {
       return Promise.resolve();
     }
 
-    this.initPromise = this._initialize();
+    this.initPromise = (async () => {
+      if (!this.projectId) {
+        throw new Error('GOOGLE_CLOUD_PROJECT_ID environment variable not set');
+      }
+
+      try {
+        this.logger.info('Initializing Secret Manager...');
+        
+        // Initialize client with more lenient timeouts
+        this.client = new SecretManagerServiceClient({
+          projectId: this.projectId,
+          clientConfig: {
+            timeout: 60000, // 60 seconds
+            retry: {
+              initialDelayMillis: 1000,
+              retryDelayMultiplier: 2,
+              maxDelayMillis: 30000,
+              maxRetries: 5
+            }
+          }
+        });
+        
+        // Test connection with retries
+        let lastError;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            await this.client.listSecrets({
+              parent: `projects/${this.projectId}`,
+              pageSize: 1
+            });
+            
+            this.initialized = true;
+            this.logger.info('Secret Manager initialized successfully');
+            return;
+          } catch (error) {
+            lastError = error;
+            if (attempt < 3) {
+              const delay = Math.pow(2, attempt) * 1000;
+              this.logger.warn(`Secret Manager connection attempt ${attempt} failed, retrying in ${delay}ms`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+            }
+          }
+        }
+        
+        throw lastError;
+      } catch (error) {
+        this.initialized = false;
+        this.initPromise = null;
+        this.logger.error('Failed to initialize Secret Manager:', error);
+        throw error;
+      }
+    })();
+
     return this.initPromise;
   }
 
-  async _initialize() {
-    if (!this.projectId) {
-      throw new Error('GOOGLE_CLOUD_PROJECT_ID environment variable not set');
-    }
-
-    try {
-      this.logger.info('Initializing Secret Manager...');
-      
-      // Initialize client with timeout settings
-      this.client = new SecretManagerServiceClient({
-        projectId: this.projectId,
-        clientConfig: {
-          timeout: 30000,
-          retry: {
-            initialDelayMillis: 100,
-            retryDelayMultiplier: 1.3,
-            maxDelayMillis: 10000,
-            maxRetries: 3
-          }
-        }
-      });
-      
-      // Test connection
-      await this.client.listSecrets({
-        parent: `projects/${this.projectId}`,
-        pageSize: 1
-      });
-      
-      this.initialized = true;
-      this.logger.info('Secret Manager initialized successfully');
-    } catch (error) {
-      this.initialized = false;
-      this.initPromise = null;
-      this.logger.error('Failed to initialize Secret Manager:', error);
-      throw error;
-    }
-  }
-
   async getSecret(secretName) {
-    // Ensure initialization before getting secrets
-    await this.initialize();
+    if (!this.initialized) {
+      await this.initialize();
+    }
 
     try {
       // Check cache first
@@ -76,19 +91,34 @@ class SecretManager {
 
       const name = `projects/${this.projectId}/secrets/${secretName}/versions/latest`;
       
-      const [version] = await this.client.accessSecretVersion({
-        name,
-        timeout: 10000
-      });
+      // Attempt to get secret with retries
+      let lastError;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const [version] = await this.client.accessSecretVersion({
+            name,
+            timeout: 30000 // 30 seconds
+          });
 
-      if (!version?.payload?.data) {
-        throw new Error(`Secret ${secretName} is empty or invalid`);
+          if (!version?.payload?.data) {
+            throw new Error(`Secret ${secretName} is empty or invalid`);
+          }
+
+          const value = version.payload.data.toString('utf8');
+          this.cache.set(secretName, value);
+          
+          return value;
+        } catch (error) {
+          lastError = error;
+          if (attempt < 3) {
+            const delay = Math.pow(2, attempt) * 1000;
+            this.logger.warn(`Failed to get secret ${secretName}, attempt ${attempt}, retrying in ${delay}ms`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+        }
       }
 
-      const value = version.payload.data.toString('utf8');
-      this.cache.set(secretName, value);
-      
-      return value;
+      throw lastError;
     } catch (error) {
       this.logger.error(`Error getting secret ${secretName}:`, error);
       throw error;

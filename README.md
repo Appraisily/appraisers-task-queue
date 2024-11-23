@@ -2,6 +2,30 @@
 
 This service handles the asynchronous processing of appraisal tasks using Google Cloud Pub/Sub.
 
+## Project Structure
+
+```
+src/
+  ├─ app.js              # HTTP server and health checks
+  ├─ core/               # Core system functionality
+  │   ├─ index.js        # Core initialization orchestration
+  │   └─ pubsub.js       # PubSub handling
+  ├─ config/             # Configuration management
+  │   └─ index.js        # Secret and config management
+  ├─ services/           # Business logic services
+  │   ├─ index.js        # Service initialization
+  │   ├─ appraisal.service.js  # Main appraisal logic
+  │   ├─ email.service.js      # Email notifications
+  │   ├─ openai.service.js     # AI text processing
+  │   ├─ pdf.service.js        # PDF generation
+  │   ├─ sheets.service.js     # Google Sheets operations
+  │   └─ wordpress.service.js  # WordPress integration
+  └─ utils/              # Shared utilities
+      ├─ logger.js       # Logging utility
+      └─ secretManager.js # Secret management
+
+```
+
 ## Service Architecture
 
 ### Initialization Strategy

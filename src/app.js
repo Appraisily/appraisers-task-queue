@@ -1,17 +1,13 @@
 const express = require('express');
 const cors = require('cors');
-const { PubSub } = require('@google-cloud/pubsub');
 const { createLogger } = require('./utils/logger');
-const config = require('./config');
-const { appraisalService } = require('./services');
+const core = require('./core');
+const { shutdownPubSub } = require('./core/pubsub');
 
 const logger = createLogger('App');
 const app = express();
-let pubsub;
-let subscription;
 let isInitialized = false;
 let initializationError = null;
-let initializationPromise = null;
 
 app.use(cors());
 app.use(express.json());
@@ -33,96 +29,6 @@ app.get('/health', (req, res) => {
   res.status(isInitialized ? 200 : 503).json(status);
 });
 
-async function initializePubSub() {
-  try {
-    logger.info('Initializing PubSub connection...');
-    
-    pubsub = new PubSub({ 
-      projectId: config.GOOGLE_CLOUD_PROJECT_ID 
-    });
-
-    subscription = pubsub.subscription('appraisal-tasks-subscription');
-
-    // Set up message handler
-    subscription.on('message', async (message) => {
-      if (!isInitialized) {
-        logger.warn('Received message before initialization completed');
-        message.nack(); // Negative acknowledge to retry later
-        return;
-      }
-
-      try {
-        const data = JSON.parse(message.data.toString());
-        logger.info('Processing message:', { messageId: message.id });
-
-        await appraisalService.processAppraisal(
-          data.id,
-          data.appraisalValue,
-          data.description
-        );
-
-        message.ack();
-        logger.info('Message processed successfully');
-      } catch (error) {
-        logger.error('Error processing message:', error);
-        message.ack(); // Acknowledge to prevent infinite retries
-      }
-    });
-
-    subscription.on('error', error => {
-      logger.error('Subscription error:', error);
-    });
-
-    logger.info('PubSub initialized successfully');
-  } catch (error) {
-    logger.error('Failed to initialize PubSub:', error);
-    throw error;
-  }
-}
-
-async function initialize() {
-  // Return existing promise if initialization is in progress
-  if (initializationPromise) {
-    return initializationPromise;
-  }
-
-  // Return immediately if already initialized
-  if (isInitialized) {
-    return Promise.resolve();
-  }
-
-  initializationPromise = (async () => {
-    try {
-      logger.info('Starting service initialization...');
-
-      // Step 1: Initialize configuration and secrets
-      const configInstance = await config.initialize();
-      logger.info('Configuration initialized');
-
-      // Step 2: Initialize appraisal service (which handles its dependencies)
-      await appraisalService.initialize(configInstance);
-      logger.info('Appraisal service initialized');
-
-      // Step 3: Initialize PubSub last
-      await initializePubSub();
-      logger.info('PubSub connection established');
-
-      isInitialized = true;
-      initializationError = null;
-      logger.info('All services initialized successfully');
-    } catch (error) {
-      isInitialized = false;
-      initializationError = error;
-      logger.error('Service initialization failed:', error);
-      throw error;
-    } finally {
-      initializationPromise = null;
-    }
-  })();
-
-  return initializationPromise;
-}
-
 // Start server and initialize services
 async function startServer() {
   const PORT = process.env.PORT || 8080;
@@ -132,26 +38,22 @@ async function startServer() {
     logger.info(`Task Queue service running on port ${PORT}`);
   });
 
-  // Initialize services in the background
-  initialize().catch(error => {
-    logger.error('Background initialization failed:', error);
-    // Don't exit - let health checks report the error
-  });
+  // Initialize core in the background
+  try {
+    await core.initialize();
+    isInitialized = true;
+    logger.info('Service initialization complete');
+  } catch (error) {
+    isInitialized = false;
+    initializationError = error;
+    logger.error('Service initialization failed:', error);
+  }
 }
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   logger.info('Received SIGTERM signal. Starting graceful shutdown...');
-  
-  if (subscription) {
-    try {
-      await subscription.close();
-      logger.info('PubSub subscription closed');
-    } catch (error) {
-      logger.error('Error closing subscription:', error);
-    }
-  }
-  
+  await shutdownPubSub();
   process.exit(0);
 });
 

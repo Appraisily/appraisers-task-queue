@@ -41,7 +41,7 @@ class WordPressService {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 5000);
 
-          const response = await fetch(`${this.baseUrl}/wp/v2/posts?per_page=1`, {
+          const response = await fetch(`${this.baseUrl}/wp/v2`, {
             headers: {
               'Authorization': `Basic ${this.auth}`,
               'Accept': 'application/json',
@@ -65,7 +65,7 @@ class WordPressService {
           
           if (attempt < this.retryAttempts) {
             const delay = this.retryDelay * Math.pow(2, attempt - 1);
-            this.logger.warn(`WordPress connection attempt ${attempt} failed, retrying in ${delay}ms:`, error.message);
+            this.logger.warn(`WordPress connection attempt ${attempt} failed, retrying in ${delay}ms: ${error.message}`);
             await new Promise(resolve => setTimeout(resolve, delay));
           }
         }
@@ -75,11 +75,7 @@ class WordPressService {
       throw new Error(`WordPress initialization failed after ${this.retryAttempts} attempts: ${lastError.message}`);
     } catch (error) {
       this.initialized = false;
-      this.logger.error('Failed to initialize WordPress service:', {
-        error: error.message,
-        baseUrl: this.baseUrl,
-        // Don't log auth credentials
-      });
+      this.logger.error('Failed to initialize WordPress service:', error);
       throw error;
     }
   }
@@ -148,11 +144,7 @@ class WordPressService {
 
       return await response.json();
     } catch (error) {
-      this.logger.error(`Error updating post ${postId}:`, {
-        error: error.message,
-        postId,
-        // Don't log potentially sensitive data
-      });
+      this.logger.error(`Error updating post ${postId}:`, error);
       throw error;
     }
   }

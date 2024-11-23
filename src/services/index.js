@@ -11,10 +11,10 @@ const services = {
   wordpress: new WordPressService(),
   openai: new OpenAIService(),
   email: new EmailService(),
-  pdf: new PDFService(),
+  pdf: new PDFService()
 };
 
-// Create and initialize appraisal service with dependencies
+// Create appraisal service with dependencies
 const appraisalService = new AppraisalService(services);
 
 module.exports = {
