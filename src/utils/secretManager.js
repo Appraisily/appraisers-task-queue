@@ -8,24 +8,37 @@ class SecretManager {
     this.projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
     this.cache = new Map();
     this.initialized = false;
+    this.initPromise = null;
   }
 
   async initialize() {
-    if (this.initialized) {
-      return;
+    // Return existing promise if initialization is in progress
+    if (this.initPromise) {
+      return this.initPromise;
     }
 
+    // Return immediately if already initialized
+    if (this.initialized) {
+      return Promise.resolve();
+    }
+
+    this.initPromise = this._initialize();
+    return this.initPromise;
+  }
+
+  async _initialize() {
     if (!this.projectId) {
       throw new Error('GOOGLE_CLOUD_PROJECT_ID environment variable not set');
     }
 
     try {
       this.logger.info('Initializing Secret Manager...');
+      
+      // Initialize client with timeout settings
       this.client = new SecretManagerServiceClient({
         projectId: this.projectId,
-        // Add timeout settings
         clientConfig: {
-          timeout: 30000, // 30 seconds
+          timeout: 30000,
           retry: {
             initialDelayMillis: 100,
             retryDelayMultiplier: 1.3,
@@ -35,7 +48,7 @@ class SecretManager {
         }
       });
       
-      // Test connection with a simple list operation
+      // Test connection
       await this.client.listSecrets({
         parent: `projects/${this.projectId}`,
         pageSize: 1
@@ -45,15 +58,15 @@ class SecretManager {
       this.logger.info('Secret Manager initialized successfully');
     } catch (error) {
       this.initialized = false;
+      this.initPromise = null;
       this.logger.error('Failed to initialize Secret Manager:', error);
       throw error;
     }
   }
 
   async getSecret(secretName) {
-    if (!this.initialized) {
-      throw new Error('Secret Manager not initialized');
-    }
+    // Ensure initialization before getting secrets
+    await this.initialize();
 
     try {
       // Check cache first
@@ -65,7 +78,7 @@ class SecretManager {
       
       const [version] = await this.client.accessSecretVersion({
         name,
-        timeout: 10000 // 10 second timeout per request
+        timeout: 10000
       });
 
       if (!version?.payload?.data) {

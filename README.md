@@ -5,24 +5,38 @@ This service handles the asynchronous processing of appraisal tasks using Google
 ## Service Architecture
 
 ### Initialization Strategy
-1. **Fast Startup**: Service starts HTTP server immediately to handle health checks
-2. **Background Initialization**: Services initialize asynchronously while maintaining responsiveness
-3. **Sequential Loading**: Dependencies load in order to prevent race conditions:
-   - Secret Manager
-   - Configuration
-   - WordPress Service
-   - Google Sheets Service
-   - OpenAI Service
-   - Email Service
-   - PDF Service
-   - Pub/Sub Connection
+1. **HTTP Server First**: 
+   - Service starts HTTP server immediately to handle initial health checks
+   - Returns "initializing" status during startup
 
-### Health Check Strategy
-- Endpoint: `/health`
-- Returns service status and readiness
-- Used by Cloud Run for container health monitoring
-- Keeps service warm via scheduled pings
-- Reports detailed initialization state
+2. **Sequential Service Initialization**:
+   ```
+   initialize()
+   ├─> 1. Load Secrets
+   │   ├─> Initialize Secret Manager
+   │   └─> Load all required secrets
+   ├─> 2. Initialize Core Services
+   │   ├─> WordPress Service
+   │   ├─> Google Sheets Service
+   │   ├─> OpenAI Service
+   │   ├─> Email Service
+   │   └─> PDF Service
+   └─> 3. Enable Message Processing
+       ├─> Initialize Pub/Sub connection
+       └─> Start message listener
+   ```
+
+3. **Health Check States**:
+   - `initializing`: Services are starting up
+   - `error`: Initialization failed
+   - `healthy`: All services ready
+
+4. **Benefits**:
+   - Reliable startup sequence
+   - No race conditions
+   - Clear service status
+   - Accurate health reporting
+   - Safe message processing
 
 ### Message Processing
 Once fully initialized, the service:
@@ -64,11 +78,13 @@ processAppraisal()
 ## Service Features
 
 - **Resilient Initialization**:
-  - Handles startup failures gracefully
-  - Reports initialization status via health checks
-  - Auto-recovers from temporary service outages
+  - Sequential service startup
+  - Dependency validation
+  - Graceful error handling
+  - Auto-recovery capability
 
 - **Message Processing**:
+  - Starts only when fully initialized
   - Validates message structure
   - Processes tasks asynchronously
   - Implements retry logic with DLQ
@@ -82,10 +98,10 @@ processAppraisal()
   - PDF service for document generation
 
 - **Monitoring & Health**:
-  - Detailed logging of operations
-  - Health check endpoint for monitoring
-  - Service status reporting
-  - Error tracking and reporting
+  - Detailed initialization status
+  - Service readiness reporting
+  - Comprehensive error tracking
+  - Clear operational state indication
 
 ## Configuration
 
@@ -132,6 +148,7 @@ The service implements comprehensive error handling:
 1. **Initialization Errors**:
    - Reported via health check endpoint
    - Non-blocking for HTTP server
+   - Detailed error reporting
    - Automatic retry with backoff
 
 2. **Processing Errors**:
@@ -145,9 +162,9 @@ The service implements comprehensive error handling:
    - Detailed error logging
    - Service state maintained
 
-## Monitoring
+## Health Check
 
-The service exposes a health check endpoint that returns:
+The service exposes a health check endpoint at `/health` that returns:
 
 ```json
 {
@@ -158,3 +175,7 @@ The service exposes a health check endpoint that returns:
   "error": "Error message if status is error"
 }
 ```
+
+- Returns 200 OK when healthy
+- Returns 503 Service Unavailable when initializing or unhealthy
+- Used by Cloud Run for container health monitoring

@@ -5,6 +5,7 @@ class Config {
   constructor() {
     this.logger = createLogger('Config');
     this.initialized = false;
+    this.initPromise = null;
     this.GOOGLE_SHEET_NAME = 'Pending';
     this.secrets = {};
 
@@ -13,10 +14,21 @@ class Config {
   }
 
   async initialize() {
-    if (this.initialized) {
-      return this;
+    // Return existing promise if initialization is in progress
+    if (this.initPromise) {
+      return this.initPromise;
     }
 
+    // Return immediately if already initialized
+    if (this.initialized) {
+      return Promise.resolve();
+    }
+
+    this.initPromise = this._initialize();
+    return this.initPromise;
+  }
+
+  async _initialize() {
     try {
       this.logger.info('Starting configuration initialization...');
 
@@ -27,6 +39,7 @@ class Config {
 
       // Initialize secret manager first
       await secretManager.initialize();
+      this.logger.info('Secret Manager initialized');
 
       // Define required secrets with their config key mappings
       const secretMappings = {
@@ -40,12 +53,15 @@ class Config {
         'service-account-json': 'SERVICE_ACCOUNT_JSON'
       };
 
-      // Load secrets sequentially to avoid rate limiting
+      // Load secrets sequentially
       for (const [secretName, configKey] of Object.entries(secretMappings)) {
         try {
           const value = await secretManager.getSecret(secretName);
           this.secrets[configKey] = value;
           this.logger.info(`Loaded secret: ${secretName}`);
+          
+          // Small delay between secret loads to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 100));
         } catch (error) {
           this.logger.error(`Failed to load secret ${secretName}:`, error);
           throw error;
@@ -60,6 +76,7 @@ class Config {
       return this;
     } catch (error) {
       this.initialized = false;
+      this.initPromise = null;
       this.logger.error('Configuration initialization failed:', error);
       throw error;
     }
@@ -70,6 +87,10 @@ class Config {
   }
 
   getSecret(name) {
+    if (!this.initialized) {
+      throw new Error('Configuration not initialized');
+    }
+    
     const value = this.secrets[name];
     if (!value) {
       throw new Error(`Secret ${name} not found`);
