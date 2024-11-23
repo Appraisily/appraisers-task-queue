@@ -26,9 +26,7 @@ class Config {
       }
 
       // Initialize secret manager first
-      this.logger.info('Initializing Secret Manager...');
       await secretManager.initialize();
-      this.logger.info('Secret Manager initialized successfully');
 
       // Define required secrets
       const requiredSecrets = [
@@ -43,7 +41,6 @@ class Config {
       ];
 
       // Load secrets sequentially to avoid rate limiting
-      this.logger.info('Loading secrets...');
       for (const name of requiredSecrets) {
         try {
           const value = await secretManager.getSecret(name);
@@ -60,7 +57,7 @@ class Config {
       Object.assign(this, this.secrets);
 
       this.initialized = true;
-      this.logger.info('Configuration initialization completed successfully');
+      this.logger.info('Configuration initialization completed');
       return this;
     } catch (error) {
       this.initialized = false;

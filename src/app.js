@@ -7,7 +7,7 @@ const { createLogger } = require('./utils/logger');
 const config = require('./config');
 const { appraisalService } = require('./services');
 
-const logger = createLogger('app');
+const logger = createLogger('App');
 const app = express();
 let pubsub;
 let subscription;
@@ -95,26 +95,17 @@ async function initializeServices() {
   }
 }
 
-async function startServer() {
-  const PORT = process.env.PORT || 8080;
-  
-  try {
-    app.listen(PORT, '0.0.0.0', () => {
-      logger.info(`Task Queue service running on port ${PORT}`);
-    });
+const PORT = process.env.PORT || 8080;
 
-    // Handle graceful shutdown
-    process.on('SIGTERM', () => {
-      logger.info('Received SIGTERM signal. Starting graceful shutdown...');
-      if (subscription) {
-        subscription.close();
-      }
-      process.exit(0);
-    });
-  } catch (error) {
-    logger.error('Failed to start server:', error);
-    process.exit(1);
+app.listen(PORT, '0.0.0.0', () => {
+  logger.info(`Task Queue service running on port ${PORT}`);
+});
+
+// Handle graceful shutdown
+process.on('SIGTERM', () => {
+  logger.info('Received SIGTERM signal. Starting graceful shutdown...');
+  if (subscription) {
+    subscription.close();
   }
-}
-
-startServer();
+  process.exit(0);
+});

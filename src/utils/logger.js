@@ -11,10 +11,7 @@ function createLogger(name) {
         levelFirst: true,
         translateTime: 'yyyy-mm-dd HH:MM:ss',
         ignore: 'pid,hostname',
-        messageFormat: '{msg}',
-        customPrettifiers: {
-          name: name => `[${name}]`
-        }
+        messageFormat: (log) => `[${log.name}] ${log.msg}`
       }
     },
     formatters: {
