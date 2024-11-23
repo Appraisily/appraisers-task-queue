@@ -1,5 +1,6 @@
 const fetch = require('node-fetch');
 const { createLogger } = require('../utils/logger');
+const AbortController = require('abort-controller');
 
 class WordPressService {
   constructor() {
@@ -30,8 +31,8 @@ class WordPressService {
         throw new Error('WordPress app password not configured');
       }
 
-      // Set up API URL and credentials
-      this.baseUrl = config.WORDPRESS_API_URL;
+      // Clean up URL and set credentials
+      this.baseUrl = config.WORDPRESS_API_URL.replace(/\/+$/, '');
       this.auth = Buffer.from(`${config.wp_username}:${config.wp_app_password}`).toString('base64');
 
       // Test the connection with retries
@@ -39,7 +40,7 @@ class WordPressService {
       for (let attempt = 1; attempt <= this.retryAttempts; attempt++) {
         try {
           const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 5000);
+          const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
           const response = await fetch(`${this.baseUrl}/appraisals`, {
             headers: {
@@ -49,7 +50,7 @@ class WordPressService {
             signal: controller.signal
           });
 
-          clearTimeout(timeout);
+          clearTimeout(timeoutId);
 
           if (!response.ok) {
             const errorText = await response.text();
@@ -71,7 +72,6 @@ class WordPressService {
         }
       }
 
-      // If we get here, all attempts failed
       throw new Error(`WordPress initialization failed after ${this.retryAttempts} attempts: ${lastError.message}`);
     } catch (error) {
       this.initialized = false;
@@ -91,7 +91,7 @@ class WordPressService {
 
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
 
       const response = await fetch(`${this.baseUrl}/appraisals/${postId}`, {
         headers: {
@@ -101,7 +101,7 @@ class WordPressService {
         signal: controller.signal
       });
 
-      clearTimeout(timeout);
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -110,7 +110,7 @@ class WordPressService {
 
       return await response.json();
     } catch (error) {
-      this.logger.error(`Error getting appraisal ${postId}:`, error);
+      this.logger.error(`Error getting post ${postId}:`, error);
       throw error;
     }
   }
@@ -122,7 +122,7 @@ class WordPressService {
 
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
 
       const response = await fetch(`${this.baseUrl}/appraisals/${postId}`, {
         method: 'POST',
@@ -135,7 +135,7 @@ class WordPressService {
         signal: controller.signal
       });
 
-      clearTimeout(timeout);
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -144,7 +144,7 @@ class WordPressService {
 
       return await response.json();
     } catch (error) {
-      this.logger.error(`Error updating appraisal ${postId}:`, error);
+      this.logger.error(`Error updating post ${postId}:`, error);
       throw error;
     }
   }

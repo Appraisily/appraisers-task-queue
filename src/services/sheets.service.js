@@ -15,89 +15,31 @@ class SheetsService {
     }
 
     try {
-      this.logger.info('Initializing Google Sheets service...');
-
-      // Validate configuration
       if (!config.SERVICE_ACCOUNT_JSON) {
         throw new Error('Service account credentials not found');
       }
+
       if (!config.PENDING_APPRAISALS_SPREADSHEET_ID) {
         throw new Error('Spreadsheet ID not found');
       }
 
-      this.spreadsheetId = config.PENDING_APPRAISALS_SPREADSHEET_ID;
-      this.logger.info(`Using spreadsheet ID: ${this.spreadsheetId}`);
-
-      // Parse service account credentials
-      let credentials;
-      try {
-        credentials = JSON.parse(config.SERVICE_ACCOUNT_JSON);
-        if (!credentials.client_email || !credentials.private_key) {
-          throw new Error('Invalid service account format');
-        }
-        this.logger.info(`Using service account email: ${credentials.client_email}`);
-      } catch (error) {
-        throw new Error(`Failed to parse service account JSON: ${error.message}`);
-      }
-
-      // Initialize auth with explicit credentials
+      const credentials = JSON.parse(config.SERVICE_ACCOUNT_JSON);
+      
       const auth = new google.auth.GoogleAuth({
-        credentials: {
-          type: 'service_account',
-          client_email: credentials.client_email,
-          private_key: credentials.private_key,
-          project_id: credentials.project_id
-        },
+        credentials,
         scopes: ['https://www.googleapis.com/auth/spreadsheets']
       });
 
       this.sheets = google.sheets({ version: 'v4', auth });
+      this.spreadsheetId = config.PENDING_APPRAISALS_SPREADSHEET_ID;
+      
+      // Verify access by attempting to read sheet metadata
+      await this.sheets.spreadsheets.get({
+        spreadsheetId: this.spreadsheetId
+      });
 
-      // Test connection with retries
-      let lastError;
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          this.logger.info(`Attempting to access spreadsheet (attempt ${attempt}/3)...`);
-          
-          const response = await this.sheets.spreadsheets.get({
-            spreadsheetId: this.spreadsheetId,
-            fields: 'spreadsheetId,properties.title'
-          });
-
-          this.logger.info(`Successfully accessed spreadsheet: "${response.data.properties.title}"`);
-          
-          // Also verify we can read the specific sheet we need
-          const values = await this.sheets.spreadsheets.values.get({
-            spreadsheetId: this.spreadsheetId,
-            range: 'Pending!A1:A1',
-            valueRenderOption: 'UNFORMATTED_VALUE'
-          });
-
-          this.logger.info('Successfully verified sheet access');
-          
-          this.initialized = true;
-          this.logger.info('Google Sheets service initialized successfully');
-          return;
-        } catch (error) {
-          lastError = error;
-          const errorDetails = error.response?.data?.error || error;
-          
-          this.logger.warn(`Sheets connection attempt ${attempt} failed:`, {
-            error: errorDetails.message,
-            code: errorDetails.code,
-            status: error.response?.status,
-            details: errorDetails.errors
-          });
-
-          if (attempt < 3) {
-            const delay = 1000 * Math.pow(2, attempt - 1);
-            this.logger.info(`Retrying in ${delay}ms...`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-          }
-        }
-      }
-
-      throw new Error(`Failed to connect to Google Sheets after 3 attempts: ${lastError.message}`);
+      this.initialized = true;
+      this.logger.info('Google Sheets service initialized successfully');
     } catch (error) {
       this.initialized = false;
       this.logger.error('Failed to initialize Sheets service:', error);
@@ -117,9 +59,7 @@ class SheetsService {
     try {
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: range,
-        valueRenderOption: 'UNFORMATTED_VALUE',
-        dateTimeRenderOption: 'FORMATTED_STRING'
+        range: range
       });
 
       return response.data.values || [];

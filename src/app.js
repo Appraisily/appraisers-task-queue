@@ -8,6 +8,10 @@ const logger = createLogger('App');
 const app = express();
 let isInitialized = false;
 let initializationError = null;
+let shuttingDown = false;
+
+// Increase max listeners to prevent warning
+require('events').EventEmitter.defaultMaxListeners = 20;
 
 app.use(cors());
 app.use(express.json());
@@ -29,14 +33,35 @@ app.get('/health', (req, res) => {
   res.status(isInitialized ? 200 : 503).json(status);
 });
 
+// Graceful shutdown handler
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  logger.info(`Received ${signal} signal. Starting graceful shutdown...`);
+  
+  try {
+    await shutdownPubSub();
+    logger.info('Graceful shutdown completed');
+  } catch (error) {
+    logger.error('Error during shutdown:', error);
+  } finally {
+    process.exit(0);
+  }
+}
+
 // Start server and initialize services
 async function startServer() {
   const PORT = process.env.PORT || 8080;
 
   // Start HTTP server immediately
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     logger.info(`Task Queue service running on port ${PORT}`);
   });
+
+  // Set server timeouts
+  server.keepAliveTimeout = 65000;
+  server.headersTimeout = 66000;
 
   // Initialize core in the background
   try {
@@ -50,11 +75,19 @@ async function startServer() {
   }
 }
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  logger.info('Received SIGTERM signal. Starting graceful shutdown...');
-  await shutdownPubSub();
-  process.exit(0);
+// Register shutdown handlers
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+// Handle uncaught errors
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught exception:', error);
+  shutdown('uncaughtException');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled rejection at:', promise, 'reason:', reason);
+  shutdown('unhandledRejection');
 });
 
 // Start everything
