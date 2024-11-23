@@ -31,7 +31,7 @@ class WordPressService {
       }
 
       // Clean up URL and set credentials
-      this.baseUrl = config.WORDPRESS_API_URL.replace(/\/+$/, '');
+      this.baseUrl = config.WORDPRESS_API_URL;
       this.auth = Buffer.from(`${config.wp_username}:${config.wp_app_password}`).toString('base64');
 
       // Test the connection with retries
@@ -41,7 +41,7 @@ class WordPressService {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 5000);
 
-          const response = await fetch(`${this.baseUrl}/wp/v2`, {
+          const response = await fetch(`${this.baseUrl}/posts`, {
             headers: {
               'Authorization': `Basic ${this.auth}`,
               'Accept': 'application/json',
@@ -93,7 +93,7 @@ class WordPressService {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 5000);
 
-      const response = await fetch(`${this.baseUrl}/wp/v2/posts/${postId}`, {
+      const response = await fetch(`${this.baseUrl}/posts/${postId}`, {
         headers: {
           'Authorization': `Basic ${this.auth}`,
           'Accept': 'application/json',
@@ -124,7 +124,7 @@ class WordPressService {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10000);
 
-      const response = await fetch(`${this.baseUrl}/wp/v2/posts/${postId}`, {
+      const response = await fetch(`${this.baseUrl}/posts/${postId}`, {
         method: 'POST',
         headers: {
           'Authorization': `Basic ${this.auth}`,
