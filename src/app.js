@@ -3,6 +3,7 @@ const cors = require('cors');
 const { PubSub } = require('@google-cloud/pubsub');
 const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
 const { createLogger } = require('./utils/logger');
+const appraisalService = require('./services/appraisalService');
 
 const logger = createLogger('app');
 const app = express();
@@ -61,23 +62,27 @@ async function processMessage(message) {
     
     logger.info('Processing appraisal task:', {
       messageId: message.id,
-      appraisalId: data.id
+      data: data
     });
 
-    // Process the appraisal following the documented steps
-    // 1. Set value
-    // 2. Merge descriptions
-    // 3. Update title
-    // 4. Insert template
-    // 5. Build PDF
-    // 6. Send email
-    // 7. Complete
+    // Validate message structure
+    if (!data.id || !data.appraisalValue || !data.description) {
+      throw new Error('Invalid message data structure');
+    }
+
+    // Start the appraisal process
+    await appraisalService.processAppraisal(
+      data.id,
+      data.appraisalValue,
+      data.description
+    );
 
     message.ack();
     logger.info('Task processed successfully');
   } catch (error) {
     logger.error('Error processing message:', error);
     message.ack(); // Acknowledge to prevent infinite retries
+    throw error;
   }
 }
 
@@ -88,6 +93,9 @@ async function initialize() {
       config[secretName] = await getSecret(secretName);
       logger.info(`Loaded secret: ${secretName}`);
     }
+
+    // Initialize services
+    await appraisalService.initialize();
 
     // Initialize PubSub
     pubsub = new PubSub({ projectId: config.GOOGLE_CLOUD_PROJECT_ID });
