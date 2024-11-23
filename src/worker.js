@@ -40,12 +40,21 @@ class PubSubWorker {
   }
 
   async handleMessage(message) {
-    let messageError;
     try {
       this.logger.info(`Processing message ${message.id}`);
       
-      const data = JSON.parse(message.data.toString());
-      this.logger.info('Message data:', data);
+      // Parse message data
+      const rawData = message.data.toString();
+      this.logger.debug('Raw message data:', rawData);
+      
+      // Extract the actual data object from the message
+      const match = rawData.match(/data:\s*({[\s\S]*})/);
+      if (!match) {
+        throw new Error('Invalid message format');
+      }
+
+      const data = JSON.parse(match[1]);
+      this.logger.info('Parsed message data:', data);
 
       // Process the appraisal task
       await this.processAppraisal(data);
@@ -54,21 +63,20 @@ class PubSubWorker {
       message.ack();
       this.logger.info(`Message ${message.id} processed and acknowledged`);
     } catch (error) {
-      messageError = error;
       this.logger.error(`Error processing message ${message.id}:`, error);
       
       // Always acknowledge to prevent infinite retries
       message.ack();
       
       // Publish to dead letter queue
-      await this.publishToDeadLetterQueue(message, messageError);
+      await this.publishToDeadLetterQueue(message.id, rawData, error.message);
     }
   }
 
   async processAppraisal(data) {
     const { id, appraisalValue, description } = data;
     
-    if (!id || !appraisalValue || !description) {
+    if (!id || appraisalValue === undefined || !description) {
       throw new Error(`Invalid message data: missing required fields. Received: ${JSON.stringify(data)}`);
     }
 
@@ -91,20 +99,20 @@ class PubSubWorker {
     }
   }
 
-  async publishToDeadLetterQueue(message, error) {
+  async publishToDeadLetterQueue(messageId, originalMessage, errorMessage) {
     try {
       const pubsub = new PubSub();
       const dlqTopic = pubsub.topic('appraisals-failed');
       
       const messageData = {
-        originalMessage: message.data.toString(),
-        error: error.message,
+        originalMessage,
+        error: errorMessage,
         timestamp: new Date().toISOString(),
-        messageId: message.id
+        messageId
       };
 
       await dlqTopic.publish(Buffer.from(JSON.stringify(messageData)));
-      this.logger.info(`Message ${message.id} published to DLQ`);
+      this.logger.info(`Message ${messageId} published to DLQ`);
     } catch (dlqError) {
       this.logger.error('Failed to publish to DLQ:', dlqError);
     }
