@@ -25,6 +25,9 @@ class SheetsService {
         throw new Error('Spreadsheet ID not found');
       }
 
+      this.spreadsheetId = config.PENDING_APPRAISALS_SPREADSHEET_ID;
+      this.logger.info(`Using spreadsheet ID: ${this.spreadsheetId}`);
+
       // Parse service account credentials
       let credentials;
       try {
@@ -32,6 +35,7 @@ class SheetsService {
         if (!credentials.client_email || !credentials.private_key) {
           throw new Error('Invalid service account format');
         }
+        this.logger.info(`Using service account email: ${credentials.client_email}`);
       } catch (error) {
         throw new Error(`Failed to parse service account JSON: ${error.message}`);
       }
@@ -39,6 +43,7 @@ class SheetsService {
       // Initialize auth with explicit credentials
       const auth = new google.auth.GoogleAuth({
         credentials: {
+          type: 'service_account',
           client_email: credentials.client_email,
           private_key: credentials.private_key,
           project_id: credentials.project_id
@@ -47,25 +52,46 @@ class SheetsService {
       });
 
       this.sheets = google.sheets({ version: 'v4', auth });
-      this.spreadsheetId = config.PENDING_APPRAISALS_SPREADSHEET_ID;
 
       // Test connection with retries
       let lastError;
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          await this.sheets.spreadsheets.get({
+          this.logger.info(`Attempting to access spreadsheet (attempt ${attempt}/3)...`);
+          
+          const response = await this.sheets.spreadsheets.get({
             spreadsheetId: this.spreadsheetId,
             fields: 'spreadsheetId,properties.title'
           });
 
+          this.logger.info(`Successfully accessed spreadsheet: "${response.data.properties.title}"`);
+          
+          // Also verify we can read the specific sheet we need
+          const values = await this.sheets.spreadsheets.values.get({
+            spreadsheetId: this.spreadsheetId,
+            range: 'Pending!A1:A1',
+            valueRenderOption: 'UNFORMATTED_VALUE'
+          });
+
+          this.logger.info('Successfully verified sheet access');
+          
           this.initialized = true;
           this.logger.info('Google Sheets service initialized successfully');
           return;
         } catch (error) {
           lastError = error;
+          const errorDetails = error.response?.data?.error || error;
+          
+          this.logger.warn(`Sheets connection attempt ${attempt} failed:`, {
+            error: errorDetails.message,
+            code: errorDetails.code,
+            status: error.response?.status,
+            details: errorDetails.errors
+          });
+
           if (attempt < 3) {
             const delay = 1000 * Math.pow(2, attempt - 1);
-            this.logger.warn(`Sheets connection attempt ${attempt} failed, retrying in ${delay}ms: ${error.message}`);
+            this.logger.info(`Retrying in ${delay}ms...`);
             await new Promise(resolve => setTimeout(resolve, delay));
           }
         }
