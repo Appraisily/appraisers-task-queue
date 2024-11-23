@@ -11,6 +11,7 @@ let pubsub;
 let subscription;
 let isInitialized = false;
 let initializationError = null;
+let initializationPromise = null;
 
 app.use(cors());
 app.use(express.json());
@@ -80,30 +81,46 @@ async function initializePubSub() {
 }
 
 async function initialize() {
-  try {
-    logger.info('Starting service initialization...');
-
-    // Step 1: Initialize configuration and secrets
-    await config.initialize();
-    logger.info('Configuration initialized');
-
-    // Step 2: Initialize appraisal service (which handles its dependencies)
-    await appraisalService.initialize(config);
-    logger.info('Appraisal service initialized');
-
-    // Step 3: Initialize PubSub last
-    await initializePubSub();
-    logger.info('PubSub connection established');
-
-    isInitialized = true;
-    initializationError = null;
-    logger.info('All services initialized successfully');
-  } catch (error) {
-    isInitialized = false;
-    initializationError = error;
-    logger.error('Service initialization failed:', error);
-    throw error;
+  // Return existing promise if initialization is in progress
+  if (initializationPromise) {
+    return initializationPromise;
   }
+
+  // Return immediately if already initialized
+  if (isInitialized) {
+    return Promise.resolve();
+  }
+
+  initializationPromise = (async () => {
+    try {
+      logger.info('Starting service initialization...');
+
+      // Step 1: Initialize configuration and secrets
+      const configInstance = await config.initialize();
+      logger.info('Configuration initialized');
+
+      // Step 2: Initialize appraisal service (which handles its dependencies)
+      await appraisalService.initialize(configInstance);
+      logger.info('Appraisal service initialized');
+
+      // Step 3: Initialize PubSub last
+      await initializePubSub();
+      logger.info('PubSub connection established');
+
+      isInitialized = true;
+      initializationError = null;
+      logger.info('All services initialized successfully');
+    } catch (error) {
+      isInitialized = false;
+      initializationError = error;
+      logger.error('Service initialization failed:', error);
+      throw error;
+    } finally {
+      initializationPromise = null;
+    }
+  })();
+
+  return initializationPromise;
 }
 
 // Start server and initialize services

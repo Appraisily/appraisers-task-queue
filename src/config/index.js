@@ -21,14 +21,9 @@ class Config {
 
     // Return immediately if already initialized
     if (this.initialized) {
-      return Promise.resolve();
+      return this;
     }
 
-    this.initPromise = this._initialize();
-    return this.initPromise;
-  }
-
-  async _initialize() {
     try {
       this.logger.info('Starting configuration initialization...');
 
@@ -42,29 +37,28 @@ class Config {
       this.logger.info('Secret Manager initialized');
 
       // Define required secrets with their config key mappings
-      const secretMappings = {
-        'PENDING_APPRAISALS_SPREADSHEET_ID': 'PENDING_APPRAISALS_SPREADSHEET_ID',
-        'WORDPRESS_API_URL': 'WORDPRESS_API_URL',
-        'wp_username': 'WP_USERNAME',
-        'wp_app_password': 'WP_APP_PASSWORD',
-        'SENDGRID_API_KEY': 'SENDGRID_API_KEY',
-        'SENDGRID_EMAIL': 'SENDGRID_EMAIL',
-        'OPENAI_API_KEY': 'OPENAI_API_KEY',
-        'service-account-json': 'SERVICE_ACCOUNT_JSON'
-      };
+      const requiredSecrets = [
+        { name: 'PENDING_APPRAISALS_SPREADSHEET_ID', key: 'PENDING_APPRAISALS_SPREADSHEET_ID', required: true },
+        { name: 'WORDPRESS_API_URL', key: 'WORDPRESS_API_URL', required: true },
+        { name: 'wp_username', key: 'wp_username', required: true },
+        { name: 'wp_app_password', key: 'wp_app_password', required: true },
+        { name: 'SENDGRID_API_KEY', key: 'SENDGRID_API_KEY', required: true },
+        { name: 'SENDGRID_EMAIL', key: 'SENDGRID_EMAIL', required: true },
+        { name: 'OPENAI_API_KEY', key: 'OPENAI_API_KEY', required: true },
+        { name: 'service-account-json', key: 'SERVICE_ACCOUNT_JSON', required: true }
+      ];
 
-      // Load secrets sequentially
-      for (const [secretName, configKey] of Object.entries(secretMappings)) {
+      // Load all secrets sequentially to avoid rate limiting
+      for (const { name, key, required } of requiredSecrets) {
         try {
-          const value = await secretManager.getSecret(secretName);
-          this.secrets[configKey] = value;
-          this.logger.info(`Loaded secret: ${secretName}`);
-          
-          // Small delay between secret loads to avoid rate limiting
-          await new Promise(resolve => setTimeout(resolve, 100));
+          const value = await secretManager.getSecret(name);
+          this.secrets[key] = value;
+          this.logger.info(`Loaded secret: ${name}`);
         } catch (error) {
-          this.logger.error(`Failed to load secret ${secretName}:`, error);
-          throw error;
+          if (required) {
+            throw new Error(`Failed to load required secret ${name}: ${error.message}`);
+          }
+          this.logger.warn(`Optional secret ${name} not loaded: ${error.message}`);
         }
       }
 
@@ -73,6 +67,7 @@ class Config {
 
       this.initialized = true;
       this.logger.info(`Successfully loaded ${Object.keys(this.secrets).length} secrets`);
+      
       return this;
     } catch (error) {
       this.initialized = false;

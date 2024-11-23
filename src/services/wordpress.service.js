@@ -7,6 +7,8 @@ class WordPressService {
     this.initialized = false;
     this.baseUrl = null;
     this.auth = null;
+    this.retryAttempts = 3;
+    this.retryDelay = 1000;
   }
 
   async initialize(config) {
@@ -17,35 +19,67 @@ class WordPressService {
     try {
       this.logger.info('Initializing WordPress service...');
 
+      // Validate configuration
       if (!config.WORDPRESS_API_URL) {
         throw new Error('WordPress API URL not configured');
       }
-      if (!config.WP_USERNAME) {
+      if (!config.wp_username) {
         throw new Error('WordPress username not configured');
       }
-      if (!config.WP_APP_PASSWORD) {
+      if (!config.wp_app_password) {
         throw new Error('WordPress app password not configured');
       }
 
-      this.baseUrl = config.WORDPRESS_API_URL.replace(/\/$/, '');
-      this.auth = Buffer.from(`${config.WP_USERNAME}:${config.WP_APP_PASSWORD}`).toString('base64');
+      // Clean up URL and set credentials
+      this.baseUrl = config.WORDPRESS_API_URL.replace(/\/+$/, '');
+      this.auth = Buffer.from(`${config.wp_username}:${config.wp_app_password}`).toString('base64');
 
-      // Test the connection
-      const response = await fetch(`${this.baseUrl}/wp/v2/posts?per_page=1`, {
-        headers: {
-          'Authorization': `Basic ${this.auth}`,
-        },
-      });
+      // Test the connection with retries
+      let lastError;
+      for (let attempt = 1; attempt <= this.retryAttempts; attempt++) {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 5000);
 
-      if (!response.ok) {
-        throw new Error(`WordPress API test failed: ${response.statusText}`);
+          const response = await fetch(`${this.baseUrl}/wp/v2/posts?per_page=1`, {
+            headers: {
+              'Authorization': `Basic ${this.auth}`,
+              'Accept': 'application/json',
+            },
+            signal: controller.signal
+          });
+
+          clearTimeout(timeout);
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`WordPress API test failed: ${response.status} ${response.statusText} - ${errorText}`);
+          }
+
+          // Test successful
+          this.initialized = true;
+          this.logger.info('WordPress service initialized successfully');
+          return;
+        } catch (error) {
+          lastError = error;
+          
+          if (attempt < this.retryAttempts) {
+            const delay = this.retryDelay * Math.pow(2, attempt - 1);
+            this.logger.warn(`WordPress connection attempt ${attempt} failed, retrying in ${delay}ms:`, error.message);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+        }
       }
 
-      this.initialized = true;
-      this.logger.info('WordPress service initialized successfully');
+      // If we get here, all attempts failed
+      throw new Error(`WordPress initialization failed after ${this.retryAttempts} attempts: ${lastError.message}`);
     } catch (error) {
       this.initialized = false;
-      this.logger.error('Failed to initialize WordPress service:', error);
+      this.logger.error('Failed to initialize WordPress service:', {
+        error: error.message,
+        baseUrl: this.baseUrl,
+        // Don't log auth credentials
+      });
       throw error;
     }
   }
@@ -60,14 +94,22 @@ class WordPressService {
     }
 
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+
       const response = await fetch(`${this.baseUrl}/wp/v2/posts/${postId}`, {
         headers: {
           'Authorization': `Basic ${this.auth}`,
+          'Accept': 'application/json',
         },
+        signal: controller.signal
       });
 
+      clearTimeout(timeout);
+
       if (!response.ok) {
-        throw new Error(`WordPress API error: ${response.statusText}`);
+        const errorText = await response.text();
+        throw new Error(`WordPress API error: ${response.status} ${response.statusText} - ${errorText}`);
       }
 
       return await response.json();
@@ -83,23 +125,34 @@ class WordPressService {
     }
 
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+
       const response = await fetch(`${this.baseUrl}/wp/v2/posts/${postId}`, {
         method: 'POST',
         headers: {
           'Authorization': `Basic ${this.auth}`,
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
         },
         body: JSON.stringify(data),
+        signal: controller.signal
       });
+
+      clearTimeout(timeout);
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`WordPress API error: ${response.statusText} - ${errorText}`);
+        throw new Error(`WordPress API error: ${response.status} ${response.statusText} - ${errorText}`);
       }
 
       return await response.json();
     } catch (error) {
-      this.logger.error(`Error updating post ${postId}:`, error);
+      this.logger.error(`Error updating post ${postId}:`, {
+        error: error.message,
+        postId,
+        // Don't log potentially sensitive data
+      });
       throw error;
     }
   }
