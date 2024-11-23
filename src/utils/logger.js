@@ -4,12 +4,19 @@ function createLogger(name) {
   return pino({
     name,
     level: process.env.LOG_LEVEL || 'info',
-    timestamp: () => `,"time":"${new Date().toISOString()}"`,
-    formatters: {
-      level: (label) => ({ level: label.toUpperCase() })
+    transport: {
+      target: 'pino/file',
+      options: {
+        destination: 1, // stdout
+        sync: false // async for better performance
+      }
     },
-    messageKey: 'message',
-    base: { logger: name }
+    formatters: {
+      level: (label) => ({ level: label.toUpperCase() }),
+      bindings: () => ({})
+    },
+    timestamp: () => `,"time":"${new Date().toISOString()}"`,
+    messageKey: 'msg'
   });
 }
 
