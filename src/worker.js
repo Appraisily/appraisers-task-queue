@@ -40,67 +40,50 @@ class PubSubWorker {
   }
 
   async handleMessage(message) {
+    let messageError;
     try {
       this.logger.info(`Processing message ${message.id}`);
       
       const data = JSON.parse(message.data.toString());
       this.logger.info('Message data:', data);
 
-      const { id, appraisalValue, description } = data;
-
-      if (!id || !appraisalValue || !description) {
-        throw new Error('Missing required fields in message');
-      }
-
       // Process the appraisal task
-      await this.processAppraisal(id, appraisalValue, description);
+      await this.processAppraisal(data);
 
       // Acknowledge the message
       message.ack();
       this.logger.info(`Message ${message.id} processed and acknowledged`);
     } catch (error) {
+      messageError = error;
       this.logger.error(`Error processing message ${message.id}:`, error);
       
       // Always acknowledge to prevent infinite retries
-      // Failed messages will be handled by the dead letter queue
       message.ack();
       
       // Publish to dead letter queue
-      await this.publishToDeadLetterQueue(message);
+      await this.publishToDeadLetterQueue(message, messageError);
     }
   }
 
-  async processAppraisal(id, appraisalValue, description) {
+  async processAppraisal(data) {
+    const { id, appraisalValue, description } = data;
+    
+    if (!id || !appraisalValue || !description) {
+      throw new Error(`Invalid message data: missing required fields. Received: ${JSON.stringify(data)}`);
+    }
+
     this.logger.info(`Processing appraisal ${id}`);
     
     try {
-      // 1. Set appraisal value
-      await this.setAppraisalValue(id, appraisalValue, description);
-      this.logger.info('✓ Value set');
-
-      // 2. Merge descriptions
-      const mergedDescription = await this.mergeDescriptions(id, description);
-      this.logger.info('✓ Descriptions merged');
-
-      // 3. Update title
-      await this.updateTitle(id, mergedDescription);
-      this.logger.info('✓ Title updated');
-
-      // 4. Insert template
-      await this.insertTemplate(id);
-      this.logger.info('✓ Template inserted');
-
-      // 5. Build PDF
-      await this.buildPdf(id);
-      this.logger.info('✓ PDF built');
-
-      // 6. Send email
-      await this.sendEmail(id);
-      this.logger.info('✓ Email sent');
-
-      // 7. Mark as complete
-      await this.complete(id);
-      this.logger.info('✓ Appraisal completed');
+      // TODO: Implement actual processing steps
+      this.logger.info('Processing steps will be implemented here');
+      
+      // Temporary logging to show we received the data
+      this.logger.info('Received appraisal data:', {
+        id,
+        value: appraisalValue,
+        descriptionLength: description.length
+      });
 
     } catch (error) {
       this.logger.error(`Failed to process appraisal ${id}:`, error);
@@ -108,7 +91,7 @@ class PubSubWorker {
     }
   }
 
-  async publishToDeadLetterQueue(message) {
+  async publishToDeadLetterQueue(message, error) {
     try {
       const pubsub = new PubSub();
       const dlqTopic = pubsub.topic('appraisals-failed');
@@ -116,7 +99,8 @@ class PubSubWorker {
       const messageData = {
         originalMessage: message.data.toString(),
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        messageId: message.id
       };
 
       await dlqTopic.publish(Buffer.from(JSON.stringify(messageData)));
