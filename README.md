@@ -1,74 +1,32 @@
 # Appraisers Task Queue Service
 
-This service handles the asynchronous processing of appraisal tasks using Google Cloud Pub/Sub.
+A microservice that processes appraisal tasks from Google Cloud Pub/Sub and updates Google Sheets.
 
 ## Project Structure
 
 ```
 src/
-  ├─ app.js              # HTTP server and health checks
-  ├─ core/               # Core system functionality
-  │   ├─ index.js        # Core initialization orchestration
-  │   └─ pubsub.js       # PubSub handling
-  ├─ config/             # Configuration management
-  │   └─ index.js        # Secret and config management
+  ├─ app.js              # Express server and service initialization
+  ├─ worker.js           # PubSub worker and task processing
   ├─ services/           # Business logic services
-  │   ├─ index.js        # Service initialization
-  │   ├─ appraisal.service.js  # Main appraisal logic
-  │   ├─ email.service.js      # Email notifications
-  │   ├─ openai.service.js     # AI text processing
-  │   ├─ pdf.service.js        # PDF generation
-  │   ├─ sheets.service.js     # Google Sheets operations
-  │   └─ wordpress.service.js  # WordPress integration
-  └─ utils/              # Shared utilities
+  │   ├─ sheets.js       # Google Sheets operations
+  │   ├─ wordpress.js    # WordPress integration
+  │   ├─ openai.js       # AI text processing
+  │   ├─ email.js        # Email notifications
+  │   └─ pdf.js         # PDF generation
+  └─ utils/
       ├─ logger.js       # Logging utility
-      └─ secretManager.js # Secret management
-
+      └─ secrets.js      # Secret Manager integration
 ```
 
-## Service Architecture
+## Features
 
-### Initialization Strategy
-1. **HTTP Server First**: 
-   - Service starts HTTP server immediately to handle initial health checks
-   - Returns "initializing" status during startup
-
-2. **Sequential Service Initialization**:
-   ```
-   initialize()
-   ├─> 1. Load Secrets
-   │   ├─> Initialize Secret Manager
-   │   └─> Load all required secrets
-   ├─> 2. Initialize Core Services
-   │   ├─> WordPress Service
-   │   ├─> Google Sheets Service
-   │   ├─> OpenAI Service
-   │   ├─> Email Service
-   │   └─> PDF Service
-   └─> 3. Enable Message Processing
-       ├─> Initialize Pub/Sub connection
-       └─> Start message listener
-   ```
-
-3. **Health Check States**:
-   - `initializing`: Services are starting up
-   - `error`: Initialization failed
-   - `healthy`: All services ready
-
-4. **Benefits**:
-   - Reliable startup sequence
-   - No race conditions
-   - Clear service status
-   - Accurate health reporting
-   - Safe message processing
-
-### Message Processing
-Once fully initialized, the service:
-1. Listens for Pub/Sub messages
-2. Validates message structure
-3. Processes appraisals through defined steps
-4. Acknowledges messages to prevent duplicates
-5. Handles errors gracefully with DLQ
+- Listens for appraisal completion messages from Pub/Sub
+- Updates appraisal status in Google Sheets
+- Handles failed messages with Dead Letter Queue
+- Health check endpoint
+- Graceful shutdown
+- Secure secret management using Google Cloud Secret Manager
 
 ## Process Flow
 
@@ -99,34 +57,6 @@ processAppraisal()
     └─> Updates status in Sheets
 ```
 
-## Service Features
-
-- **Resilient Initialization**:
-  - Sequential service startup
-  - Dependency validation
-  - Graceful error handling
-  - Auto-recovery capability
-
-- **Message Processing**:
-  - Starts only when fully initialized
-  - Validates message structure
-  - Processes tasks asynchronously
-  - Implements retry logic with DLQ
-  - Handles failed tasks gracefully
-
-- **Integration Points**:
-  - Google Sheets for data storage
-  - WordPress for content management
-  - OpenAI for description merging
-  - SendGrid for email notifications
-  - PDF service for document generation
-
-- **Monitoring & Health**:
-  - Detailed initialization status
-  - Service readiness reporting
-  - Comprehensive error tracking
-  - Clear operational state indication
-
 ## Configuration
 
 ### Environment Variables
@@ -151,6 +81,23 @@ The following secrets must be configured:
 | `OPENAI_API_KEY` | OpenAI API key |
 | `service-account-json` | Google Service Account JSON key |
 
+## Service Architecture
+
+1. **Initialization**:
+   - Starts HTTP server for health checks
+   - Retrieves secrets from Secret Manager
+   - Initializes Google Sheets connection using Application Default Credentials
+   - Sets up Pub/Sub subscription
+
+2. **Message Processing**:
+   - Listens for `COMPLETE_APPRAISAL` messages
+   - Updates appraisal value and status in Google Sheets
+   - Handles errors with Dead Letter Queue
+
+3. **Health Check**:
+   - Endpoint: `/health`
+   - Returns service status and timestamp
+
 ## Setup & Development
 
 1. Install dependencies:
@@ -158,48 +105,33 @@ The following secrets must be configured:
 npm install
 ```
 
-2. Configure environment variables in `.env`
+2. Set environment variables:
+```bash
+export GOOGLE_CLOUD_PROJECT_ID=your-project-id
+```
 
 3. Run locally:
 ```bash
-npm run dev
+npm start
 ```
 
-## Error Handling
+## Required Permissions
 
-The service implements comprehensive error handling:
+The service account running this application needs:
+- `roles/pubsub.subscriber` for Pub/Sub access
+- `roles/spreadsheets.editor` for Google Sheets access
+- `roles/secretmanager.secretAccessor` for Secret Manager access
 
-1. **Initialization Errors**:
-   - Reported via health check endpoint
-   - Non-blocking for HTTP server
-   - Detailed error reporting
-   - Automatic retry with backoff
+## Message Format
 
-2. **Processing Errors**:
-   - Logged with full context
-   - Published to Dead Letter Queue
-   - Original message acknowledged
-   - Service remains operational
-
-3. **Integration Errors**:
-   - Retried with exponential backoff
-   - Detailed error logging
-   - Service state maintained
-
-## Health Check
-
-The service exposes a health check endpoint at `/health` that returns:
-
+Expected Pub/Sub message format:
 ```json
 {
-  "status": "healthy|error|initializing",
-  "timestamp": "2024-01-01T00:00:00.000Z",
-  "uptime": 123.456,
-  "ready": true|false,
-  "error": "Error message if status is error"
+  "type": "COMPLETE_APPRAISAL",
+  "data": {
+    "id": "42",
+    "appraisalValue": 750,
+    "description": "Artwork description..."
+  }
 }
 ```
-
-- Returns 200 OK when healthy
-- Returns 503 Service Unavailable when initializing or unhealthy
-- Used by Cloud Run for container health monitoring
