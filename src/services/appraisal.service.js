@@ -1,11 +1,22 @@
 const { createLogger } = require('../utils/logger');
-const { sheetsService, wordpressService, openaiService, emailService, pdfService } = require('./index');
+const SheetsService = require('./sheets.service');
+const WordPressService = require('./wordpress.service');
+const OpenAIService = require('./openai.service');
+const EmailService = require('./email.service');
+const PDFService = require('./pdf.service');
 
 class AppraisalService {
   constructor() {
     this.logger = createLogger('AppraisalService');
     this.initialized = false;
     this.config = null;
+    
+    // Initialize service instances
+    this.sheetsService = new SheetsService();
+    this.wordpressService = new WordPressService();
+    this.openaiService = new OpenAIService();
+    this.emailService = new EmailService();
+    this.pdfService = new PDFService();
   }
 
   async initialize(config) {
@@ -18,10 +29,10 @@ class AppraisalService {
       
       // Initialize all required services
       await Promise.all([
-        sheetsService.initialize(config),
-        wordpressService.initialize(config),
-        openaiService.initialize(config),
-        emailService.initialize(config),
+        this.sheetsService.initialize(config),
+        this.wordpressService.initialize(config),
+        this.openaiService.initialize(config),
+        this.emailService.initialize(config)
       ]);
 
       this.initialized = true;
@@ -36,6 +47,9 @@ class AppraisalService {
   isInitialized() {
     return this.initialized;
   }
+
+  // Rest of the AppraisalService implementation remains the same, but using this.sheetsService, 
+  // this.wordpressService, etc. instead of the imported services
 
   async processAppraisal(id, appraisalValue, description) {
     if (!this.initialized) {
@@ -85,13 +99,13 @@ class AppraisalService {
     
     try {
       // Update Google Sheets with value and description
-      await sheetsService.updateValues(
+      await this.sheetsService.updateValues(
         `${this.config.GOOGLE_SHEET_NAME}!J${id}:K${id}`,
         [[appraisalValue, description]]
       );
 
       // Get WordPress URL from sheets
-      const values = await sheetsService.getValues(
+      const values = await this.sheetsService.getValues(
         `${this.config.GOOGLE_SHEET_NAME}!G${id}`
       );
 
@@ -107,7 +121,7 @@ class AppraisalService {
       }
 
       // Update WordPress post with value
-      await wordpressService.updatePost(postId, {
+      await this.wordpressService.updatePost(postId, {
         acf: { value: appraisalValue }
       });
 
@@ -123,7 +137,7 @@ class AppraisalService {
     
     try {
       // Get IA description from sheets
-      const values = await sheetsService.getValues(
+      const values = await this.sheetsService.getValues(
         `${this.config.GOOGLE_SHEET_NAME}!H${id}`
       );
 
@@ -134,13 +148,13 @@ class AppraisalService {
       const iaDescription = values[0][0];
       
       // Use OpenAI to merge descriptions
-      const mergedDescription = await openaiService.mergeDescriptions(
+      const mergedDescription = await this.openaiService.mergeDescriptions(
         appraiserDescription,
         iaDescription
       );
 
       // Save merged description to sheets
-      await sheetsService.updateValues(
+      await this.sheetsService.updateValues(
         `${this.config.GOOGLE_SHEET_NAME}!L${id}`,
         [[mergedDescription]]
       );
@@ -158,7 +172,7 @@ class AppraisalService {
     
     try {
       // Get WordPress URL from sheets
-      const values = await sheetsService.getValues(
+      const values = await this.sheetsService.getValues(
         `${this.config.GOOGLE_SHEET_NAME}!G${id}`
       );
 
@@ -174,7 +188,7 @@ class AppraisalService {
       }
 
       // Update WordPress post title
-      await wordpressService.updatePost(postId, {
+      await this.wordpressService.updatePost(postId, {
         title: `Appraisal #${id} - ${mergedDescription.substring(0, 100)}...`
       });
 
@@ -191,7 +205,7 @@ class AppraisalService {
     
     try {
       // Get appraisal type and WordPress URL from sheets
-      const values = await sheetsService.getValues(
+      const values = await this.sheetsService.getValues(
         `${this.config.GOOGLE_SHEET_NAME}!A${id}:G${id}`
       );
 
@@ -214,7 +228,7 @@ class AppraisalService {
       }
 
       // Get current post content
-      const wpData = await wordpressService.getPost(postId);
+      const wpData = await this.wordpressService.getPost(postId);
       let content = wpData.content?.rendered || '';
 
       // Add required shortcodes if not present
@@ -227,7 +241,7 @@ class AppraisalService {
       }
 
       // Update WordPress post
-      await wordpressService.updatePost(postId, {
+      await this.wordpressService.updatePost(postId, {
         content,
         acf: { shortcodes_inserted: true }
       });
@@ -244,7 +258,7 @@ class AppraisalService {
     
     try {
       // Get WordPress URL from sheets
-      const values = await sheetsService.getValues(
+      const values = await this.sheetsService.getValues(
         `${this.config.GOOGLE_SHEET_NAME}!A${id}:G${id}`
       );
 
@@ -266,7 +280,7 @@ class AppraisalService {
       }
 
       // Get session ID from WordPress
-      const wpData = await wordpressService.getPost(postId);
+      const wpData = await this.wordpressService.getPost(postId);
       const sessionId = wpData.acf?.session_id;
 
       if (!sessionId) {
@@ -274,10 +288,10 @@ class AppraisalService {
       }
 
       // Generate PDF using PDF service
-      const { pdfLink, docLink } = await pdfService.generatePDF(postId, sessionId);
+      const { pdfLink, docLink } = await this.pdfService.generatePDF(postId, sessionId);
 
       // Update sheets with PDF and Doc links
-      await sheetsService.updateValues(
+      await this.sheetsService.updateValues(
         `${this.config.GOOGLE_SHEET_NAME}!M${id}:N${id}`,
         [[pdfLink, docLink]]
       );
@@ -295,7 +309,7 @@ class AppraisalService {
     
     try {
       // Get all required data from sheets
-      const values = await sheetsService.getValues(
+      const values = await this.sheetsService.getValues(
         `${this.config.GOOGLE_SHEET_NAME}!A${id}:N${id}`
       );
 
@@ -316,7 +330,7 @@ class AppraisalService {
       }
 
       // Send email using email service
-      await emailService.sendAppraisalCompletedEmail(customerEmail, customerName, {
+      await this.emailService.sendAppraisalCompletedEmail(customerEmail, customerName, {
         value: appraisalValue,
         description: description,
         pdfLink: pdfLink,
@@ -335,13 +349,13 @@ class AppraisalService {
     
     try {
       // Update status to completed
-      await sheetsService.updateValues(
+      await this.sheetsService.updateValues(
         `${this.config.GOOGLE_SHEET_NAME}!F${id}`,
         [['Completed']]
       );
 
       // Update final value and description
-      await sheetsService.updateValues(
+      await this.sheetsService.updateValues(
         `${this.config.GOOGLE_SHEET_NAME}!J${id}:K${id}`,
         [[appraisalValue, description]]
       );

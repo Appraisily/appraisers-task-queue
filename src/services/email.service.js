@@ -14,6 +14,10 @@ class EmailService {
     }
 
     try {
+      if (!config.SENDGRID_API_KEY || !config.SENDGRID_EMAIL) {
+        throw new Error('SendGrid configuration not initialized');
+      }
+
       this.config = config;
       sendGridMail.setApiKey(config.SENDGRID_API_KEY);
       this.initialized = true;
@@ -60,4 +64,4 @@ class EmailService {
   }
 }
 
-module.exports = new EmailService();
+module.exports = EmailService;

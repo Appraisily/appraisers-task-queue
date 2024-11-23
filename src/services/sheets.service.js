@@ -90,4 +90,4 @@ class SheetsService {
   }
 }
 
-module.exports = new SheetsService();
+module.exports = SheetsService;

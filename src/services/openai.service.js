@@ -1,5 +1,4 @@
 const OpenAI = require('openai');
-const { config } = require('../config');
 const { createLogger } = require('../utils/logger');
 
 class OpenAIService {
@@ -9,7 +8,7 @@ class OpenAIService {
     this.initialized = false;
   }
 
-  async initialize() {
+  async initialize(config) {
     if (this.initialized) {
       return;
     }
@@ -33,6 +32,10 @@ class OpenAIService {
       this.logger.error('Failed to initialize OpenAI service:', error);
       throw error;
     }
+  }
+
+  isInitialized() {
+    return this.initialized;
   }
 
   async mergeDescriptions(appraiserDescription, iaDescription) {
@@ -77,4 +80,4 @@ The merged description should:
   }
 }
 
-module.exports = new OpenAIService();
+module.exports = OpenAIService;

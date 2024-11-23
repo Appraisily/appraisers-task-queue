@@ -1,29 +1,45 @@
 const fetch = require('node-fetch');
-const { config } = require('../config');
 const { createLogger } = require('../utils/logger');
 
 class WordPressService {
   constructor() {
     this.logger = createLogger('WordPressService');
+    this.initialized = false;
+    this.baseUrl = null;
+    this.auth = null;
   }
 
-  async initialize() {
+  async initialize(config) {
+    if (this.initialized) {
+      return;
+    }
+
     try {
-      if (!config.WORDPRESS_API_URL || !config.WORDPRESS_USERNAME || !config.WORDPRESS_APP_PASSWORD) {
+      if (!config.WORDPRESS_API_URL || !config.wp_username || !config.wp_app_password) {
         throw new Error('WordPress configuration not initialized');
       }
       
       this.baseUrl = config.WORDPRESS_API_URL;
-      this.auth = Buffer.from(`${config.WORDPRESS_USERNAME}:${config.WORDPRESS_APP_PASSWORD}`).toString('base64');
+      this.auth = Buffer.from(`${config.wp_username}:${config.wp_app_password}`).toString('base64');
       
+      this.initialized = true;
       this.logger.info('WordPress service initialized');
     } catch (error) {
+      this.initialized = false;
       this.logger.error('Failed to initialize WordPress service:', error);
       throw error;
     }
   }
 
+  isInitialized() {
+    return this.initialized;
+  }
+
   async getPost(postId) {
+    if (!this.initialized) {
+      throw new Error('WordPress service not initialized');
+    }
+
     try {
       const response = await fetch(`${this.baseUrl}/wp/v2/posts/${postId}`, {
         headers: {
@@ -43,6 +59,10 @@ class WordPressService {
   }
 
   async updatePost(postId, data) {
+    if (!this.initialized) {
+      throw new Error('WordPress service not initialized');
+    }
+
     try {
       const response = await fetch(`${this.baseUrl}/wp/v2/posts/${postId}`, {
         method: 'POST',
@@ -65,4 +85,4 @@ class WordPressService {
   }
 }
 
-module.exports = new WordPressService();
+module.exports = WordPressService;
