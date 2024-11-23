@@ -22,64 +22,23 @@ class SheetsService {
         throw new Error('Spreadsheet ID not found');
       }
 
-      // Parse and validate service account credentials
-      let credentials;
-      try {
-        credentials = JSON.parse(config.SERVICE_ACCOUNT_JSON);
-        
-        // Validate required fields
-        const requiredFields = ['client_email', 'private_key', 'project_id'];
-        const missingFields = requiredFields.filter(field => !credentials[field]);
-        
-        if (missingFields.length > 0) {
-          throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
-        }
-
-        this.logger.info('Service account credentials validated', {
-          projectId: credentials.project_id,
-          clientEmail: credentials.client_email
-        });
-      } catch (error) {
-        this.logger.error('Service account validation failed:', error);
-        throw new Error(`Invalid service account configuration: ${error.message}`);
-      }
-
-      // Create JWT auth client
-      this.auth = new google.auth.JWT({
-        email: credentials.client_email,
-        key: credentials.private_key,
+      this.logger.info('Creating Google Auth client with ADC...');
+      
+      // Use Application Default Credentials instead of service account JSON
+      this.auth = new google.auth.GoogleAuth({
         scopes: ['https://www.googleapis.com/auth/spreadsheets']
       });
 
-      // Test auth with retries
-      let authError;
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          this.logger.info(`Attempting JWT authorization (attempt ${attempt}/3)...`);
-          await this.auth.authorize();
-          this.logger.info('JWT authorization successful');
-          break;
-        } catch (error) {
-          authError = error;
-          if (attempt < 3) {
-            const delay = Math.min(Math.pow(2, attempt) * 1000, 10000);
-            this.logger.warn(`JWT authorization failed, retrying in ${delay}ms:`, error);
-            await new Promise(resolve => setTimeout(resolve, delay));
-          }
-        }
-      }
-
-      if (authError) {
-        throw new Error(`JWT authorization failed after 3 attempts: ${authError.message}`);
-      }
-
-      // Initialize sheets client
+      // Get the client using ADC
+      const client = await this.auth.getClient();
+      
+      // Initialize sheets client with ADC
       this.sheets = google.sheets({ 
         version: 'v4', 
-        auth: this.auth,
+        auth: client,
         timeout: 30000,
         retry: {
-          retries: 3,
+          retries: 5,
           factor: 2,
           minTimeout: 2000,
           maxTimeout: 30000
@@ -88,22 +47,41 @@ class SheetsService {
 
       this.spreadsheetId = config.PENDING_APPRAISALS_SPREADSHEET_ID;
 
-      // Test spreadsheet access
-      try {
-        const response = await this.sheets.spreadsheets.get({
-          spreadsheetId: this.spreadsheetId,
-          fields: 'spreadsheetId,properties.title'
-        });
+      // Test spreadsheet access with retries
+      let lastError;
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        try {
+          this.logger.info(`Testing sheets connection (attempt ${attempt}/5)...`);
+          
+          const response = await this.sheets.spreadsheets.get({
+            spreadsheetId: this.spreadsheetId,
+            fields: 'spreadsheetId,properties.title'
+          });
 
-        const title = response.data.properties.title;
-        this.logger.info(`Successfully connected to spreadsheet: ${title}`);
-        
-        this.initialized = true;
-        this.logger.info('Google Sheets service initialized successfully');
-      } catch (error) {
-        const details = error.response?.data?.error || error;
-        throw new Error(`Failed to access spreadsheet: ${details.message || error.message}`);
+          const title = response.data.properties.title;
+          this.logger.info(`Successfully connected to spreadsheet: ${title}`);
+          
+          this.initialized = true;
+          this.logger.info('Google Sheets service initialized successfully');
+          return;
+        } catch (error) {
+          lastError = error;
+          const details = error.response?.data?.error || error;
+          this.logger.error('Sheets connection attempt failed:', {
+            attempt,
+            error: details.message || error.message,
+            code: details.code || error.code
+          });
+
+          if (attempt < 5) {
+            const delay = Math.min(Math.pow(2, attempt) * 2000, 30000);
+            this.logger.info(`Retrying in ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+        }
       }
+
+      throw new Error(`Failed to access spreadsheet after 5 attempts: ${lastError.message}`);
     } catch (error) {
       this.initialized = false;
       this.logger.error('Failed to initialize Sheets service:', error);
