@@ -28,27 +28,26 @@ class Config {
       // Initialize secret manager first
       await secretManager.initialize();
 
-      // Define required secrets
-      const requiredSecrets = [
-        'PENDING_APPRAISALS_SPREADSHEET_ID',
-        'WORDPRESS_API_URL',
-        'wp_username',
-        'wp_app_password',
-        'SENDGRID_API_KEY',
-        'SENDGRID_EMAIL',
-        'OPENAI_API_KEY',
-        'service-account-json'
-      ];
+      // Define required secrets with their config key mappings
+      const secretMappings = {
+        'PENDING_APPRAISALS_SPREADSHEET_ID': 'PENDING_APPRAISALS_SPREADSHEET_ID',
+        'WORDPRESS_API_URL': 'WORDPRESS_API_URL',
+        'wp_username': 'WP_USERNAME',
+        'wp_app_password': 'WP_APP_PASSWORD',
+        'SENDGRID_API_KEY': 'SENDGRID_API_KEY',
+        'SENDGRID_EMAIL': 'SENDGRID_EMAIL',
+        'OPENAI_API_KEY': 'OPENAI_API_KEY',
+        'service-account-json': 'SERVICE_ACCOUNT_JSON'
+      };
 
       // Load secrets sequentially to avoid rate limiting
-      for (const name of requiredSecrets) {
+      for (const [secretName, configKey] of Object.entries(secretMappings)) {
         try {
-          const value = await secretManager.getSecret(name);
-          const key = name.replace(/-/g, '_').toUpperCase();
-          this.secrets[key] = value;
-          this.logger.info(`Loaded secret: ${name}`);
+          const value = await secretManager.getSecret(secretName);
+          this.secrets[configKey] = value;
+          this.logger.info(`Loaded secret: ${secretName}`);
         } catch (error) {
-          this.logger.error(`Failed to load secret ${name}:`, error);
+          this.logger.error(`Failed to load secret ${secretName}:`, error);
           throw error;
         }
       }
@@ -57,7 +56,7 @@ class Config {
       Object.assign(this, this.secrets);
 
       this.initialized = true;
-      this.logger.info('Configuration initialization completed');
+      this.logger.info(`Successfully loaded ${Object.keys(this.secrets).length} secrets`);
       return this;
     } catch (error) {
       this.initialized = false;
@@ -71,7 +70,7 @@ class Config {
   }
 
   getSecret(name) {
-    const value = this.secrets[name.replace(/-/g, '_').toUpperCase()];
+    const value = this.secrets[name];
     if (!value) {
       throw new Error(`Secret ${name} not found`);
     }
