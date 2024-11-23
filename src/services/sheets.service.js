@@ -17,25 +17,38 @@ class SheetsService {
     try {
       this.logger.info('Initializing Google Sheets service...');
 
-      // Validate configuration
+      // Validate configuration with detailed logging
       if (!config.SERVICE_ACCOUNT_JSON) {
+        this.logger.error('Service account credentials missing');
         throw new Error('Service account credentials not found');
       }
 
       if (!config.PENDING_APPRAISALS_SPREADSHEET_ID) {
+        this.logger.error('Spreadsheet ID missing');
         throw new Error('Spreadsheet ID not found');
       }
 
+      this.logger.info(`Using spreadsheet ID: ${config.PENDING_APPRAISALS_SPREADSHEET_ID}`);
+
       let credentials;
       try {
+        this.logger.info('Parsing service account credentials...');
         credentials = JSON.parse(config.SERVICE_ACCOUNT_JSON);
-        this.logger.info('Service account credentials parsed successfully');
+        
+        // Log important credential fields (excluding sensitive data)
+        this.logger.info('Credential validation:', {
+          type: credentials.type,
+          project_id: credentials.project_id,
+          client_email: credentials.client_email,
+          has_private_key: !!credentials.private_key
+        });
       } catch (error) {
         this.logger.error('Failed to parse service account credentials:', {
           error: error.message,
-          stack: error.stack
+          type: typeof config.SERVICE_ACCOUNT_JSON,
+          length: config.SERVICE_ACCOUNT_JSON?.length
         });
-        throw new Error('Invalid service account credentials format');
+        throw new Error(`Invalid service account credentials format: ${error.message}`);
       }
 
       this.logger.info('Creating Google Auth client...');
@@ -63,7 +76,9 @@ class SheetsService {
       let lastError;
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          this.logger.info(`Testing sheets connection (attempt ${attempt}/3)...`);
+          this.logger.info(`Testing sheets connection (attempt ${attempt}/3)...`, {
+            spreadsheetId: this.spreadsheetId
+          });
           
           const response = await this.sheets.spreadsheets.get({
             spreadsheetId: this.spreadsheetId,
@@ -71,22 +86,37 @@ class SheetsService {
           });
 
           const title = response.data.properties.title;
-          this.logger.info(`Successfully connected to spreadsheet: ${title}`);
+          this.logger.info('Spreadsheet connection successful:', {
+            title,
+            spreadsheetId: response.data.spreadsheetId
+          });
           
           this.initialized = true;
           this.logger.info('Google Sheets service initialized successfully');
           return;
         } catch (error) {
           lastError = error;
+          
+          // Extract detailed error information
           const errorDetails = {
             message: error.message,
             code: error.code,
             status: error.status,
-            details: error.errors || [],
-            attempt
+            errors: error.errors,
+            attempt,
+            response: error.response?.data,
+            stack: error.stack
           };
           
-          this.logger.error('Sheets connection attempt failed:', errorDetails);
+          // Log the full error details
+          this.logger.error('Sheets connection attempt failed:', {
+            ...errorDetails,
+            auth: {
+              type: credentials.type,
+              email: credentials.client_email,
+              scopes: ['https://www.googleapis.com/auth/spreadsheets']
+            }
+          });
 
           if (attempt < 3) {
             const delay = Math.pow(2, attempt) * 1000;
@@ -96,13 +126,24 @@ class SheetsService {
         }
       }
 
-      throw new Error(`Failed to initialize Sheets after 3 attempts: ${lastError.message}`);
+      const finalError = new Error(`Failed to initialize Sheets after 3 attempts: ${lastError.message}`);
+      finalError.details = {
+        originalError: lastError,
+        spreadsheetId: this.spreadsheetId,
+        clientEmail: credentials.client_email
+      };
+      throw finalError;
     } catch (error) {
       this.initialized = false;
       this.logger.error('Failed to initialize Sheets service:', {
-        error: error.message,
-        stack: error.stack,
-        details: error.details || {}
+        error: {
+          message: error.message,
+          stack: error.stack,
+          details: error.details || {},
+          response: error.response?.data,
+          code: error.code
+        },
+        spreadsheetId: this.spreadsheetId
       });
       throw error;
     }
@@ -127,12 +168,19 @@ class SheetsService {
         dateTimeRenderOption: 'FORMATTED_STRING'
       });
 
-      this.logger.info(`Successfully retrieved ${response.data.values?.length || 0} rows`);
+      this.logger.info(`Successfully retrieved ${response.data.values?.length || 0} rows from range ${range}`);
       return response.data.values || [];
     } catch (error) {
       this.logger.error(`Error getting values from range ${range}:`, {
-        error: error.message,
-        details: error.errors || []
+        error: {
+          message: error.message,
+          code: error.code,
+          status: error.status,
+          errors: error.errors || [],
+          response: error.response?.data
+        },
+        range,
+        spreadsheetId: this.spreadsheetId
       });
       throw error;
     }
@@ -144,7 +192,10 @@ class SheetsService {
     }
 
     try {
-      this.logger.info(`Updating values in range: ${range}`);
+      this.logger.info(`Updating values in range: ${range}`, {
+        rowCount: values.length,
+        columnCount: values[0]?.length
+      });
       
       await this.sheets.spreadsheets.values.update({
         spreadsheetId: this.spreadsheetId,
@@ -158,8 +209,16 @@ class SheetsService {
       this.logger.info(`Successfully updated values in range ${range}`);
     } catch (error) {
       this.logger.error(`Error updating values in range ${range}:`, {
-        error: error.message,
-        details: error.errors || []
+        error: {
+          message: error.message,
+          code: error.code,
+          status: error.status,
+          errors: error.errors || [],
+          response: error.response?.data
+        },
+        range,
+        spreadsheetId: this.spreadsheetId,
+        valueCount: values.length
       });
       throw error;
     }
