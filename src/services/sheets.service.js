@@ -1,14 +1,19 @@
 const { google } = require('googleapis');
-const { config } = require('../config');
 const { createLogger } = require('../utils/logger');
 
 class SheetsService {
   constructor() {
     this.logger = createLogger('SheetsService');
     this.sheets = null;
+    this.spreadsheetId = null;
+    this.initialized = false;
   }
 
-  async initialize() {
+  async initialize(config) {
+    if (this.initialized) {
+      return;
+    }
+
     try {
       if (!config.SERVICE_ACCOUNT_JSON) {
         throw new Error('Service account credentials not found');
@@ -31,19 +36,25 @@ class SheetsService {
         spreadsheetId: this.spreadsheetId
       });
 
+      this.initialized = true;
       this.logger.info('Google Sheets service initialized successfully');
     } catch (error) {
+      this.initialized = false;
       this.logger.error('Failed to initialize Sheets service:', error);
       throw error;
     }
   }
 
-  async getValues(range) {
-    try {
-      if (!this.sheets || !this.spreadsheetId) {
-        throw new Error('Sheets service not initialized');
-      }
+  isInitialized() {
+    return this.initialized;
+  }
 
+  async getValues(range) {
+    if (!this.initialized) {
+      throw new Error('Sheets service not initialized');
+    }
+
+    try {
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
         range: range
@@ -57,11 +68,11 @@ class SheetsService {
   }
 
   async updateValues(range, values) {
-    try {
-      if (!this.sheets || !this.spreadsheetId) {
-        throw new Error('Sheets service not initialized');
-      }
+    if (!this.initialized) {
+      throw new Error('Sheets service not initialized');
+    }
 
+    try {
       await this.sheets.spreadsheets.values.update({
         spreadsheetId: this.spreadsheetId,
         range: range,
@@ -74,29 +85,6 @@ class SheetsService {
       this.logger.info(`Successfully updated values in range ${range}`);
     } catch (error) {
       this.logger.error(`Error updating values in range ${range}:`, error);
-      throw error;
-    }
-  }
-
-  async appendValues(range, values) {
-    try {
-      if (!this.sheets || !this.spreadsheetId) {
-        throw new Error('Sheets service not initialized');
-      }
-
-      await this.sheets.spreadsheets.values.append({
-        spreadsheetId: this.spreadsheetId,
-        range: range,
-        valueInputOption: 'RAW',
-        insertDataOption: 'INSERT_ROWS',
-        resource: {
-          values: values
-        }
-      });
-
-      this.logger.info(`Successfully appended values to range ${range}`);
-    } catch (error) {
-      this.logger.error(`Error appending values to range ${range}:`, error);
       throw error;
     }
   }

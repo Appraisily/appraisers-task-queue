@@ -1,9 +1,10 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { PubSub } = require('@google-cloud/pubsub');
 const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
 const { createLogger } = require('./utils/logger');
-const appraisalService = require('./services/appraisalService');
+const { appraisalService } = require('./services');
 
 const logger = createLogger('app');
 const app = express();
@@ -40,7 +41,11 @@ app.get('/health', (req, res) => {
   res.status(isHealthy ? 200 : 503).json({
     status: isHealthy ? 'healthy' : 'unhealthy',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    services: {
+      pubsub: isHealthy ? 'connected' : 'disconnected',
+      appraisal: appraisalService.isInitialized() ? 'initialized' : 'not_initialized'
+    }
   });
 });
 
@@ -88,6 +93,8 @@ async function processMessage(message) {
 
 async function initialize() {
   try {
+    logger.info('Starting service initialization...');
+
     // Load all secrets
     for (const secretName of REQUIRED_SECRETS) {
       config[secretName] = await getSecret(secretName);
@@ -95,9 +102,12 @@ async function initialize() {
     }
 
     // Initialize services
-    await appraisalService.initialize();
+    logger.info('Initializing appraisal service...');
+    await appraisalService.initialize(config);
+    logger.info('Appraisal service initialized successfully');
 
     // Initialize PubSub
+    logger.info('Initializing PubSub...');
     pubsub = new PubSub({ projectId: config.GOOGLE_CLOUD_PROJECT_ID });
     subscription = pubsub.subscription('appraisal-tasks-subscription');
 
@@ -118,23 +128,27 @@ async function startServer() {
   try {
     const PORT = process.env.PORT || 8080;
     
-    app.listen(PORT, '0.0.0.0', () => {
+    const server = app.listen(PORT, '0.0.0.0', () => {
       logger.info(`Task Queue service running on port ${PORT}`);
     });
 
+    // Initialize after server starts
     await initialize();
+
+    // Handle graceful shutdown
+    process.on('SIGTERM', () => {
+      logger.info('Received SIGTERM signal. Starting graceful shutdown...');
+      server.close(() => {
+        if (subscription) {
+          subscription.close();
+        }
+        process.exit(0);
+      });
+    });
   } catch (error) {
     logger.error('Failed to start server:', error);
     process.exit(1);
   }
 }
-
-process.on('SIGTERM', () => {
-  logger.info('Received SIGTERM signal. Starting graceful shutdown...');
-  if (subscription) {
-    subscription.close();
-  }
-  process.exit(0);
-});
 
 startServer();

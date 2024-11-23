@@ -1,23 +1,63 @@
 const sendGridMail = require('@sendgrid/mail');
-const { getSecret } = require('../utils/secretManager');
 const { createLogger } = require('../utils/logger');
 
 class EmailService {
   constructor() {
     this.logger = createLogger('EmailService');
+    this.initialized = false;
+    this.config = null;
   }
 
-  async initialize() {
+  async initialize(config) {
+    if (this.initialized) {
+      return;
+    }
+
     try {
-      // Use exact secret name from README
-      const apiKey = await getSecret('SENDGRID_API_KEY');
-      sendGridMail.setApiKey(apiKey);
+      this.config = config;
+      sendGridMail.setApiKey(config.SENDGRID_API_KEY);
+      this.initialized = true;
       this.logger.info('Email service initialized');
     } catch (error) {
+      this.initialized = false;
       this.logger.error('Failed to initialize email service:', error);
       throw error;
     }
   }
 
-  // Rest of the code remains the same...
+  isInitialized() {
+    return this.initialized;
+  }
+
+  async sendAppraisalCompletedEmail(customerEmail, customerName, appraisalData) {
+    if (!this.initialized) {
+      throw new Error('Email service not initialized');
+    }
+
+    try {
+      const currentYear = new Date().getFullYear();
+
+      const emailContent = {
+        to: customerEmail,
+        from: this.config.SENDGRID_EMAIL,
+        templateId: this.config.SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED,
+        dynamic_template_data: {
+          customer_name: customerName,
+          appraisal_value: appraisalData.value,
+          description: appraisalData.description,
+          pdf_link: appraisalData.pdfLink,
+          dashboard_link: `https://www.appraisily.com/dashboard/?email=${encodeURIComponent(customerEmail)}`,
+          current_year: currentYear,
+        },
+      };
+
+      await sendGridMail.send(emailContent);
+      this.logger.info(`Appraisal completed email sent to ${customerEmail}`);
+    } catch (error) {
+      this.logger.error('Error sending appraisal completed email:', error);
+      throw error;
+    }
+  }
 }
+
+module.exports = new EmailService();
