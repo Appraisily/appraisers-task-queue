@@ -19,10 +19,20 @@ class SheetsService {
       this.logger.info('Initializing Google Sheets service...');
 
       if (!config.PENDING_APPRAISALS_SPREADSHEET_ID) {
-        throw new Error('Spreadsheet ID not found');
+        throw new Error('Spreadsheet ID not found in config');
       }
 
-      this.logger.info('Creating Google Auth client with ADC...');
+      this.spreadsheetId = config.PENDING_APPRAISALS_SPREADSHEET_ID;
+      
+      // Log the spreadsheet ID we're trying to use
+      this.logger.info('Using spreadsheet ID:', {
+        spreadsheetId: this.spreadsheetId,
+        idLength: this.spreadsheetId.length
+      });
+      
+      this.logger.info('Creating Google Auth client with ADC...', {
+        projectId: process.env.GOOGLE_CLOUD_PROJECT_ID
+      });
       
       // Use Application Default Credentials
       this.auth = new google.auth.GoogleAuth({
@@ -32,11 +42,13 @@ class SheetsService {
 
       // Get the client using ADC and log the email
       const client = await this.auth.getClient();
-      const email = await this.auth.getCredentials()
-        .then(creds => creds.client_email)
-        .catch(() => 'Unable to get client email');
+      const credentials = await this.auth.getCredentials();
       
-      this.logger.info('Using service account:', { email });
+      this.logger.info('Using service account:', {
+        type: credentials.type,
+        client_email: credentials.client_email,
+        project_id: credentials.project_id
+      });
 
       // Initialize sheets client with ADC
       this.sheets = google.sheets({ 
@@ -51,14 +63,13 @@ class SheetsService {
         }
       });
 
-      this.spreadsheetId = config.PENDING_APPRAISALS_SPREADSHEET_ID;
-
       // Test spreadsheet access with retries
       let lastError;
       for (let attempt = 1; attempt <= 5; attempt++) {
         try {
           this.logger.info(`Testing sheets connection (attempt ${attempt}/5)...`, {
-            spreadsheetId: this.spreadsheetId
+            spreadsheetId: this.spreadsheetId,
+            client_email: credentials.client_email
           });
           
           const response = await this.sheets.spreadsheets.get({
@@ -69,7 +80,8 @@ class SheetsService {
           const title = response.data.properties.title;
           this.logger.info(`Successfully connected to spreadsheet: ${title}`, {
             spreadsheetId: this.spreadsheetId,
-            title
+            title,
+            client_email: credentials.client_email
           });
           
           this.initialized = true;
@@ -89,7 +101,8 @@ class SheetsService {
             reason: details.errors?.[0]?.reason,
             domain: details.errors?.[0]?.domain,
             debugInfo: details.debugInfo,
-            email
+            client_email: credentials.client_email,
+            raw_error: JSON.stringify(error)
           });
 
           if (attempt < 5) {
@@ -108,7 +121,8 @@ class SheetsService {
         error: error.message,
         code: error.code,
         details: error.details || {},
-        stack: error.stack
+        stack: error.stack,
+        spreadsheetId: this.spreadsheetId
       });
       throw error;
     }
