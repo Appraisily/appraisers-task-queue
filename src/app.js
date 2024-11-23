@@ -35,11 +35,7 @@ async function processMessage(message) {
     }
 
     const data = JSON.parse(message.data.toString());
-    
-    logger.info('Processing message:', {
-      messageId: message.id,
-      data: data
-    });
+    logger.info({ messageId: message.id }, 'Processing message');
 
     if (!data.id || !data.appraisalValue || !data.description) {
       throw new Error('Invalid message data structure');
@@ -52,9 +48,9 @@ async function processMessage(message) {
     );
 
     message.ack();
-    logger.info('Task processed successfully');
+    logger.info({ messageId: message.id }, 'Task processed successfully');
   } catch (error) {
-    logger.error('Error processing message:', error);
+    logger.error({ error: error.message, messageId: message.id }, 'Error processing message');
     message.ack();
   }
 }
@@ -70,25 +66,22 @@ async function initializeServices() {
     logger.info('Starting service initialization...');
 
     // Initialize PubSub first - it's lightweight
-    logger.info('Initializing PubSub...');
     pubsub = new PubSub({ projectId: process.env.GOOGLE_CLOUD_PROJECT_ID });
     subscription = pubsub.subscription('appraisal-tasks-subscription');
 
     subscription.on('message', processMessage);
     subscription.on('error', error => {
-      logger.error('Subscription error:', error);
+      logger.error({ error: error.message }, 'Subscription error');
     });
 
-    logger.info('PubSub initialized successfully');
-
-    // Initialize config and services only when needed
+    // Initialize config and services
     await config.initialize();
     await appraisalService.initialize(config);
 
     isInitialized = true;
     logger.info('All services initialized successfully');
   } catch (error) {
-    logger.error('Service initialization failed:', error);
+    logger.error({ error: error.message }, 'Service initialization failed');
     throw error;
   } finally {
     isInitializing = false;
@@ -101,7 +94,6 @@ app.listen(PORT, '0.0.0.0', () => {
   logger.info(`Task Queue service running on port ${PORT}`);
 });
 
-// Handle graceful shutdown
 process.on('SIGTERM', () => {
   logger.info('Received SIGTERM signal. Starting graceful shutdown...');
   if (subscription) {
