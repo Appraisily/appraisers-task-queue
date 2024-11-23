@@ -11,26 +11,29 @@ const logger = createLogger('app');
 const app = express();
 let pubsub;
 let subscription;
+let isInitializing = false;
+let isInitialized = false;
 
 app.use(cors());
 app.use(express.json());
 
-// Health check endpoint
+// Health check endpoint - keep it lightweight
 app.get('/health', (req, res) => {
-  const isHealthy = subscription !== null;
-  res.status(isHealthy ? 200 : 503).json({
-    status: isHealthy ? 'healthy' : 'unhealthy',
+  res.status(200).json({
+    status: 'healthy',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    services: {
-      pubsub: isHealthy ? 'connected' : 'disconnected',
-      appraisal: appraisalService.isInitialized() ? 'initialized' : 'not_initialized'
-    }
+    ready: isInitialized
   });
 });
 
 async function processMessage(message) {
   try {
+    // Ensure services are initialized before processing
+    if (!isInitialized) {
+      await initializeServices();
+    }
+
     const data = JSON.parse(message.data.toString());
     
     logger.info('Processing message:', {
@@ -38,12 +41,10 @@ async function processMessage(message) {
       data: data
     });
 
-    // Validate message structure
     if (!data.id || !data.appraisalValue || !data.description) {
       throw new Error('Invalid message data structure');
     }
 
-    // Start the appraisal process
     await appraisalService.processAppraisal(
       data.id,
       data.appraisalValue,
@@ -54,32 +55,43 @@ async function processMessage(message) {
     logger.info('Task processed successfully');
   } catch (error) {
     logger.error('Error processing message:', error);
-    message.ack(); // Acknowledge to prevent infinite retries
+    message.ack();
   }
 }
 
-async function initialize() {
+async function initializeServices() {
+  if (isInitialized || isInitializing) {
+    return;
+  }
+
+  isInitializing = true;
+
   try {
-    // Initialize config first
-    await config.initialize();
+    logger.info('Starting service initialization...');
 
-    // Initialize appraisal service
-    await appraisalService.initialize(config);
-
-    // Initialize PubSub
-    pubsub = new PubSub({ projectId: config.GOOGLE_CLOUD_PROJECT_ID });
+    // Initialize PubSub first - it's lightweight
+    logger.info('Initializing PubSub...');
+    pubsub = new PubSub({ projectId: process.env.GOOGLE_CLOUD_PROJECT_ID });
     subscription = pubsub.subscription('appraisal-tasks-subscription');
 
-    // Set up message handler
     subscription.on('message', processMessage);
     subscription.on('error', error => {
       logger.error('Subscription error:', error);
     });
 
-    logger.info('Service initialized successfully');
+    logger.info('PubSub initialized successfully');
+
+    // Initialize config and services only when needed
+    await config.initialize();
+    await appraisalService.initialize(config);
+
+    isInitialized = true;
+    logger.info('All services initialized successfully');
   } catch (error) {
-    logger.error('Failed to initialize service:', error);
+    logger.error('Service initialization failed:', error);
     throw error;
+  } finally {
+    isInitializing = false;
   }
 }
 
@@ -87,13 +99,9 @@ async function startServer() {
   const PORT = process.env.PORT || 8080;
   
   try {
-    // Start server first
     app.listen(PORT, '0.0.0.0', () => {
       logger.info(`Task Queue service running on port ${PORT}`);
     });
-
-    // Initialize services
-    await initialize();
 
     // Handle graceful shutdown
     process.on('SIGTERM', () => {

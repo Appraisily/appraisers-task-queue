@@ -18,13 +18,17 @@ class Config {
     }
 
     try {
+      this.logger.info('Starting configuration initialization...');
+
       // Validate required environment variables
       if (!this.GOOGLE_CLOUD_PROJECT_ID) {
         throw new Error('Missing required environment variable: GOOGLE_CLOUD_PROJECT_ID');
       }
 
       // Initialize secret manager first
+      this.logger.info('Initializing Secret Manager...');
       await secretManager.initialize();
+      this.logger.info('Secret Manager initialized successfully');
 
       // Define required secrets
       const requiredSecrets = [
@@ -38,30 +42,25 @@ class Config {
         'service-account-json'
       ];
 
-      // Load all secrets in parallel
-      const results = await Promise.all(
-        requiredSecrets.map(async name => {
-          try {
-            const value = await secretManager.getSecret(name);
-            return { name, value };
-          } catch (error) {
-            this.logger.error(`Failed to load secret ${name}:`, error);
-            throw error;
-          }
-        })
-      );
-
-      // Store secrets
-      results.forEach(({ name, value }) => {
-        const key = name.replace(/-/g, '_').toUpperCase();
-        this.secrets[key] = value;
-      });
+      // Load secrets sequentially to avoid rate limiting
+      this.logger.info('Loading secrets...');
+      for (const name of requiredSecrets) {
+        try {
+          const value = await secretManager.getSecret(name);
+          const key = name.replace(/-/g, '_').toUpperCase();
+          this.secrets[key] = value;
+          this.logger.info(`Loaded secret: ${name}`);
+        } catch (error) {
+          this.logger.error(`Failed to load secret ${name}:`, error);
+          throw error;
+        }
+      }
 
       // Copy secrets to main config
       Object.assign(this, this.secrets);
 
       this.initialized = true;
-      this.logger.info(`Successfully loaded ${results.length} secrets`);
+      this.logger.info('Configuration initialization completed successfully');
       return this;
     } catch (error) {
       this.initialized = false;

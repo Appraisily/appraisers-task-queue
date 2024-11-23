@@ -8,9 +8,17 @@ function createLogger(name) {
       target: 'pino-pretty',
       options: {
         colorize: true,
-        translateTime: 'SYS:standard',
-        ignore: 'pid,hostname'
+        levelFirst: true,
+        translateTime: 'yyyy-mm-dd HH:MM:ss',
+        ignore: 'pid,hostname',
+        messageFormat: '{msg}',
+        customPrettifiers: {
+          name: name => `[${name}]`
+        }
       }
+    },
+    formatters: {
+      level: (label) => ({ level: label.toUpperCase() })
     }
   });
 }
