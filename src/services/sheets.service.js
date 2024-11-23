@@ -7,6 +7,7 @@ class SheetsService {
     this.sheets = null;
     this.spreadsheetId = null;
     this.initialized = false;
+    this.auth = null;
   }
 
   async initialize(config) {
@@ -39,31 +40,37 @@ class SheetsService {
       }
 
       this.logger.info('Creating Google Auth client...');
-      const auth = new google.auth.GoogleAuth({
+      this.auth = new google.auth.GoogleAuth({
         credentials,
         scopes: ['https://www.googleapis.com/auth/spreadsheets']
       });
 
+      // Get client email from credentials
+      const clientEmail = credentials.client_email;
+      if (!clientEmail) {
+        throw new Error('Client email not found in service account credentials');
+      }
+
       this.logger.info('Initializing Google Sheets client...');
       this.sheets = google.sheets({ 
         version: 'v4', 
-        auth,
-        timeout: 10000,
+        auth: this.auth,
+        timeout: 30000, // Increased timeout
         retry: {
-          retries: 3,
+          retries: 5,
           factor: 2,
-          minTimeout: 1000,
-          maxTimeout: 10000
+          minTimeout: 2000,
+          maxTimeout: 30000
         }
       });
 
       this.spreadsheetId = config.PENDING_APPRAISALS_SPREADSHEET_ID;
       
-      // Test connection with retries
+      // Test connection with improved error handling
       let lastError;
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      for (let attempt = 1; attempt <= 5; attempt++) {
         try {
-          this.logger.info(`Testing sheets connection (attempt ${attempt}/3)...`);
+          this.logger.info(`Testing sheets connection (attempt ${attempt}/5)...`);
           
           const response = await this.sheets.spreadsheets.get({
             spreadsheetId: this.spreadsheetId,
@@ -73,6 +80,13 @@ class SheetsService {
           const title = response.data.properties.title;
           this.logger.info(`Successfully connected to spreadsheet: ${title}`);
           
+          // Verify permissions by attempting to read a cell
+          await this.sheets.spreadsheets.values.get({
+            spreadsheetId: this.spreadsheetId,
+            range: 'A1',
+            valueRenderOption: 'UNFORMATTED_VALUE'
+          });
+
           this.initialized = true;
           this.logger.info('Google Sheets service initialized successfully');
           return;
@@ -83,20 +97,21 @@ class SheetsService {
             code: error.code,
             status: error.status,
             details: error.errors || [],
-            attempt
+            attempt,
+            clientEmail
           };
           
           this.logger.error('Sheets connection attempt failed:', errorDetails);
 
-          if (attempt < 3) {
-            const delay = Math.pow(2, attempt) * 1000;
+          if (attempt < 5) {
+            const delay = Math.min(Math.pow(2, attempt) * 2000, 30000);
             this.logger.info(`Retrying in ${delay}ms...`);
             await new Promise(resolve => setTimeout(resolve, delay));
           }
         }
       }
 
-      throw new Error(`Failed to initialize Sheets after 3 attempts: ${lastError.message}`);
+      throw new Error(`Failed to initialize Sheets after 5 attempts: ${lastError.message}`);
     } catch (error) {
       this.initialized = false;
       this.logger.error('Failed to initialize Sheets service:', {
