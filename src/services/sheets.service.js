@@ -23,8 +23,10 @@ class SheetsService {
         throw new Error('Spreadsheet ID not found');
       }
 
+      const credentials = JSON.parse(config.SERVICE_ACCOUNT_JSON);
+      
       const auth = new google.auth.GoogleAuth({
-        credentials: JSON.parse(config.SERVICE_ACCOUNT_JSON),
+        credentials,
         scopes: ['https://www.googleapis.com/auth/spreadsheets']
       });
 

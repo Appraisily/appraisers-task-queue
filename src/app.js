@@ -1,36 +1,16 @@
 require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const { PubSub } = require('@google-cloud/pubsub');
-const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
 const { createLogger } = require('./utils/logger');
+const config = require('./config');
 const { appraisalService } = require('./services');
 
 const logger = createLogger('app');
 const app = express();
-const secretClient = new SecretManagerServiceClient();
 let pubsub;
 let subscription;
-
-// Required secrets
-const REQUIRED_SECRETS = [
-  'PENDING_APPRAISALS_SPREADSHEET_ID',
-  'WORDPRESS_API_URL',
-  'wp_username',
-  'wp_app_password',
-  'SENDGRID_API_KEY',
-  'SENDGRID_EMAIL',
-  'SENDGRID_SECRET_NAME',
-  'SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED',
-  'OPENAI_API_KEY',
-  'service-account-json'
-];
-
-// Config object to store secrets
-const config = {
-  GOOGLE_CLOUD_PROJECT_ID: process.env.GOOGLE_CLOUD_PROJECT_ID,
-  GOOGLE_SHEET_NAME: 'Pending'
-};
 
 app.use(cors());
 app.use(express.json());
@@ -49,23 +29,11 @@ app.get('/health', (req, res) => {
   });
 });
 
-async function getSecret(name) {
-  try {
-    const [version] = await secretClient.accessSecretVersion({
-      name: `projects/${config.GOOGLE_CLOUD_PROJECT_ID}/secrets/${name}/versions/latest`
-    });
-    return version.payload.data.toString('utf8');
-  } catch (error) {
-    logger.error(`Error getting secret ${name}:`, error);
-    throw error;
-  }
-}
-
 async function processMessage(message) {
   try {
     const data = JSON.parse(message.data.toString());
     
-    logger.info('Processing appraisal task:', {
+    logger.info('Processing message:', {
       messageId: message.id,
       data: data
     });
@@ -87,27 +55,18 @@ async function processMessage(message) {
   } catch (error) {
     logger.error('Error processing message:', error);
     message.ack(); // Acknowledge to prevent infinite retries
-    throw error;
   }
 }
 
 async function initialize() {
   try {
-    logger.info('Starting service initialization...');
+    // Initialize config first
+    await config.initialize();
 
-    // Load all secrets
-    for (const secretName of REQUIRED_SECRETS) {
-      config[secretName] = await getSecret(secretName);
-      logger.info(`Loaded secret: ${secretName}`);
-    }
-
-    // Initialize services
-    logger.info('Initializing appraisal service...');
+    // Initialize appraisal service
     await appraisalService.initialize(config);
-    logger.info('Appraisal service initialized successfully');
 
     // Initialize PubSub
-    logger.info('Initializing PubSub...');
     pubsub = new PubSub({ projectId: config.GOOGLE_CLOUD_PROJECT_ID });
     subscription = pubsub.subscription('appraisal-tasks-subscription');
 
@@ -125,25 +84,24 @@ async function initialize() {
 }
 
 async function startServer() {
+  const PORT = process.env.PORT || 8080;
+  
   try {
-    const PORT = process.env.PORT || 8080;
-    
-    const server = app.listen(PORT, '0.0.0.0', () => {
+    // Start server first
+    app.listen(PORT, '0.0.0.0', () => {
       logger.info(`Task Queue service running on port ${PORT}`);
     });
 
-    // Initialize after server starts
+    // Initialize services
     await initialize();
 
     // Handle graceful shutdown
     process.on('SIGTERM', () => {
       logger.info('Received SIGTERM signal. Starting graceful shutdown...');
-      server.close(() => {
-        if (subscription) {
-          subscription.close();
-        }
-        process.exit(0);
-      });
+      if (subscription) {
+        subscription.close();
+      }
+      process.exit(0);
     });
   } catch (error) {
     logger.error('Failed to start server:', error);

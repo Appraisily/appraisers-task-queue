@@ -6,6 +6,7 @@ class Config {
     this.logger = createLogger('Config');
     this.initialized = false;
     this.GOOGLE_SHEET_NAME = 'Pending';
+    this.secrets = {};
 
     // Required environment variables
     this.GOOGLE_CLOUD_PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT_ID;
@@ -13,65 +14,55 @@ class Config {
 
   async initialize() {
     if (this.initialized) {
-      return;
+      return this;
     }
 
     try {
-      this.logger.info('Starting configuration initialization...');
-
       // Validate required environment variables
       if (!this.GOOGLE_CLOUD_PROJECT_ID) {
         throw new Error('Missing required environment variable: GOOGLE_CLOUD_PROJECT_ID');
       }
 
-      // Define required secrets with descriptions
+      // Initialize secret manager first
+      await secretManager.initialize();
+
+      // Define required secrets
       const requiredSecrets = [
-        { name: 'PENDING_APPRAISALS_SPREADSHEET_ID', required: true },
-        { name: 'WORDPRESS_API_URL', required: true },
-        { name: 'wp_username', required: true },
-        { name: 'wp_app_password', required: true },
-        { name: 'SENDGRID_API_KEY', required: true },
-        { name: 'SENDGRID_EMAIL', required: true },
-        { name: 'SENDGRID_SECRET_NAME', required: false },
-        { name: 'SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED', required: false },
-        { name: 'OPENAI_API_KEY', required: true },
-        { name: 'service-account-json', required: true }
+        'PENDING_APPRAISALS_SPREADSHEET_ID',
+        'WORDPRESS_API_URL',
+        'wp_username',
+        'wp_app_password',
+        'SENDGRID_API_KEY',
+        'SENDGRID_EMAIL',
+        'OPENAI_API_KEY',
+        'service-account-json'
       ];
 
-      this.logger.info(`Loading ${requiredSecrets.length} secrets...`);
-      const loadedSecrets = [];
-      const failedSecrets = [];
-
-      // Load secrets sequentially to avoid overwhelming Secret Manager
-      for (const { name, required } of requiredSecrets) {
-        try {
-          const value = await secretManager.getSecret(name);
-          const configKey = name.replace(/-/g, '_').toUpperCase();
-          this[configKey] = value;
-          loadedSecrets.push(name);
-          this.logger.debug(`Loaded secret: ${name}`);
-        } catch (error) {
-          if (required) {
-            failedSecrets.push({ name, error: error.message });
-            this.logger.error(`Failed to load required secret: ${name}`, error);
+      // Load all secrets in parallel
+      const results = await Promise.all(
+        requiredSecrets.map(async name => {
+          try {
+            const value = await secretManager.getSecret(name);
+            return { name, value };
+          } catch (error) {
+            this.logger.error(`Failed to load secret ${name}:`, error);
             throw error;
           }
-          this.logger.warn(`Optional secret ${name} not found:`, error.message);
-        }
-      }
+        })
+      );
 
-      // Log summary of loaded secrets
-      this.logger.info(`Successfully loaded ${loadedSecrets.length} secrets`);
-      
-      if (failedSecrets.length > 0) {
-        throw new Error(
-          `Failed to load ${failedSecrets.length} required secrets:\n` +
-          failedSecrets.map(f => `- ${f.name}: ${f.error}`).join('\n')
-        );
-      }
+      // Store secrets
+      results.forEach(({ name, value }) => {
+        const key = name.replace(/-/g, '_').toUpperCase();
+        this.secrets[key] = value;
+      });
+
+      // Copy secrets to main config
+      Object.assign(this, this.secrets);
 
       this.initialized = true;
-      this.logger.info('Configuration initialization completed successfully');
+      this.logger.info(`Successfully loaded ${results.length} secrets`);
+      return this;
     } catch (error) {
       this.initialized = false;
       this.logger.error('Configuration initialization failed:', error);
@@ -81,6 +72,14 @@ class Config {
 
   isInitialized() {
     return this.initialized;
+  }
+
+  getSecret(name) {
+    const value = this.secrets[name.replace(/-/g, '_').toUpperCase()];
+    if (!value) {
+      throw new Error(`Secret ${name} not found`);
+    }
+    return value;
   }
 }
 
