@@ -6,6 +6,7 @@ class SheetsService {
     this.logger = createLogger('SheetsService');
     this.sheets = null;
     this.spreadsheetId = null;
+    this.sheetName = 'Pending Appraisals';
     this.initialized = false;
   }
 
@@ -77,9 +78,12 @@ class SheetsService {
     if (!this.initialized) throw new Error('Sheets service not initialized');
 
     try {
+      const fullRange = `'${this.sheetName}'!${range}`;
+      this.logger.info(`Getting values from range: ${fullRange}`);
+
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range,
+        range: fullRange,
         valueRenderOption: 'UNFORMATTED_VALUE'
       });
 
@@ -94,9 +98,12 @@ class SheetsService {
     if (!this.initialized) throw new Error('Sheets service not initialized');
 
     try {
+      const fullRange = `'${this.sheetName}'!${range}`;
+      this.logger.info(`Updating values in range: ${fullRange}`);
+
       await this.sheets.spreadsheets.values.update({
         spreadsheetId: this.spreadsheetId,
-        range,
+        range: fullRange,
         valueInputOption: 'RAW',
         resource: { values }
       });
