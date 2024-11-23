@@ -1,17 +1,38 @@
 const { PubSub } = require('@google-cloud/pubsub');
+const { google } = require('googleapis');
 const { createLogger } = require('./utils/logger');
 
 class PubSubWorker {
   constructor() {
     this.logger = createLogger('PubSubWorker');
     this.subscription = null;
-    this.isProcessing = false;
+    this.sheets = null;
+    this.spreadsheetId = process.env.PENDING_APPRAISALS_SPREADSHEET_ID;
   }
 
   async initialize() {
     try {
       this.logger.info('Initializing PubSub worker...');
       
+      // Initialize Google Sheets
+      const auth = new google.auth.GoogleAuth({
+        scopes: ['https://www.googleapis.com/auth/spreadsheets']
+      });
+
+      this.sheets = google.sheets({ 
+        version: 'v4', 
+        auth: await auth.getClient()
+      });
+
+      // Test sheets connection
+      await this.sheets.spreadsheets.get({
+        spreadsheetId: this.spreadsheetId,
+        fields: 'properties.title'
+      });
+      
+      this.logger.info('Sheets connection established');
+
+      // Initialize PubSub
       const pubsub = new PubSub();
       const topicName = 'appraisal-tasks';
       const subscriptionName = 'appraisal-tasks-subscription';
@@ -80,16 +101,29 @@ class PubSubWorker {
     this.logger.info(`Processing appraisal ${id}`);
     
     try {
-      // TODO: Implement actual processing steps
-      this.logger.info('Processing steps will be implemented here');
-      
-      // Temporary logging to show we received the data
-      this.logger.info('Received appraisal data:', {
-        id,
-        value: appraisalValue,
-        descriptionLength: description.length
+      // Step 1: Update appraisal value and description in sheets
+      await this.sheets.spreadsheets.values.update({
+        spreadsheetId: this.spreadsheetId,
+        range: `Pending!J${id}:K${id}`,
+        valueInputOption: 'RAW',
+        resource: {
+          values: [[appraisalValue, description]]
+        }
       });
+      this.logger.info('Updated value and description');
 
+      // Step 2: Update status to completed
+      await this.sheets.spreadsheets.values.update({
+        spreadsheetId: this.spreadsheetId,
+        range: `Pending!F${id}`,
+        valueInputOption: 'RAW',
+        resource: {
+          values: [['Completed']]
+        }
+      });
+      this.logger.info('Updated status to completed');
+
+      this.logger.info(`Successfully processed appraisal ${id}`);
     } catch (error) {
       this.logger.error(`Failed to process appraisal ${id}:`, error);
       throw error;
