@@ -6,8 +6,8 @@ class SheetsService {
     this.logger = createLogger('SheetsService');
     this.sheets = null;
     this.spreadsheetId = null;
-    this.auth = null;
     this.initialized = false;
+    this.auth = null;
   }
 
   async initialize(config) {
@@ -18,55 +18,19 @@ class SheetsService {
     try {
       this.logger.info('Initializing Google Sheets service...');
 
-      // Validate configuration
-      if (!config.SERVICE_ACCOUNT_JSON) {
-        throw new Error('Service account credentials not found');
-      }
-
       if (!config.PENDING_APPRAISALS_SPREADSHEET_ID) {
         throw new Error('Spreadsheet ID not found');
       }
 
-      let credentials;
-      try {
-        credentials = JSON.parse(config.SERVICE_ACCOUNT_JSON);
-        this.logger.info('Service account credentials parsed successfully', {
-          type: credentials.type,
-          project_id: credentials.project_id,
-          client_email: credentials.client_email
-        });
-      } catch (error) {
-        this.logger.error('Failed to parse service account credentials:', {
-          error: error.message,
-          rawLength: config.SERVICE_ACCOUNT_JSON?.length,
-          stack: error.stack
-        });
-        throw new Error('Invalid service account credentials format');
-      }
+      this.spreadsheetId = config.PENDING_APPRAISALS_SPREADSHEET_ID;
 
-      // Validate required credential fields
-      const requiredFields = ['client_email', 'private_key', 'project_id'];
-      const missingFields = requiredFields.filter(field => !credentials[field]);
-      
-      if (missingFields.length > 0) {
-        throw new Error(`Missing required fields in service account credentials: ${missingFields.join(', ')}`);
-      }
-
-      this.logger.info('Creating Google Auth client...');
-      
-      // Create auth client with explicit credentials
+      // Use Application Default Credentials instead of service account JSON
+      this.logger.info('Creating Google Auth client with ADC...');
       this.auth = new google.auth.GoogleAuth({
-        credentials: {
-          client_email: credentials.client_email,
-          private_key: credentials.private_key,
-          project_id: credentials.project_id
-        },
         scopes: ['https://www.googleapis.com/auth/spreadsheets']
       });
 
-      this.logger.info('Initializing Google Sheets client...');
-      
-      // Initialize sheets with more generous timeouts
+      // Initialize sheets client with generous timeouts
       this.sheets = google.sheets({ 
         version: 'v4', 
         auth: this.auth,
@@ -79,21 +43,18 @@ class SheetsService {
         }
       });
 
-      this.spreadsheetId = config.PENDING_APPRAISALS_SPREADSHEET_ID;
-
       // Test connection with improved error handling
       let lastError;
       for (let attempt = 1; attempt <= 5; attempt++) {
         try {
           this.logger.info(`Testing sheets connection (attempt ${attempt}/5)...`, {
-            spreadsheetId: this.spreadsheetId,
-            clientEmail: credentials.client_email
+            spreadsheetId: this.spreadsheetId
           });
 
           // First verify auth
           const authClient = await this.auth.getClient();
           const projectId = await this.auth.getProjectId();
-          
+
           this.logger.info('Auth client created successfully', {
             projectId,
             tokenScopes: (await authClient.getCredentials()).scopes
@@ -114,8 +75,7 @@ class SheetsService {
 
           const title = response.data.properties.title;
           this.logger.info(`Successfully connected to spreadsheet: ${title}`, {
-            spreadsheetId: this.spreadsheetId,
-            clientEmail: credentials.client_email
+            spreadsheetId: this.spreadsheetId
           });
           
           this.initialized = true;
@@ -129,7 +89,6 @@ class SheetsService {
             status: error.status,
             details: error.errors || [],
             attempt,
-            clientEmail: credentials.client_email,
             spreadsheetId: this.spreadsheetId
           };
           
