@@ -2,13 +2,35 @@
 
 This service handles the asynchronous processing of appraisal tasks using Google Cloud Pub/Sub.
 
-## Features
+## Service Architecture
 
-- Processes appraisal tasks from Pub/Sub queue
-- Updates Google Sheets and WordPress
-- Sends email notifications via SendGrid
-- Handles failed tasks with DLQ (Dead Letter Queue)
-- Health check endpoint for monitoring
+### Initialization Strategy
+1. **Fast Startup**: Service starts HTTP server immediately to handle health checks
+2. **Background Initialization**: Services initialize asynchronously while maintaining responsiveness
+3. **Sequential Loading**: Dependencies load in order to prevent race conditions:
+   - Secret Manager
+   - Configuration
+   - WordPress Service
+   - Google Sheets Service
+   - OpenAI Service
+   - Email Service
+   - PDF Service
+   - Pub/Sub Connection
+
+### Health Check Strategy
+- Endpoint: `/health`
+- Returns service status and readiness
+- Used by Cloud Run for container health monitoring
+- Keeps service warm via scheduled pings
+- Reports detailed initialization state
+
+### Message Processing
+Once fully initialized, the service:
+1. Listens for Pub/Sub messages
+2. Validates message structure
+3. Processes appraisals through defined steps
+4. Acknowledges messages to prevent duplicates
+5. Handles errors gracefully with DLQ
 
 ## Process Flow
 
@@ -39,6 +61,32 @@ processAppraisal()
     └─> Updates status in Sheets
 ```
 
+## Service Features
+
+- **Resilient Initialization**:
+  - Handles startup failures gracefully
+  - Reports initialization status via health checks
+  - Auto-recovers from temporary service outages
+
+- **Message Processing**:
+  - Validates message structure
+  - Processes tasks asynchronously
+  - Implements retry logic with DLQ
+  - Handles failed tasks gracefully
+
+- **Integration Points**:
+  - Google Sheets for data storage
+  - WordPress for content management
+  - OpenAI for description merging
+  - SendGrid for email notifications
+  - PDF service for document generation
+
+- **Monitoring & Health**:
+  - Detailed logging of operations
+  - Health check endpoint for monitoring
+  - Service status reporting
+  - Error tracking and reporting
+
 ## Configuration
 
 ### Environment Variables
@@ -50,7 +98,7 @@ GOOGLE_CLOUD_PROJECT_ID=your-project-id
 
 ### Google Cloud Secret Manager
 
-The following secrets must be configured in Secret Manager with these exact names:
+The following secrets must be configured:
 
 | Secret Name | Description |
 |------------|-------------|
@@ -60,61 +108,53 @@ The following secrets must be configured in Secret Manager with these exact name
 | `wp_app_password` | WordPress application password |
 | `SENDGRID_API_KEY` | SendGrid API key |
 | `SENDGRID_EMAIL` | SendGrid sender email |
-| `SENDGRID_SECRET_NAME` | SendGrid secret name |
-| `SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED` | SendGrid email template ID |
 | `OPENAI_API_KEY` | OpenAI API key |
 | `service-account-json` | Google Service Account JSON key |
 
-## Health Check
-
-The service exposes a health check endpoint at `/health` that returns:
-
-```json
-{
-  "status": "healthy",
-  "timestamp": "2024-01-01T00:00:00.000Z",
-  "uptime": 123.456,
-  "services": {
-    "pubsub": "connected",
-    "config": "initialized"
-  }
-}
-```
-
-- Returns 200 OK when healthy
-- Returns 503 Service Unavailable when unhealthy
-- Used by Cloud Run for container health monitoring
-
-## Setup
+## Setup & Development
 
 1. Install dependencies:
 ```bash
 npm install
 ```
 
-2. Configure the environment variable in `.env`
+2. Configure environment variables in `.env`
 
-3. Ensure all secrets are configured in Google Cloud Secret Manager with the exact names listed above
-
-4. Run locally:
+3. Run locally:
 ```bash
 npm run dev
 ```
 
-## Architecture
-
-- Uses Google Cloud Pub/Sub for message queue
-- Processes tasks asynchronously
-- Implements retry logic with DLQ
-- Integrates with:
-  - Google Sheets for data storage
-  - WordPress for content management
-  - OpenAI for description merging
-  - SendGrid for email notifications
-
 ## Error Handling
 
-Failed tasks are:
-1. Logged with full error details
-2. Published to a Dead Letter Queue
-3. Original message is acknowledged to prevent infinite retries
+The service implements comprehensive error handling:
+
+1. **Initialization Errors**:
+   - Reported via health check endpoint
+   - Non-blocking for HTTP server
+   - Automatic retry with backoff
+
+2. **Processing Errors**:
+   - Logged with full context
+   - Published to Dead Letter Queue
+   - Original message acknowledged
+   - Service remains operational
+
+3. **Integration Errors**:
+   - Retried with exponential backoff
+   - Detailed error logging
+   - Service state maintained
+
+## Monitoring
+
+The service exposes a health check endpoint that returns:
+
+```json
+{
+  "status": "healthy|error|initializing",
+  "timestamp": "2024-01-01T00:00:00.000Z",
+  "uptime": 123.456,
+  "ready": true|false,
+  "error": "Error message if status is error"
+}
+```
