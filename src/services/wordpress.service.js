@@ -30,7 +30,7 @@ class WordPressService {
         throw new Error('WordPress app password not configured');
       }
 
-      // Clean up URL and set credentials
+      // Set up API URL and credentials
       this.baseUrl = config.WORDPRESS_API_URL;
       this.auth = Buffer.from(`${config.wp_username}:${config.wp_app_password}`).toString('base64');
 
@@ -41,7 +41,7 @@ class WordPressService {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 5000);
 
-          const response = await fetch(`${this.baseUrl}/posts`, {
+          const response = await fetch(`${this.baseUrl}/appraisals`, {
             headers: {
               'Authorization': `Basic ${this.auth}`,
               'Accept': 'application/json',
@@ -93,7 +93,7 @@ class WordPressService {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 5000);
 
-      const response = await fetch(`${this.baseUrl}/posts/${postId}`, {
+      const response = await fetch(`${this.baseUrl}/appraisals/${postId}`, {
         headers: {
           'Authorization': `Basic ${this.auth}`,
           'Accept': 'application/json',
@@ -110,7 +110,7 @@ class WordPressService {
 
       return await response.json();
     } catch (error) {
-      this.logger.error(`Error getting post ${postId}:`, error);
+      this.logger.error(`Error getting appraisal ${postId}:`, error);
       throw error;
     }
   }
@@ -124,7 +124,7 @@ class WordPressService {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10000);
 
-      const response = await fetch(`${this.baseUrl}/posts/${postId}`, {
+      const response = await fetch(`${this.baseUrl}/appraisals/${postId}`, {
         method: 'POST',
         headers: {
           'Authorization': `Basic ${this.auth}`,
@@ -144,7 +144,7 @@ class WordPressService {
 
       return await response.json();
     } catch (error) {
-      this.logger.error(`Error updating post ${postId}:`, error);
+      this.logger.error(`Error updating appraisal ${postId}:`, error);
       throw error;
     }
   }
