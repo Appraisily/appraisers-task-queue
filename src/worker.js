@@ -18,8 +18,14 @@ class PubSubWorker {
     try {
       this.logger.info('Initializing PubSub worker...');
 
+      // Initialize Secret Manager first
+      await secretManager.initialize();
+
       // Get spreadsheet ID from Secret Manager
       const spreadsheetId = await secretManager.getSecret('PENDING_APPRAISALS_SPREADSHEET_ID');
+      if (!spreadsheetId) {
+        throw new Error('Failed to get spreadsheet ID from Secret Manager');
+      }
       
       // Initialize all services
       await this.sheetsService.initialize({ PENDING_APPRAISALS_SPREADSHEET_ID: spreadsheetId });
