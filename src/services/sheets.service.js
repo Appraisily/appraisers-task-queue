@@ -23,48 +23,38 @@ class SheetsService {
 
       this.spreadsheetId = config.PENDING_APPRAISALS_SPREADSHEET_ID;
       
-      // Log the spreadsheet ID we're trying to use
       this.logger.info(`Using spreadsheet ID: ${this.spreadsheetId}`);
 
-      // Create auth client with ADC
+      // Create auth client with ADC and explicit project ID
       this.logger.info('Creating Google Auth client with ADC...');
       const auth = new google.auth.GoogleAuth({
+        projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
         scopes: ['https://www.googleapis.com/auth/spreadsheets']
       });
 
-      // Get the client email for logging
-      const client = await auth.getClient();
-      const clientEmail = await client.getCredentials()
-        .then(creds => creds.client_email)
-        .catch(() => 'unknown');
-      
-      this.logger.info('Using service account:', clientEmail);
-
-      // Initialize sheets client
+      // Initialize sheets client with shorter timeout
       this.sheets = google.sheets({ 
         version: 'v4', 
-        auth
+        auth,
+        timeout: 10000, // 10 seconds timeout
+        retry: {
+          retries: 3,
+          factor: 2,
+          minTimeout: 1000,
+          maxTimeout: 5000
+        }
       });
 
-      // Test connection with detailed error logging
+      // Test connection with shorter timeout and fewer retries
       let lastError;
-      for (let attempt = 1; attempt <= 5; attempt++) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          this.logger.info(`Testing sheets connection (attempt ${attempt}/5)...`);
+          this.logger.info(`Testing sheets connection (attempt ${attempt}/3)...`);
           
           const response = await this.sheets.spreadsheets.get({
             spreadsheetId: this.spreadsheetId,
-            fields: 'properties.title'
-          }).catch(err => {
-            // Log the full error details
-            this.logger.error('API Error Details:', {
-              code: err.code,
-              message: err.message,
-              status: err.status,
-              details: err.response?.data?.error,
-              stack: err.stack
-            });
-            throw err;
+            fields: 'properties.title',
+            timeout: 5000 // 5 seconds timeout for test
           });
 
           const title = response.data.properties.title;
@@ -75,22 +65,24 @@ class SheetsService {
           return;
         } catch (error) {
           lastError = error;
-          this.logger.error(`Connection attempt ${attempt} failed:`, {
-            error: error.message,
+          const errorDetails = {
             code: error.code,
+            message: error.message,
             status: error.status,
             details: error.response?.data?.error
-          });
+          };
+          
+          this.logger.error(`Connection attempt ${attempt} failed:`, errorDetails);
 
-          if (attempt < 5) {
-            const delay = Math.min(Math.pow(2, attempt) * 2000, 30000);
+          if (attempt < 3) {
+            const delay = Math.pow(2, attempt) * 1000; // 2s, 4s
             this.logger.info(`Retrying in ${delay}ms...`);
             await new Promise(resolve => setTimeout(resolve, delay));
           }
         }
       }
 
-      throw lastError;
+      throw new Error(`Failed to initialize Sheets after 3 attempts: ${lastError?.message}`);
     } catch (error) {
       this.initialized = false;
       this.logger.error('Failed to initialize Sheets service:', error);
@@ -114,7 +106,8 @@ class SheetsService {
         spreadsheetId: this.spreadsheetId,
         range: range,
         valueRenderOption: 'UNFORMATTED_VALUE',
-        dateTimeRenderOption: 'FORMATTED_STRING'
+        dateTimeRenderOption: 'FORMATTED_STRING',
+        timeout: 5000
       });
 
       this.logger.info(`Successfully retrieved ${response.data.values?.length || 0} rows`);
@@ -137,9 +130,8 @@ class SheetsService {
         spreadsheetId: this.spreadsheetId,
         range: range,
         valueInputOption: 'RAW',
-        resource: {
-          values: values
-        }
+        resource: { values },
+        timeout: 5000
       });
 
       this.logger.info(`Successfully updated values in range ${range}`);
