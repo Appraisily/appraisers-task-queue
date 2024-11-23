@@ -40,24 +40,21 @@ class PubSubWorker {
   }
 
   async handleMessage(message) {
+    const messageData = message.data.toString();
+    
     try {
       this.logger.info(`Processing message ${message.id}`);
+      this.logger.debug('Raw message data:', messageData);
       
-      // Parse message data
-      const rawData = message.data.toString();
-      this.logger.debug('Raw message data:', rawData);
+      // Parse the JSON message
+      const parsedMessage = JSON.parse(messageData);
       
-      // Extract the actual data object from the message
-      const match = rawData.match(/data:\s*({[\s\S]*})/);
-      if (!match) {
-        throw new Error('Invalid message format');
+      if (parsedMessage.type !== 'COMPLETE_APPRAISAL' || !parsedMessage.data) {
+        throw new Error('Invalid message type or missing data');
       }
 
-      const data = JSON.parse(match[1]);
-      this.logger.info('Parsed message data:', data);
-
       // Process the appraisal task
-      await this.processAppraisal(data);
+      await this.processAppraisal(parsedMessage.data);
 
       // Acknowledge the message
       message.ack();
@@ -69,7 +66,7 @@ class PubSubWorker {
       message.ack();
       
       // Publish to dead letter queue
-      await this.publishToDeadLetterQueue(message.id, rawData, error.message);
+      await this.publishToDeadLetterQueue(message.id, messageData, error.message);
     }
   }
 
