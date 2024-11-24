@@ -8,7 +8,7 @@ class WordPressService {
     this.baseUrl = null;
     this.auth = null;
     this.appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
-    this.postCache = new Map(); // Cache for post data
+    this.postCache = new Map();
     this.completeReportTimeout = 240000; // 4 minutes timeout
     this.maxRetries = 2;
     this.retryDelay = 10000; // 10 seconds between retries
@@ -45,14 +45,11 @@ class WordPressService {
     const result = await response.json();
     this.logger.info(`Successfully updated post ${postId}`);
     
-    // Update cache with new data
     this.postCache.set(postId, result);
-    
     return result;
   }
 
   async getPost(postId, useCache = true) {
-    // Check cache first
     if (useCache && this.postCache.has(postId)) {
       return this.postCache.get(postId);
     }
@@ -72,20 +69,16 @@ class WordPressService {
     const post = await response.json();
     this.logger.info(`Successfully fetched post ${postId}`);
     
-    // Update cache
     this.postCache.set(postId, post);
-    
     return post;
   }
 
   async updateAppraisalPost(postId, { title, content, value }) {
     this.logger.info(`Updating appraisal post ${postId}`);
     
-    // Get current post to check shortcodes_inserted flag
     const post = await this.getPost(postId);
     const shortcodesInserted = post.acf?.shortcodes_inserted || false;
     
-    // Prepare update data
     const updateData = {
       title: title,
       acf: {
@@ -94,7 +87,6 @@ class WordPressService {
       }
     };
 
-    // Only update content if shortcodes need to be inserted
     if (!shortcodesInserted) {
       this.logger.info(`Adding shortcodes to post ${postId}`);
       updateData.content = post.content?.rendered || '';
@@ -107,7 +99,6 @@ class WordPressService {
       }
     }
 
-    // Single update call with all changes
     return this.updatePost(postId, updateData);
   }
 
@@ -123,44 +114,20 @@ class WordPressService {
         const response = await fetch(`${this.appraisalsBackendUrl}/complete-appraisal-report`, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ 
-            postId: postId.toString()
-          }),
+          body: JSON.stringify({ postId: postId.toString() }),
           signal: controller.signal
         });
 
         clearTimeout(timeoutId);
 
-        const responseText = await response.text();
-        let result;
-        
-        try {
-          result = JSON.parse(responseText);
-        } catch (error) {
-          throw new Error(`Invalid JSON response: ${responseText}`);
+        if (!response.ok) {
+          throw new Error(`Failed to complete appraisal report: ${response.statusText}`);
         }
 
-        if (!response.ok || !result.success) {
-          throw new Error(`Failed to complete appraisal report: ${result.message || response.statusText}`);
-        }
-
-        // Log detailed success information
-        this.logger.info('Appraisal report completed successfully:', {
-          postId: result.details.postId,
-          title: result.details.title,
-          processedFields: result.details.processedFields.length,
-          similarImages: result.details.visionAnalysis.similarImagesCount
-        });
-
-        // Log individual field processing results
-        result.details.processedFields.forEach(field => {
-          this.logger.info(`Field processed: ${field.field} (${field.status})`);
-        });
-
-        return result;
+        this.logger.info(`Successfully completed appraisal report for post ${postId}`);
+        return;
       } catch (error) {
         lastError = error;
         if (error.name === 'AbortError') {
