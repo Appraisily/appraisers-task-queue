@@ -19,7 +19,7 @@ class WordPressService {
   }
 
   async updatePost(postId, data) {
-    const response = await fetch(`${this.baseUrl}/wp/v2/appraisals/${postId}`, {
+    const response = await fetch(`${this.baseUrl}/appraisals/${postId}`, {
       method: 'POST',
       headers: {
         'Authorization': `Basic ${this.auth}`,
@@ -36,7 +36,7 @@ class WordPressService {
   }
 
   async getPost(postId) {
-    const response = await fetch(`${this.baseUrl}/wp/v2/appraisals/${postId}`, {
+    const response = await fetch(`${this.baseUrl}/appraisals/${postId}`, {
       headers: {
         'Authorization': `Basic ${this.auth}`
       }

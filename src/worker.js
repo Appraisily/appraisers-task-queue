@@ -66,10 +66,10 @@ class PubSubWorker {
   async handleMessage(message) {
     try {
       this.logger.info(`Processing message ${message.id}`);
-      const rawData = message.data.toString();
-      this.logger.info(`Raw message data: ${rawData}`);
+      const messageData = message.data.toString();
+      this.logger.info(`Raw message data: ${messageData}`);
 
-      const data = JSON.parse(rawData);
+      const data = JSON.parse(messageData);
       
       if (data.type !== 'COMPLETE_APPRAISAL' || !data.data?.id || !data.data?.appraisalValue || !data.data?.description) {
         throw new Error('Invalid message format');
@@ -90,7 +90,7 @@ class PubSubWorker {
       message.ack();
     } catch (error) {
       this.logger.error(`Error processing message ${message.id}:`, error);
-      await this.publishToDeadLetterQueue(message.id, rawData, error.message);
+      await this.publishToDeadLetterQueue(message.id, message.data.toString(), error.message);
       message.ack(); // Acknowledge to prevent retries
     }
   }
@@ -152,9 +152,28 @@ class PubSubWorker {
   }
 
   async getWordPressPostId(id) {
-    const values = await this.sheetsService.getValues(`G${id}`);
-    const url = new URL(values[0][0]);
-    return url.searchParams.get('post');
+    try {
+      const values = await this.sheetsService.getValues(`G${id}`);
+      const wpUrl = values[0][0];
+      
+      if (!wpUrl) {
+        throw new Error(`No WordPress URL found for appraisal ${id}`);
+      }
+
+      // Parse the WordPress admin URL to extract post ID
+      const url = new URL(wpUrl);
+      const postId = url.searchParams.get('post');
+      
+      if (!postId) {
+        throw new Error(`Could not extract post ID from WordPress URL: ${wpUrl}`);
+      }
+
+      this.logger.info(`Extracted WordPress post ID: ${postId} from URL: ${wpUrl}`);
+      return postId;
+    } catch (error) {
+      this.logger.error(`Error extracting WordPress post ID for appraisal ${id}:`, error);
+      throw error;
+    }
   }
 
   async insertTemplate(id, postId) {
