@@ -5,6 +5,7 @@ const secretManager = require('../utils/secrets');
 class EmailService {
   constructor() {
     this.logger = createLogger('Email');
+    this.senderEmail = null;
   }
 
   async initialize() {
@@ -28,4 +29,4 @@ class EmailService {
   }
 }
 
-module.exports = new EmailService();
+module.exports = EmailService;

@@ -7,6 +7,17 @@ class PDFService {
     this.pdfServiceUrl = 'https://appraisals-backend-856401495068.us-central1.run.app/generate-pdf';
   }
 
+  async initialize() {
+    // Test the PDF service endpoint
+    const response = await fetch(this.pdfServiceUrl, {
+      method: 'HEAD'
+    });
+
+    if (!response.ok) {
+      throw new Error('PDF service endpoint not available');
+    }
+  }
+
   async generatePDF(postId, sessionId) {
     const response = await fetch(this.pdfServiceUrl, {
       method: 'POST',
@@ -26,4 +37,4 @@ class PDFService {
   }
 }
 
-module.exports = new PDFService();
+module.exports = PDFService;

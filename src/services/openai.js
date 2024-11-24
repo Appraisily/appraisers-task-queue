@@ -46,4 +46,4 @@ The merged description should:
   }
 }
 
-module.exports = new OpenAIService();
+module.exports = OpenAIService;

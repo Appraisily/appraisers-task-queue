@@ -64,5 +64,4 @@ class WordPressService {
   }
 }
 
-// Export the class itself, not an instance
 module.exports = WordPressService;
