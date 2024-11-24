@@ -22,7 +22,7 @@ class AppraisalService {
       const postId = await this.updateWordPress(id, value, mergedDescription);
       
       // Step 4: Complete Appraisal Report
-      await this.wordpressService.completeAppraisalReport(postId, value);
+      await this.wordpressService.completeAppraisalReport(postId);
       
       // Step 5: Generate PDF and Send Email
       await this.finalize(id, value, mergedDescription, postId);
@@ -53,25 +53,13 @@ class AppraisalService {
 
   async updateWordPress(id, value, description) {
     const postId = await this.getWordPressPostId(id);
-    const appraisalType = await this.getAppraisalType(id);
     
-    // Get existing post content
+    // Get existing post content and update it
     const post = await this.wordpressService.getPost(postId);
-    let content = post.content?.rendered || '';
     
-    // Add required shortcodes if not present
-    if (!content.includes('[pdf_download]')) {
-      content += '\n[pdf_download]';
-    }
-    
-    if (!content.includes(`[AppraisalTemplates type="${appraisalType}"]`)) {
-      content += `\n[AppraisalTemplates type="${appraisalType}"]`;
-    }
-    
-    // Update post with new title, content, and ACF fields
     await this.wordpressService.updateAppraisalPost(postId, {
       title: `Appraisal #${id} - ${description.substring(0, 100)}...`,
-      content: content,
+      content: post.content?.rendered || '',
       value: value
     });
     
@@ -95,11 +83,6 @@ class AppraisalService {
 
     this.logger.info(`Extracted WordPress post ID: ${postId} from URL: ${wpUrl}`);
     return postId;
-  }
-
-  async getAppraisalType(id) {
-    const values = await this.sheetsService.getValues(`B${id}`);
-    return values[0][0] || 'RegularArt';
   }
 
   async finalize(id, value, description, postId) {

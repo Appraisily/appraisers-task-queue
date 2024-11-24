@@ -6,8 +6,8 @@ class WordPressService {
   constructor() {
     this.logger = createLogger('WordPress');
     this.baseUrl = null;
-    this.appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
     this.auth = null;
+    this.appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
   }
 
   async initialize() {
@@ -64,12 +64,28 @@ class WordPressService {
   async updateAppraisalPost(postId, { title, content, value }) {
     this.logger.info(`Updating appraisal post ${postId}`);
     
+    // Get current post to check shortcodes_inserted flag
+    const post = await this.getPost(postId);
+    const shortcodesInserted = post.acf?.shortcodes_inserted || false;
+    
+    // Only add shortcodes if they haven't been inserted yet
+    let finalContent = content;
+    if (!shortcodesInserted) {
+      this.logger.info(`Adding shortcodes to post ${postId}`);
+      if (!content.includes('[pdf_download]')) {
+        finalContent += '\n[pdf_download]';
+      }
+      if (!content.includes('[AppraisalTemplates')) {
+        finalContent += `\n[AppraisalTemplates type="${post.acf?.type || 'RegularArt'}"]`;
+      }
+    }
+
     return this.updatePost(postId, {
       title: title,
-      content: content,
+      content: finalContent,
       acf: {
-        value: value.toString(), // Ensure value is string for ACF
-        shortcodes_inserted: true
+        value: value.toString(),
+        shortcodes_inserted: true // Always set to true after update
       }
     });
   }
@@ -80,13 +96,18 @@ class WordPressService {
     const response = await fetch(`${this.appraisalsBackendUrl}/complete-appraisal-report`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
       },
-      body: JSON.stringify({ postId })
+      body: JSON.stringify({ 
+        postId: postId.toString() // Ensure postId is a string
+      }),
+      timeout: 30000 // 30 second timeout
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to complete appraisal report: ${response.statusText}`);
+      const errorText = await response.text();
+      throw new Error(`Failed to complete appraisal report: ${response.statusText}. Details: ${errorText}`);
     }
 
     const result = await response.json();
