@@ -19,7 +19,7 @@ class AppraisalService {
       const mergedDescription = await this.mergeDescriptions(id, description);
       
       // Step 3: Update WordPress
-      const postId = await this.updateWordPress(id, mergedDescription);
+      const postId = await this.updateWordPress(id, value, mergedDescription);
       
       // Step 4: Generate PDF and Send Email
       await this.finalize(id, value, mergedDescription, postId);
@@ -48,19 +48,15 @@ class AppraisalService {
     return mergedDescription;
   }
 
-  async updateWordPress(id, description) {
+  async updateWordPress(id, value, description) {
     const postId = await this.getWordPressPostId(id);
     const appraisalType = await this.getAppraisalType(id);
     
-    // Update title
-    await this.wordpressService.updatePost(postId, {
-      title: `Appraisal #${id} - ${description.substring(0, 100)}...`
-    });
-    
-    // Update content with shortcodes
+    // Get existing post content
     const post = await this.wordpressService.getPost(postId);
     let content = post.content?.rendered || '';
     
+    // Add required shortcodes if not present
     if (!content.includes('[pdf_download]')) {
       content += '\n[pdf_download]';
     }
@@ -69,9 +65,11 @@ class AppraisalService {
       content += `\n[AppraisalTemplates type="${appraisalType}"]`;
     }
     
-    await this.wordpressService.updatePost(postId, {
-      content,
-      acf: { shortcodes_inserted: true }
+    // Update post with new title, content, and ACF fields
+    await this.wordpressService.updateAppraisalPost(postId, {
+      title: `Appraisal #${id} - ${description.substring(0, 100)}...`,
+      content: content,
+      value: value
     });
     
     return postId;
@@ -92,6 +90,7 @@ class AppraisalService {
       throw new Error(`Could not extract post ID from WordPress URL: ${wpUrl}`);
     }
 
+    this.logger.info(`Extracted WordPress post ID: ${postId} from URL: ${wpUrl}`);
     return postId;
   }
 

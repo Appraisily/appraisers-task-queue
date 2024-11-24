@@ -25,7 +25,10 @@ class WordPressService {
         'Authorization': `Basic ${this.auth}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(data)
+      body: JSON.stringify({
+        ...data,
+        status: 'publish'
+      })
     });
 
     if (!response.ok) {
@@ -48,6 +51,18 @@ class WordPressService {
 
     return await response.json();
   }
+
+  async updateAppraisalPost(postId, { title, content, value }) {
+    return this.updatePost(postId, {
+      title: title,
+      content: content,
+      acf: {
+        value: value,
+        shortcodes_inserted: true
+      }
+    });
+  }
 }
 
-module.exports = new WordPressService();
+// Export the class itself, not an instance
+module.exports = WordPressService;

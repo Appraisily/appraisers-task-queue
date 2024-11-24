@@ -9,14 +9,15 @@ src/
   ├─ app.js              # Express server and service initialization
   ├─ worker.js           # PubSub worker and task processing
   ├─ services/           # Business logic services
-  │   ├─ sheets.js       # Google Sheets operations
-  │   ├─ wordpress.js    # WordPress integration
-  │   ├─ openai.js       # AI text processing
-  │   ├─ email.js        # Email notifications
+  │   ├─ appraisal.js   # Core appraisal processing logic
+  │   ├─ sheets.js      # Google Sheets operations
+  │   ├─ wordpress.js   # WordPress integration
+  │   ├─ openai.js      # AI text processing
+  │   ├─ email.js       # Email notifications
   │   └─ pdf.js         # PDF generation
   └─ utils/
-      ├─ logger.js       # Logging utility
-      └─ secrets.js      # Secret Manager integration
+      ├─ logger.js      # Logging utility
+      └─ secrets.js     # Secret Manager integration
 ```
 
 ## Features
@@ -28,34 +29,50 @@ src/
 - Graceful shutdown
 - Secure secret management using Google Cloud Secret Manager
 
-## Process Flow
+## Appraisal Process Flow
 
-When a new message is received from Pub/Sub, the following steps are executed:
+When a new message is received from Pub/Sub, the following steps are executed in order:
 
-```
-processAppraisal()
-├─> 1. setAppraisalValue()
-│   └─> Updates Google Sheets and WordPress
-├─> 2. mergeDescriptions()
-│   ├─> Gets IA description from Sheets
-│   ├─> Uses OpenAI to merge descriptions
-│   └─> Saves merged description to Sheets
-├─> 3. updateTitle()
-│   ├─> Gets WordPress URL from Sheets
-│   └─> Updates WordPress post title
-├─> 4. insertTemplate()
-│   ├─> Gets appraisal type from Sheets
-│   └─> Updates WordPress post content
-├─> 5. buildPdf()
-│   ├─> Gets WordPress data
-│   ├─> Generates PDF
-│   └─> Updates Sheets with PDF links
-├─> 6. sendEmail()
-│   ├─> Gets customer data from Sheets
-│   └─> Sends email via SendGrid
-└─> 7. complete()
-    └─> Updates status in Sheets
-```
+1. **Set Appraisal Value** (Columns J-K)
+   - Updates appraisal value in Google Sheets
+   - Stores original appraiser description
+
+2. **Merge Descriptions** (Columns H, L)
+   - Retrieves IA description from Sheets (Column H)
+   - Uses OpenAI to merge appraiser and IA descriptions
+   - Saves merged description to Sheets (Column L)
+
+3. **Update WordPress Post**
+   - Extracts post ID from WordPress admin URL (Column G)
+   - Updates post title with appraisal ID and description preview
+   - Inserts required shortcodes:
+     - `[pdf_download]`
+     - `[AppraisalTemplates type="TYPE"]` (TYPE from Column B)
+
+4. **Generate PDF and Send Email**
+   - Generates PDF using WordPress post data
+   - Updates PDF and Doc links in Sheets (Columns M-N)
+   - Retrieves customer email (Column D)
+   - Sends completion email with PDF link
+
+5. **Mark Complete**
+   - Updates status to "Completed" (Column F)
+
+## Google Sheets Structure
+
+| Column | Content              |
+|--------|---------------------|
+| B      | Appraisal Type      |
+| D      | Customer Email      |
+| E      | Customer Name       |
+| F      | Status              |
+| G      | WordPress Post URL  |
+| H      | IA Description      |
+| J      | Appraisal Value    |
+| K      | Original Description|
+| L      | Merged Description  |
+| M      | PDF Link           |
+| N      | Doc Link           |
 
 ## Configuration
 
@@ -80,23 +97,6 @@ The following secrets must be configured:
 | `SENDGRID_EMAIL` | SendGrid sender email |
 | `OPENAI_API_KEY` | OpenAI API key |
 | `service-account-json` | Google Service Account JSON key |
-
-## Service Architecture
-
-1. **Initialization**:
-   - Starts HTTP server for health checks
-   - Retrieves secrets from Secret Manager
-   - Initializes Google Sheets connection using Application Default Credentials
-   - Sets up Pub/Sub subscription
-
-2. **Message Processing**:
-   - Listens for `COMPLETE_APPRAISAL` messages
-   - Updates appraisal value and status in Google Sheets
-   - Handles errors with Dead Letter Queue
-
-3. **Health Check**:
-   - Endpoint: `/health`
-   - Returns service status and timestamp
 
 ## Setup & Development
 
@@ -135,3 +135,16 @@ Expected Pub/Sub message format:
   }
 }
 ```
+
+## Error Handling
+
+Failed messages are:
+1. Logged with detailed error information
+2. Published to a Dead Letter Queue topic (`appraisals-failed`)
+3. Original message is acknowledged to prevent infinite retries
+
+The DLQ message includes:
+- Original message ID
+- Original message data
+- Error message
+- Timestamp of failure
