@@ -4,10 +4,12 @@ const { createLogger } = require('../utils/logger');
 class PDFService {
   constructor() {
     this.logger = createLogger('PDF');
-    this.pdfServiceUrl = 'https://appraisals-backend-856401495068.us-central1.run.app/generate-pdf';
+    this.baseUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
+    this.timeout = 120000; // 2 minutes timeout
+    this.maxRetries = 3;
+    this.retryDelay = 5000; // 5 seconds between retries
   }
 
-  // No initialization needed for the PDF service since it's just an API endpoint
   async initialize() {
     return Promise.resolve();
   }
@@ -15,23 +17,45 @@ class PDFService {
   async generatePDF(postId, sessionId) {
     this.logger.info(`Generating PDF for post ${postId}`);
     
-    const response = await fetch(this.pdfServiceUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ postId, session_ID: sessionId })
-    });
+    let lastError;
+    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
-    if (!response.ok) {
-      throw new Error(`PDF generation failed: ${response.statusText}`);
+        const response = await fetch(`${this.baseUrl}/generate-pdf`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ postId, session_ID: sessionId }),
+          signal: controller.signal,
+          timeout: this.timeout
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          throw new Error(`PDF generation failed: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        this.logger.info(`PDF generated successfully for post ${postId}`);
+        
+        return {
+          pdfLink: data.pdfLink,
+          docLink: data.docLink
+        };
+      } catch (error) {
+        lastError = error;
+        this.logger.warn(`PDF generation attempt ${attempt} failed:`, error.message);
+        
+        if (attempt < this.maxRetries) {
+          this.logger.info(`Retrying in ${this.retryDelay/1000} seconds...`);
+          await new Promise(resolve => setTimeout(resolve, this.retryDelay));
+        }
+      }
     }
 
-    const data = await response.json();
-    this.logger.info(`PDF generated successfully for post ${postId}`);
-    
-    return {
-      pdfLink: data.pdfLink,
-      docLink: data.docLink
-    };
+    throw new Error(`PDF generation failed after ${this.maxRetries} attempts: ${lastError.message}`);
   }
 }
 

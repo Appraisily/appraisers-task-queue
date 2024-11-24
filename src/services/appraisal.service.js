@@ -21,10 +21,13 @@ class AppraisalService {
       // Step 3: Update WordPress
       const postId = await this.updateWordPress(id, value, mergedDescription);
       
-      // Step 4: Generate PDF and Send Email
+      // Step 4: Complete Appraisal Report
+      await this.wordpressService.completeAppraisalReport(postId, value);
+      
+      // Step 5: Generate PDF and Send Email
       await this.finalize(id, value, mergedDescription, postId);
       
-      // Step 5: Mark as Complete
+      // Step 6: Mark as Complete
       await this.complete(id);
       
       this.logger.info(`Successfully processed appraisal ${id}`);

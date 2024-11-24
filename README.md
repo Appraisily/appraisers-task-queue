@@ -45,18 +45,66 @@ When a new message is received from Pub/Sub, the following steps are executed in
 3. **Update WordPress Post**
    - Extracts post ID from WordPress admin URL (Column G)
    - Updates post title with appraisal ID and description preview
-   - Inserts required shortcodes:
+   - Updates ACF field 'value' with appraisal value
+   - Inserts required shortcodes if not present:
      - `[pdf_download]`
      - `[AppraisalTemplates type="TYPE"]` (TYPE from Column B)
 
-4. **Generate PDF and Send Email**
-   - Generates PDF using WordPress post data
+4. **Complete Appraisal Report**
+   - Calls backend API to complete the report
+   - Ensures all report data is properly formatted
+
+5. **Generate PDF and Send Email**
+   - Generate PDF using WordPress post data
    - Updates PDF and Doc links in Sheets (Columns M-N)
    - Retrieves customer email (Column D)
    - Sends completion email with PDF link
 
-5. **Mark Complete**
+6. **Mark Complete**
    - Updates status to "Completed" (Column F)
+
+## Backend API Endpoints
+
+### Complete Appraisal Report
+
+```
+POST /complete-appraisal-report
+
+Request:
+{
+  "postId": "123" // WordPress post ID (required)
+}
+
+Success Response:
+{
+  "success": true,
+  "message": "Informe de tasación completado exitosamente."
+}
+
+Error Response:
+{
+  "success": false,
+  "message": "Error message details"
+}
+```
+
+### Generate PDF
+
+```
+POST /generate-pdf
+
+Request:
+{
+  "postId": "123",      // WordPress post ID (required)
+  "session_ID": "uuid"  // Session ID (required)
+}
+
+Success Response:
+{
+  "pdfLink": "https://...",
+  "docLink": "https://..."
+}
+```
 
 ## Google Sheets Structure
 

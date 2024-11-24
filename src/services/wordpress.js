@@ -19,6 +19,8 @@ class WordPressService {
   }
 
   async updatePost(postId, data) {
+    this.logger.info(`Updating WordPress post ${postId}`);
+    
     const response = await fetch(`${this.baseUrl}/appraisals/${postId}`, {
       method: 'POST',
       headers: {
@@ -35,10 +37,14 @@ class WordPressService {
       throw new Error(`WordPress API error: ${response.status} ${response.statusText}`);
     }
 
-    return await response.json();
+    const result = await response.json();
+    this.logger.info(`Successfully updated post ${postId}`);
+    return result;
   }
 
   async getPost(postId) {
+    this.logger.info(`Fetching WordPress post ${postId}`);
+    
     const response = await fetch(`${this.baseUrl}/appraisals/${postId}`, {
       headers: {
         'Authorization': `Basic ${this.auth}`
@@ -49,18 +55,47 @@ class WordPressService {
       throw new Error(`WordPress API error: ${response.status} ${response.statusText}`);
     }
 
-    return await response.json();
+    const post = await response.json();
+    this.logger.info(`Successfully fetched post ${postId}`);
+    return post;
   }
 
   async updateAppraisalPost(postId, { title, content, value }) {
+    this.logger.info(`Updating appraisal post ${postId}`);
+    
     return this.updatePost(postId, {
       title: title,
       content: content,
       acf: {
-        value: value,
+        value: value.toString(), // Ensure value is string for ACF
         shortcodes_inserted: true
       }
     });
+  }
+
+  async completeAppraisalReport(postId) {
+    this.logger.info(`Completing appraisal report for post ${postId}`);
+    
+    const response = await fetch(`${this.baseUrl}/complete-appraisal-report`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${this.auth}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ postId })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to complete appraisal report: ${response.statusText}`);
+    }
+
+    const result = await response.json();
+    if (!result.success) {
+      throw new Error(result.message || 'Failed to complete appraisal report');
+    }
+
+    this.logger.info(`Successfully completed appraisal report for post ${postId}`);
+    return result;
   }
 }
 
