@@ -7,18 +7,14 @@ class PDFService {
     this.pdfServiceUrl = 'https://appraisals-backend-856401495068.us-central1.run.app/generate-pdf';
   }
 
+  // No initialization needed for the PDF service since it's just an API endpoint
   async initialize() {
-    // Test the PDF service endpoint
-    const response = await fetch(this.pdfServiceUrl, {
-      method: 'HEAD'
-    });
-
-    if (!response.ok) {
-      throw new Error('PDF service endpoint not available');
-    }
+    return Promise.resolve();
   }
 
   async generatePDF(postId, sessionId) {
+    this.logger.info(`Generating PDF for post ${postId}`);
+    
     const response = await fetch(this.pdfServiceUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -30,6 +26,8 @@ class PDFService {
     }
 
     const data = await response.json();
+    this.logger.info(`PDF generated successfully for post ${postId}`);
+    
     return {
       pdfLink: data.pdfLink,
       docLink: data.docLink
