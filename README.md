@@ -34,41 +34,80 @@ src/
 When a new message is received from Pub/Sub, the following steps are executed in order:
 
 1. **Set Appraisal Value** (Columns J-K)
-   - Updates appraisal value in Google Sheets
-   - Stores original appraiser description
+   ```javascript
+   // Updates value and original description
+   await sheetsService.updateValues(`J${id}:K${id}`, [[value, description]]);
+   ```
 
 2. **Merge Descriptions** (Columns H, L)
-   - Retrieves IA description from Sheets (Column H)
-   - Uses OpenAI to merge appraiser and IA descriptions
-   - Saves merged description to Sheets (Column L)
+   ```javascript
+   // Get IA description from Column H
+   const iaDescription = await sheetsService.getValues(`H${id}`);
+   
+   // Merge descriptions using OpenAI
+   const mergedDescription = await openaiService.mergeDescriptions(description, iaDescription);
+   
+   // Save merged description to Column L
+   await sheetsService.updateValues(`L${id}`, [[mergedDescription]]);
+   ```
 
 3. **Update WordPress Post**
-   - Extracts post ID from WordPress admin URL (Column G)
-   - Updates post title with appraisal ID and description preview
-   - Updates ACF field 'value' with appraisal value
-   - Inserts required shortcodes if not present:
-     - `[pdf_download]`
-     - `[AppraisalTemplates type="TYPE"]` (TYPE from Column B)
+   ```javascript
+   // Extract post ID from WordPress URL in Column G
+   const wpUrl = "https://resources.appraisily.com/wp-admin/post.php?post=141667&action=edit";
+   const postId = new URL(wpUrl).searchParams.get('post'); // Returns "141667"
+   
+   // Get appraisal type from Column B
+   const appraisalType = await sheetsService.getValues(`B${id}`);
+   
+   // Update WordPress post
+   await wordpressService.updatePost(postId, {
+     title: `Appraisal #${id} - ${description}`,
+     content: `[pdf_download]\n[AppraisalTemplates type="${appraisalType}"]`,
+     acf: { value: value.toString() }
+   });
+   ```
 
 4. **Complete Appraisal Report**
-   - Calls backend API to complete the report
-   - Ensures all report data is properly formatted
+   ```javascript
+   // Call appraisals backend to complete report
+   await fetch('https://appraisals-backend-856401495068.us-central1.run.app/complete-appraisal-report', {
+     method: 'POST',
+     headers: { 'Content-Type': 'application/json' },
+     body: JSON.stringify({ postId })
+   });
+   ```
 
 5. **Generate PDF and Send Email**
-   - Generate PDF using WordPress post data
-   - Updates PDF and Doc links in Sheets (Columns M-N)
-   - Retrieves customer email (Column D)
-   - Sends completion email with PDF link
+   ```javascript
+   // Generate PDF
+   const { pdfLink, docLink } = await pdfService.generatePDF(postId);
+   
+   // Update PDF links in Columns M-N
+   await sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]]);
+   
+   // Get customer email from Column D
+   const customerEmail = await sheetsService.getValues(`D${id}`);
+   
+   // Send completion email
+   await emailService.sendAppraisalCompletedEmail(customerEmail, {
+     value,
+     pdfLink,
+     description: mergedDescription
+   });
+   ```
 
 6. **Mark Complete**
-   - Updates status to "Completed" (Column F)
+   ```javascript
+   // Update status to "Completed" in Column F
+   await sheetsService.updateValues(`F${id}`, [['Completed']]);
+   ```
 
 ## Backend API Endpoints
 
 ### Complete Appraisal Report
-
 ```
-POST /complete-appraisal-report
+POST https://appraisals-backend-856401495068.us-central1.run.app/complete-appraisal-report
 
 Request:
 {
@@ -89,9 +128,8 @@ Error Response:
 ```
 
 ### Generate PDF
-
 ```
-POST /generate-pdf
+POST https://appraisals-backend-856401495068.us-central1.run.app/generate-pdf
 
 Request:
 {

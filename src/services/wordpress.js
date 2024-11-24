@@ -6,6 +6,7 @@ class WordPressService {
   constructor() {
     this.logger = createLogger('WordPress');
     this.baseUrl = null;
+    this.appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
     this.auth = null;
   }
 
@@ -74,12 +75,11 @@ class WordPressService {
   }
 
   async completeAppraisalReport(postId) {
-    this.logger.info(`Completing appraisal report for post ${postId}`);
+    this.logger.info(`Completing appraisal report for post ${postId} via appraisals backend`);
     
-    const response = await fetch(`${this.baseUrl}/complete-appraisal-report`, {
+    const response = await fetch(`${this.appraisalsBackendUrl}/complete-appraisal-report`, {
       method: 'POST',
       headers: {
-        'Authorization': `Basic ${this.auth}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({ postId })
