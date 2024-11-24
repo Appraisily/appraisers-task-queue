@@ -1,5 +1,4 @@
 const fetch = require('node-fetch');
-const sharp = require('sharp');
 const { createLogger } = require('../utils/logger');
 
 class PDFService {
@@ -9,33 +8,10 @@ class PDFService {
     this.timeout = 120000; // 2 minutes timeout
     this.maxRetries = 3;
     this.retryDelay = 5000; // 5 seconds between retries
-    this.imageConfig = {
-      main: { width: 1200, quality: 80 },
-      signature: { width: 600, quality: 80 },
-      age: { width: 800, quality: 80 }
-    };
   }
 
   async initialize() {
     return Promise.resolve();
-  }
-
-  async optimizeImage(url, config) {
-    try {
-      const response = await fetch(url);
-      const buffer = await response.buffer();
-      
-      return sharp(buffer)
-        .resize(config.width, null, { 
-          withoutEnlargement: true,
-          fit: 'inside'
-        })
-        .jpeg({ quality: config.quality })
-        .toBuffer();
-    } catch (error) {
-      this.logger.error(`Error optimizing image: ${error.message}`);
-      throw error;
-    }
   }
 
   async generatePDF(postId, sessionId) {
@@ -47,37 +23,12 @@ class PDFService {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
-        // Get the WordPress post data first
-        const postResponse = await fetch(`${this.baseUrl}/wp/v2/posts/${postId}`);
-        if (!postResponse.ok) {
-          throw new Error(`Failed to fetch post data: ${postResponse.statusText}`);
-        }
-        const post = await postResponse.json();
-
-        // Extract image URLs from post content
-        const mainImage = post.acf?.main_image?.url;
-        const signatureImage = post.acf?.signature_image?.url;
-        const ageImage = post.acf?.age_image?.url;
-
-        // Optimize images in parallel
-        const [optimizedMain, optimizedSignature, optimizedAge] = await Promise.all([
-          mainImage ? this.optimizeImage(mainImage, this.imageConfig.main) : null,
-          signatureImage ? this.optimizeImage(signatureImage, this.imageConfig.signature) : null,
-          ageImage ? this.optimizeImage(ageImage, this.imageConfig.age) : null
-        ]);
-
-        // Create FormData with optimized images
-        const formData = new FormData();
-        formData.append('postId', postId);
-        formData.append('session_ID', sessionId);
-        if (optimizedMain) formData.append('main_image', new Blob([optimizedMain], { type: 'image/jpeg' }));
-        if (optimizedSignature) formData.append('signature_image', new Blob([optimizedSignature], { type: 'image/jpeg' }));
-        if (optimizedAge) formData.append('age_image', new Blob([optimizedAge], { type: 'image/jpeg' }));
-
         const response = await fetch(`${this.baseUrl}/generate-pdf`, {
           method: 'POST',
-          body: formData,
-          signal: controller.signal
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ postId, session_ID: sessionId }),
+          signal: controller.signal,
+          timeout: this.timeout
         });
 
         clearTimeout(timeoutId);
