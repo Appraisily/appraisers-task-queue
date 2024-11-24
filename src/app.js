@@ -31,9 +31,27 @@ async function shutdown(signal) {
   }
 }
 
-// Register shutdown handlers
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+// Register shutdown handlers with longer timeout
+const SHUTDOWN_TIMEOUT = 60000; // 60 seconds
+process.on('SIGTERM', () => {
+  const shutdownTimer = setTimeout(() => {
+    logger.error('Forced shutdown after timeout');
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT);
+  
+  // Clear the timeout if shutdown completes normally
+  shutdown('SIGTERM').finally(() => clearTimeout(shutdownTimer));
+});
+
+process.on('SIGINT', () => {
+  const shutdownTimer = setTimeout(() => {
+    logger.error('Forced shutdown after timeout');
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT);
+  
+  // Clear the timeout if shutdown completes normally
+  shutdown('SIGINT').finally(() => clearTimeout(shutdownTimer));
+});
 
 // Start server and initialize worker
 const PORT = process.env.PORT || 8080;

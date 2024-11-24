@@ -14,6 +14,8 @@ class PubSubWorker {
     this.subscription = null;
     this.sheetsService = new SheetsService();
     this.appraisalService = null;
+    this.activeProcesses = new Set();
+    this.isShuttingDown = false;
   }
 
   async initialize() {
@@ -83,6 +85,15 @@ class PubSubWorker {
   }
 
   async handleMessage(message) {
+    // If shutting down, don't accept new messages
+    if (this.isShuttingDown) {
+      this.logger.info('Worker is shutting down, message will be redelivered later');
+      return;
+    }
+
+    const processId = `${message.id}-${Date.now()}`;
+    this.activeProcesses.add(processId);
+
     try {
       this.logger.info(`Processing message ${message.id}`);
       const messageData = message.data.toString();
@@ -105,6 +116,8 @@ class PubSubWorker {
       this.logger.error(`Error processing message ${message.id}:`, error);
       await this.publishToDeadLetterQueue(message.id, message.data.toString(), error.message);
       message.ack(); // Acknowledge to prevent retries
+    } finally {
+      this.activeProcesses.delete(processId);
     }
   }
 
@@ -131,10 +144,32 @@ class PubSubWorker {
   }
 
   async shutdown() {
+    this.isShuttingDown = true;
+    this.logger.info('Starting graceful shutdown...');
+
+    // Stop accepting new messages
+    if (this.subscription) {
+      this.subscription.removeAllListeners('message');
+    }
+
+    // Wait for active processes to complete
+    if (this.activeProcesses.size > 0) {
+      this.logger.info(`Waiting for ${this.activeProcesses.size} active processes to complete...`);
+      
+      // Check every second if processes are done
+      while (this.activeProcesses.size > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        this.logger.info(`Remaining processes: ${this.activeProcesses.size}`);
+      }
+    }
+
+    // Close subscription
     if (this.subscription) {
       await this.subscription.close();
-      this.logger.info('PubSub worker shut down successfully');
+      this.logger.info('PubSub subscription closed');
     }
+
+    this.logger.info('PubSub worker shut down successfully');
   }
 }
 
