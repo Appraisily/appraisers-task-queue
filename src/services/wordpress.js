@@ -86,21 +86,21 @@ class WordPressService {
     const post = await this.getPost(postId);
     const shortcodesInserted = post.acf?.shortcodes_inserted || false;
     const sessionId = post.acf?.session_id;
-    const postTitle = `Appraisal #${title}`;
-    
-    if (!sessionId) {
-      this.logger.warn(`No session ID found for post ${postId}, using default slug`);
-    }
     
     const updateData = {
-      title: postTitle,
+      title: title, // Use the merged description as title
       content: content,
-      slug: sessionId ? this.generateSlug(sessionId) : `appraisal-${title}`,
       acf: {
         value: value.toString(),
         shortcodes_inserted: true
       }
     };
+
+    // Only update slug if session ID exists
+    if (sessionId) {
+      this.logger.info(`Updating slug with session ID: ${sessionId}`);
+      updateData.slug = this.generateSlug(sessionId);
+    }
 
     if (!shortcodesInserted) {
       this.logger.info(`Adding shortcodes to post ${postId}`);
