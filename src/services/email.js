@@ -47,7 +47,7 @@ class EmailService {
       dynamicTemplateData: {
         customer_name: customerName || 'Valued Customer',
         pdf_link: appraisalData.pdfLink,
-        appraisal_link: appraisalData.appraisalUrl,
+        wp_link: appraisalData.appraisalUrl, // Changed from appraisal_link to wp_link
         current_year: new Date().getFullYear()
       }
     };

@@ -46,12 +46,10 @@ When a new message is received from Pub/Sub, the following steps are executed in
    - Uses GPT-4 with specific prompt for concise merging
    - Saves merged description to Column L
 
-3. **Get Appraisal Type** (~1-2s)
-   ```javascript
-   // Get template type from Column B
-   const values = await sheetsService.getValues(`B${id}`);
-   const appraisalType = values[0][0] || 'RegularArt';
-   ```
+3. **Get Template Type** (~1-2s)
+   - Retrieve appraisal type from Column B
+   - Used for WordPress template shortcode
+   - Defaults to "RegularArt" if not specified
 
 4. **Update WordPress Post** (~5-6s)
    ```javascript
@@ -63,34 +61,30 @@ When a new message is received from Pub/Sub, the following steps are executed in
      title: mergedDescription,
      content: post.content,
      value: value.toString(),
-     appraisalType: appraisalType
+     appraisalType: templateType
    });
 
-   // Update slug if session ID exists
+   // Update slug if session ID exists in ACF
    if (post.acf?.session_id) {
      updateData.slug = post.acf.session_id.toLowerCase();
+   }
+
+   // Add template shortcodes if not present
+   if (!post.acf?.shortcodes_inserted) {
+     content += '\n[pdf_download]';
+     content += `\n[AppraisalTemplates type="${templateType}"]`;
    }
 
    // Save public URL to Column P
    await sheetsService.updateValues(`P${id}`, [[publicUrl]]);
    ```
 
-5. **Add Template Shortcodes** (part of WordPress update)
-   - Check `shortcodes_inserted` ACF field
-   - If not inserted, add required shortcodes:
-     ```
-     [pdf_download]
-     [AppraisalTemplates type="$TYPE"]
-     ```
-   - `$TYPE` is taken from Column B of spreadsheet
-   - Mark `shortcodes_inserted` as true after adding
-
-6. **Complete Appraisal Report** (~30-35s)
+5. **Complete Appraisal Report** (~30-35s)
    - Call appraisals backend to generate report
    - Includes retry logic with 4-minute timeout
    - Handles template processing and data merging
 
-7. **Generate PDF** (~40s)
+6. **Generate PDF** (~40s)
    ```javascript
    // Generate PDF and get links
    const { pdfLink, docLink } = await pdfService.generatePDF(postId);
@@ -99,7 +93,7 @@ When a new message is received from Pub/Sub, the following steps are executed in
    await sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]]);
    ```
 
-8. **Send Email Notification** (~5s)
+7. **Send Email Notification** (~5s)
    ```javascript
    // Get customer data
    const customerData = await sheetsService.getValues(`D${id}:E${id}`);
@@ -115,7 +109,7 @@ When a new message is received from Pub/Sub, the following steps are executed in
    );
    ```
 
-9. **Mark Complete** (~2-3s)
+8. **Mark Complete** (~2-3s)
    ```javascript
    // Update status in Column F
    await sheetsService.updateValues(`F${id}`, [['Completed']]);
@@ -127,7 +121,7 @@ Total processing time: ~90-100 seconds per appraisal
 
 | Column | Content              | Notes                                    |
 |--------|---------------------|------------------------------------------|
-| B      | Appraisal Type      | Used for template selection             |
+| B      | Appraisal Type      | Used for WordPress template selection    |
 | D      | Customer Email      | Used for notifications                   |
 | E      | Customer Name       | Used in email templates                  |
 | F      | Status              | Updated to "Completed" when done         |
@@ -161,7 +155,7 @@ Total processing time: ~90-100 seconds per appraisal
    - Content: Preserves existing content and adds required shortcodes
    - ACF Fields:
      - `value`: Appraisal value
-     - `shortcodes_inserted`: Boolean flag
+     - `shortcodes_inserted`: Boolean flag for template insertion
      - `session_id`: Used for slug generation
 
 4. **URL Management**
@@ -169,7 +163,7 @@ Total processing time: ~90-100 seconds per appraisal
    - Public URL stored in Column P (for customer access)
    - Slug generated from session ID when available
 
-### Shortcodes and Templates
+### Template System
 
 1. **Required Shortcodes**
    Every appraisal post must contain two essential shortcodes:
@@ -179,37 +173,23 @@ Total processing time: ~90-100 seconds per appraisal
    ```
 
 2. **Template Type**
-   - The template type is determined by Column B in the spreadsheet
+   - Type determined by Column B in spreadsheet
    - Format: `[AppraisalTemplates type="${Column B value}"]`
-   - Example: If Column B42 contains "RegularArt", the shortcode will be:
+   - Example: If B42 contains "RegularArt":
      ```
      [AppraisalTemplates type="RegularArt"]
      ```
 
-3. **Shortcode Insertion**
-   - Shortcodes are automatically added if not present
-   - The `shortcodes_inserted` ACF field tracks insertion status
-   - Order matters: PDF download first, then template
+3. **Shortcode Management**
+   - Controlled by `shortcodes_inserted` ACF field
+   - Only inserted if field is false
+   - Order: PDF download first, then template
    - Example complete content:
      ```
      Original content here...
      [pdf_download]
      [AppraisalTemplates type="RegularArt"]
      ```
-
-4. **Template Types**
-   Common template types include:
-   - `RegularArt`: Standard artwork appraisals
-   - `Antique`: Antique items
-   - `Jewelry`: Jewelry pieces
-   - `Collection`: Multiple items
-   - `Custom`: Special cases
-
-5. **Shortcode Processing**
-   - `[pdf_download]`: Generates download button for PDF report
-   - `[AppraisalTemplates]`: Renders appropriate template with data
-   - Templates automatically pull data from ACF fields
-   - Processing happens during report completion phase
 
 ## Configuration
 
