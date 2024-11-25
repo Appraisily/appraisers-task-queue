@@ -25,7 +25,7 @@ class AppraisalService {
       await this.wordpressService.completeAppraisalReport(postId);
       
       // Step 5: Generate PDF and Send Email
-      await this.finalize(id, value, mergedDescription, postId);
+      await this.finalize(id, postId);
       
       // Step 6: Mark as Complete
       await this.complete(id);
@@ -68,12 +68,12 @@ class AppraisalService {
 
   async getWordPressPostId(id) {
     const values = await this.sheetsService.getValues(`G${id}`);
-    const wpUrl = values[0][0];
     
-    if (!wpUrl) {
+    if (!values || !values[0] || !values[0][0]) {
       throw new Error(`No WordPress URL found for appraisal ${id}`);
     }
 
+    const wpUrl = values[0][0];
     const url = new URL(wpUrl);
     const postId = url.searchParams.get('post');
     
@@ -85,23 +85,20 @@ class AppraisalService {
     return postId;
   }
 
-  async finalize(id, value, description, postId) {
+  async finalize(id, postId) {
     // Generate PDF
     const { pdfLink, docLink } = await this.pdfService.generatePDF(postId);
     await this.sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]]);
     
-    // Get customer data and send email
+    // Get customer data
     const customerData = await this.getCustomerData(id);
     
+    // Send email notification
     this.logger.info(`Sending completion email to ${customerData.email}`);
     await this.emailService.sendAppraisalCompletedEmail(
       customerData.email,
       customerData.name,
-      {
-        value,
-        pdfLink,
-        description
-      }
+      { pdfLink }
     );
     this.logger.info(`Email sent successfully to ${customerData.email}`);
   }
