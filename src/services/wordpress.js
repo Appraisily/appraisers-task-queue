@@ -9,9 +9,9 @@ class WordPressService {
     this.auth = null;
     this.appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
     this.postCache = new Map();
-    this.completeReportTimeout = 240000; // 4 minutes timeout
+    this.completeReportTimeout = 240000;
     this.maxRetries = 2;
-    this.retryDelay = 10000; // 10 seconds between retries
+    this.retryDelay = 10000;
   }
 
   async initialize() {
@@ -99,7 +99,11 @@ class WordPressService {
       }
     }
 
-    return this.updatePost(postId, updateData);
+    const updatedPost = await this.updatePost(postId, updateData);
+    return {
+      ...updatedPost,
+      publicUrl: updatedPost.link // This is the public URL
+    };
   }
 
   async completeAppraisalReport(postId) {

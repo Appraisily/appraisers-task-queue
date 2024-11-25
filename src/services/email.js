@@ -34,7 +34,7 @@ class EmailService {
       throw new Error('Email service not initialized');
     }
 
-    if (!customerEmail || !appraisalData?.pdfLink) {
+    if (!customerEmail || !appraisalData?.pdfLink || !appraisalData?.appraisalUrl) {
       throw new Error('Missing required email data');
     }
 
@@ -47,6 +47,7 @@ class EmailService {
       dynamicTemplateData: {
         customer_name: customerName || 'Valued Customer',
         pdf_link: appraisalData.pdfLink,
+        appraisal_link: appraisalData.appraisalUrl,
         current_year: new Date().getFullYear()
       }
     };

@@ -19,13 +19,16 @@ class AppraisalService {
       const mergedDescription = await this.mergeDescriptions(id, description);
       
       // Step 3: Update WordPress
-      const postId = await this.updateWordPress(id, value, mergedDescription);
+      const { postId, publicUrl } = await this.updateWordPress(id, value, mergedDescription);
+      
+      // Save public URL to spreadsheet
+      await this.sheetsService.updateValues(`P${id}`, [[publicUrl]]);
       
       // Step 4: Complete Appraisal Report
       await this.wordpressService.completeAppraisalReport(postId);
       
       // Step 5: Generate PDF and Send Email
-      await this.finalize(id, postId);
+      await this.finalize(id, postId, publicUrl);
       
       // Step 6: Mark as Complete
       await this.complete(id);
@@ -57,13 +60,16 @@ class AppraisalService {
     // Get existing post content and update it
     const post = await this.wordpressService.getPost(postId);
     
-    await this.wordpressService.updateAppraisalPost(postId, {
+    const updatedPost = await this.wordpressService.updateAppraisalPost(postId, {
       title: `Appraisal #${id} - ${description.substring(0, 100)}...`,
       content: post.content?.rendered || '',
       value: value
     });
     
-    return postId;
+    return {
+      postId,
+      publicUrl: updatedPost.publicUrl
+    };
   }
 
   async getWordPressPostId(id) {
@@ -85,7 +91,7 @@ class AppraisalService {
     return postId;
   }
 
-  async finalize(id, postId) {
+  async finalize(id, postId, publicUrl) {
     // Generate PDF
     const { pdfLink, docLink } = await this.pdfService.generatePDF(postId);
     await this.sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]]);
@@ -98,7 +104,10 @@ class AppraisalService {
     await this.emailService.sendAppraisalCompletedEmail(
       customerData.email,
       customerData.name,
-      { pdfLink }
+      { 
+        pdfLink,
+        appraisalUrl: publicUrl // Use the public URL
+      }
     );
     this.logger.info(`Email sent successfully to ${customerData.email}`);
   }
