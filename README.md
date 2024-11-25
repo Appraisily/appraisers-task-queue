@@ -44,7 +44,7 @@ When a new message is received from Pub/Sub, the following steps are executed in
    // Get IA description from Column H
    const iaDescription = await sheetsService.getValues(`H${id}`);
    
-   // Merge descriptions using OpenAI
+   // Merge descriptions using OpenAI (max 200 words)
    const mergedDescription = await openaiService.mergeDescriptions(description, iaDescription);
    
    // Save merged description to Column L
@@ -57,15 +57,18 @@ When a new message is received from Pub/Sub, the following steps are executed in
    const wpUrl = "https://resources.appraisily.com/wp-admin/post.php?post=141667&action=edit";
    const postId = new URL(wpUrl).searchParams.get('post'); // Returns "141667"
    
-   // Get appraisal type from Column B
-   const appraisalType = await sheetsService.getValues(`B${id}`);
+   // Get existing post content
+   const post = await wordpressService.getPost(postId);
    
-   // Update WordPress post
-   await wordpressService.updatePost(postId, {
-     title: `Appraisal #${id} - ${description}`,
-     content: `[pdf_download]\n[AppraisalTemplates type="${appraisalType}"]`,
-     acf: { value: value.toString() }
+   // Update WordPress post with merged description as title
+   const { publicUrl } = await wordpressService.updateAppraisalPost(postId, {
+     title: mergedDescription,
+     content: post.content,
+     value: value.toString()
    });
+
+   // Save public URL to Column P
+   await sheetsService.updateValues(`P${id}`, [[publicUrl]]);
    ```
 
 4. **Complete Appraisal Report**
@@ -87,13 +90,12 @@ When a new message is received from Pub/Sub, the following steps are executed in
    await sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]]);
    
    // Get customer email from Column D
-   const customerEmail = await sheetsService.getValues(`D${id}`);
+   const customerData = await sheetsService.getValues(`D${id}:E${id}`);
    
-   // Send completion email
-   await emailService.sendAppraisalCompletedEmail(customerEmail, {
-     value,
+   // Send completion email using SendGrid template
+   await emailService.sendAppraisalCompletedEmail(customerData.email, customerData.name, {
      pdfLink,
-     description: mergedDescription
+     appraisalUrl: publicUrl
    });
    ```
 
@@ -103,62 +105,22 @@ When a new message is received from Pub/Sub, the following steps are executed in
    await sheetsService.updateValues(`F${id}`, [['Completed']]);
    ```
 
-## Backend API Endpoints
-
-### Complete Appraisal Report
-```
-POST https://appraisals-backend-856401495068.us-central1.run.app/complete-appraisal-report
-
-Request:
-{
-  "postId": "123" // WordPress post ID (required)
-}
-
-Success Response:
-{
-  "success": true,
-  "message": "Informe de tasación completado exitosamente."
-}
-
-Error Response:
-{
-  "success": false,
-  "message": "Error message details"
-}
-```
-
-### Generate PDF
-```
-POST https://appraisals-backend-856401495068.us-central1.run.app/generate-pdf
-
-Request:
-{
-  "postId": "123",      // WordPress post ID (required)
-  "session_ID": "uuid"  // Session ID (required)
-}
-
-Success Response:
-{
-  "pdfLink": "https://...",
-  "docLink": "https://..."
-}
-```
-
 ## Google Sheets Structure
 
-| Column | Content              |
-|--------|---------------------|
-| B      | Appraisal Type      |
-| D      | Customer Email      |
-| E      | Customer Name       |
-| F      | Status              |
-| G      | WordPress Post URL  |
-| H      | IA Description      |
-| J      | Appraisal Value    |
-| K      | Original Description|
-| L      | Merged Description  |
-| M      | PDF Link           |
-| N      | Doc Link           |
+| Column | Content              | Notes                                    |
+|--------|---------------------|------------------------------------------|
+| B      | Appraisal Type      | Type of item being appraised            |
+| D      | Customer Email      | Used for notifications                   |
+| E      | Customer Name       | Used in email templates                  |
+| F      | Status              | Updated to "Completed" when done         |
+| G      | WordPress Post URL  | Edit URL of the post                    |
+| H      | IA Description      | Initial AI-generated description        |
+| J      | Appraisal Value    | Final appraised value                   |
+| K      | Original Description| Appraiser's description                 |
+| L      | Merged Description  | Combined AI + Appraiser description     |
+| M      | PDF Link           | Link to generated PDF report            |
+| N      | Doc Link           | Link to generated Doc version           |
+| P      | Public Post URL    | Public URL of the WordPress post        |
 
 ## Configuration
 
@@ -173,16 +135,17 @@ GOOGLE_CLOUD_PROJECT_ID=your-project-id
 
 The following secrets must be configured:
 
-| Secret Name | Description |
-|------------|-------------|
-| `PENDING_APPRAISALS_SPREADSHEET_ID` | Google Sheets spreadsheet ID |
-| `WORDPRESS_API_URL` | WordPress API endpoint URL |
-| `wp_username` | WordPress username |
-| `wp_app_password` | WordPress application password |
-| `SENDGRID_API_KEY` | SendGrid API key |
-| `SENDGRID_EMAIL` | SendGrid sender email |
-| `OPENAI_API_KEY` | OpenAI API key |
-| `service-account-json` | Google Service Account JSON key |
+| Secret Name | Description | Example Value |
+|------------|-------------|---------------|
+| `PENDING_APPRAISALS_SPREADSHEET_ID` | Google Sheets spreadsheet ID | `1abc...xyz` |
+| `WORDPRESS_API_URL` | WordPress API endpoint URL | `https://resources.appraisily.com/wp-json/wp/v2` |
+| `wp_username` | WordPress username | `admin` |
+| `wp_app_password` | WordPress application password | `xxxx xxxx xxxx` |
+| `SENDGRID_API_KEY` | SendGrid API key | `SG.xxx...` |
+| `SENDGRID_EMAIL` | SendGrid sender email | `noreply@appraisily.com` |
+| `SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED` | SendGrid template ID for completion emails | `d-xxx...` |
+| `OPENAI_API_KEY` | OpenAI API key | `sk-xxx...` |
+| `service-account-json` | Google Service Account JSON key | `{...}` |
 
 ## Setup & Development
 
@@ -234,3 +197,28 @@ The DLQ message includes:
 - Original message data
 - Error message
 - Timestamp of failure
+
+## Email Templates
+
+The service uses SendGrid dynamic templates for email notifications. The completion email template includes:
+
+- Customer name
+- Link to PDF report
+- Link to public WordPress post
+- Current year (for copyright)
+
+The template is configured to use the Appraisily branding and styling, including:
+- Logo
+- Brand colors
+- Responsive design
+- Support for Outlook and other email clients
+
+## WordPress Integration
+
+Posts are updated with:
+- Merged description as the title (max 200 words)
+- Session ID as the slug (when available)
+- Required shortcodes for PDF download and templates
+- Custom fields for appraisal value
+
+The service uses the WordPress REST API v2 endpoint and requires application password authentication.

@@ -19,6 +19,7 @@ class WordPressService {
     const username = await secretManager.getSecret('wp_username');
     const password = await secretManager.getSecret('wp_app_password');
 
+    // Remove trailing slashes and ensure clean base URL
     this.baseUrl = wpUrl.replace(/\/+$/, '');
     this.auth = Buffer.from(`${username}:${password}`).toString('base64');
   }
@@ -33,7 +34,7 @@ class WordPressService {
   async updatePost(postId, data) {
     this.logger.info(`Updating WordPress post ${postId}`);
     
-    const response = await fetch(`${this.baseUrl}/appraisals/${postId}`, {
+    const response = await fetch(`${this.baseUrl}/posts/${postId}`, {
       method: 'POST',
       headers: {
         'Authorization': `Basic ${this.auth}`,
@@ -46,7 +47,8 @@ class WordPressService {
     });
 
     if (!response.ok) {
-      throw new Error(`WordPress API error: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      throw new Error(`WordPress API error: ${response.status} ${response.statusText}\n${errorText}`);
     }
 
     const result = await response.json();
@@ -63,14 +65,15 @@ class WordPressService {
 
     this.logger.info(`Fetching WordPress post ${postId}`);
     
-    const response = await fetch(`${this.baseUrl}/appraisals/${postId}`, {
+    const response = await fetch(`${this.baseUrl}/posts/${postId}`, {
       headers: {
         'Authorization': `Basic ${this.auth}`
       }
     });
 
     if (!response.ok) {
-      throw new Error(`WordPress API error: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      throw new Error(`WordPress API error: ${response.status} ${response.statusText}\n${errorText}`);
     }
 
     const post = await response.json();
@@ -143,7 +146,8 @@ class WordPressService {
         clearTimeout(timeoutId);
 
         if (!response.ok) {
-          throw new Error(`Failed to complete appraisal report: ${response.statusText}`);
+          const errorText = await response.text();
+          throw new Error(`Failed to complete appraisal report: ${response.statusText}\n${errorText}`);
         }
 
         this.logger.info(`Successfully completed appraisal report for post ${postId}`);
