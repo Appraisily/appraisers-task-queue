@@ -9,9 +9,9 @@ class WordPressService {
     this.auth = null;
     this.appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
     this.postCache = new Map();
-    this.completeReportTimeout = 240000;
+    this.completeReportTimeout = 240000; // 4 minutes timeout
     this.maxRetries = 2;
-    this.retryDelay = 10000;
+    this.retryDelay = 10000; // 10 seconds between retries
   }
 
   async initialize() {
@@ -34,7 +34,7 @@ class WordPressService {
   async updatePost(postId, data) {
     this.logger.info(`Updating WordPress post ${postId}`);
     
-    const response = await fetch(`${this.baseUrl}/posts/${postId}`, {
+    const response = await fetch(`${this.baseUrl}/appraisals/${postId}`, {
       method: 'POST',
       headers: {
         'Authorization': `Basic ${this.auth}`,
@@ -65,7 +65,7 @@ class WordPressService {
 
     this.logger.info(`Fetching WordPress post ${postId}`);
     
-    const response = await fetch(`${this.baseUrl}/posts/${postId}`, {
+    const response = await fetch(`${this.baseUrl}/appraisals/${postId}`, {
       headers: {
         'Authorization': `Basic ${this.auth}`
       }

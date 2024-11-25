@@ -53,10 +53,6 @@ When a new message is received from Pub/Sub, the following steps are executed in
 
 3. **Update WordPress Post**
    ```javascript
-   // Extract post ID from WordPress URL in Column G
-   const wpUrl = "https://resources.appraisily.com/wp-admin/post.php?post=141667&action=edit";
-   const postId = new URL(wpUrl).searchParams.get('post'); // Returns "141667"
-   
    // Get existing post content
    const post = await wordpressService.getPost(postId);
    
@@ -89,7 +85,7 @@ When a new message is received from Pub/Sub, the following steps are executed in
    // Update PDF links in Columns M-N
    await sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]]);
    
-   // Get customer email from Column D
+   // Get customer data
    const customerData = await sheetsService.getValues(`D${id}:E${id}`);
    
    // Send completion email using SendGrid template
@@ -147,56 +143,42 @@ The following secrets must be configured:
 | `OPENAI_API_KEY` | OpenAI API key | `sk-xxx...` |
 | `service-account-json` | Google Service Account JSON key | `{...}` |
 
-## Setup & Development
+## WordPress Integration
 
-1. Install dependencies:
-```bash
-npm install
-```
+### API Configuration
 
-2. Set environment variables:
-```bash
-export GOOGLE_CLOUD_PROJECT_ID=your-project-id
-```
+1. **Base URL Structure**
+   - The WordPress API URL in secrets should be the base REST API URL
+   - Example: `https://resources.appraisily.com/wp-json/wp/v2`
+   - The service will append `/appraisals/` for custom post type endpoints
 
-3. Run locally:
-```bash
-npm start
-```
+2. **Authentication**
+   - Uses WordPress application passwords
+   - Requires Basic Auth header with base64 encoded credentials
+   - Format: `Authorization: Basic ${base64(username:app_password)}`
 
-## Required Permissions
+3. **Custom Post Type**
+   - Uses custom `appraisals` post type
+   - Endpoints:
+     - GET/POST `/appraisals/{id}`
+     - Supports standard WP fields plus custom ACF fields
 
-The service account running this application needs:
-- `roles/pubsub.subscriber` for Pub/Sub access
-- `roles/spreadsheets.editor` for Google Sheets access
-- `roles/secretmanager.secretAccessor` for Secret Manager access
+4. **Post Updates**
+   - Title: Uses full merged description (max 200 words)
+   - Slug: Uses session ID if available (no change if not present)
+   - Content: Preserves existing content, adds required shortcodes
+   - ACF Fields:
+     - `value`: Appraisal value
+     - `shortcodes_inserted`: Boolean flag
+     - `session_id`: Used for slug generation
 
-## Message Format
+### Important Notes
 
-Expected Pub/Sub message format:
-```json
-{
-  "type": "COMPLETE_APPRAISAL",
-  "data": {
-    "id": "42",
-    "appraisalValue": 750,
-    "description": "Artwork description..."
-  }
-}
-```
-
-## Error Handling
-
-Failed messages are:
-1. Logged with detailed error information
-2. Published to a Dead Letter Queue topic (`appraisals-failed`)
-3. Original message is acknowledged to prevent infinite retries
-
-The DLQ message includes:
-- Original message ID
-- Original message data
-- Error message
-- Timestamp of failure
+- Always use `/appraisals/` endpoint, not `/posts/`
+- The merged description becomes the post title without truncation
+- Only update slug when session ID is available
+- Store public post URL (not edit URL) in Column P
+- Verify shortcodes exist before adding them
 
 ## Email Templates
 
@@ -222,3 +204,16 @@ Posts are updated with:
 - Custom fields for appraisal value
 
 The service uses the WordPress REST API v2 endpoint and requires application password authentication.
+
+## Error Handling
+
+Failed messages are:
+1. Logged with detailed error information
+2. Published to a Dead Letter Queue topic (`appraisals-failed`)
+3. Original message is acknowledged to prevent infinite retries
+
+The DLQ message includes:
+- Original message ID
+- Original message data
+- Error message
+- Timestamp of failure
