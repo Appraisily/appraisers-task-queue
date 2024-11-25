@@ -19,22 +19,20 @@ class WordPressService {
     const username = await secretManager.getSecret('wp_username');
     const password = await secretManager.getSecret('wp_app_password');
 
-    // Remove trailing slashes and ensure clean base URL
     this.baseUrl = wpUrl.replace(/\/+$/, '');
     this.auth = Buffer.from(`${username}:${password}`).toString('base64');
-  }
-
-  generateSlug(sessionId) {
-    if (!sessionId) {
-      throw new Error('Session ID is required for generating slug');
-    }
-    return sessionId.toLowerCase().replace(/[^a-z0-9]+/g, '-');
   }
 
   async updatePost(postId, data) {
     this.logger.info(`Updating WordPress post ${postId}`);
     
-    const response = await fetch(`${this.baseUrl}/appraisals/${postId}`, {
+    // Ensure postId is a number
+    const numericPostId = parseInt(postId, 10);
+    if (isNaN(numericPostId)) {
+      throw new Error(`Invalid post ID: ${postId}`);
+    }
+
+    const response = await fetch(`${this.baseUrl}/posts/${numericPostId}`, {
       method: 'POST',
       headers: {
         'Authorization': `Basic ${this.auth}`,
@@ -59,13 +57,19 @@ class WordPressService {
   }
 
   async getPost(postId, useCache = true) {
-    if (useCache && this.postCache.has(postId)) {
-      return this.postCache.get(postId);
+    // Ensure postId is a number
+    const numericPostId = parseInt(postId, 10);
+    if (isNaN(numericPostId)) {
+      throw new Error(`Invalid post ID: ${postId}`);
     }
 
-    this.logger.info(`Fetching WordPress post ${postId}`);
+    if (useCache && this.postCache.has(numericPostId)) {
+      return this.postCache.get(numericPostId);
+    }
+
+    this.logger.info(`Fetching WordPress post ${numericPostId}`);
     
-    const response = await fetch(`${this.baseUrl}/appraisals/${postId}`, {
+    const response = await fetch(`${this.baseUrl}/posts/${numericPostId}`, {
       headers: {
         'Authorization': `Basic ${this.auth}`
       }
@@ -77,9 +81,9 @@ class WordPressService {
     }
 
     const post = await response.json();
-    this.logger.info(`Successfully fetched post ${postId}`);
+    this.logger.info(`Successfully fetched post ${numericPostId}`);
     
-    this.postCache.set(postId, post);
+    this.postCache.set(numericPostId, post);
     return post;
   }
 
@@ -87,8 +91,8 @@ class WordPressService {
     this.logger.info(`Updating appraisal post ${postId}`);
     
     const post = await this.getPost(postId);
-    const shortcodesInserted = post.acf?.shortcodes_inserted || false;
     const sessionId = post.acf?.session_id;
+    const shortcodesInserted = post.acf?.shortcodes_inserted || false;
     
     let updatedContent = content;
 
@@ -168,6 +172,13 @@ class WordPressService {
     }
 
     throw new Error(`Complete appraisal report failed after ${this.maxRetries + 1} attempts: ${lastError.message}`);
+  }
+
+  generateSlug(sessionId) {
+    if (!sessionId) {
+      throw new Error('Session ID is required for generating slug');
+    }
+    return sessionId.toLowerCase().replace(/[^a-z0-9]+/g, '-');
   }
 
   clearCache() {
