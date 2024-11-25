@@ -18,22 +18,22 @@ class AppraisalService {
       // Step 2: Merge Descriptions
       const mergedDescription = await this.mergeDescriptions(id, description);
       
-      // Save merged description to spreadsheet
-      await this.sheetsService.updateValues(`L${id}`, [[mergedDescription]]);
+      // Step 3: Get appraisal type from Column B
+      const appraisalType = await this.getAppraisalType(id);
       
-      // Step 3: Update WordPress
-      const { postId, publicUrl } = await this.updateWordPress(id, value, mergedDescription);
+      // Step 4: Update WordPress with type
+      const { postId, publicUrl } = await this.updateWordPress(id, value, mergedDescription, appraisalType);
       
       // Save public URL to spreadsheet
       await this.sheetsService.updateValues(`P${id}`, [[publicUrl]]);
       
-      // Step 4: Complete Appraisal Report
+      // Step 5: Complete Appraisal Report
       await this.wordpressService.completeAppraisalReport(postId);
       
-      // Step 5: Generate PDF and Send Email
+      // Step 6: Generate PDF and Send Email
       await this.finalize(id, postId, publicUrl);
       
-      // Step 6: Mark as Complete
+      // Step 7: Mark as Complete
       await this.complete(id);
       
       this.logger.info(`Successfully processed appraisal ${id}`);
@@ -53,7 +53,16 @@ class AppraisalService {
     return await this.openaiService.mergeDescriptions(description, iaDescription);
   }
 
-  async updateWordPress(id, value, mergedDescription) {
+  async getAppraisalType(id) {
+    const values = await this.sheetsService.getValues(`B${id}`);
+    if (!values || !values[0] || !values[0][0]) {
+      this.logger.warn(`No appraisal type found for ID ${id}, using default`);
+      return 'RegularArt';
+    }
+    return values[0][0];
+  }
+
+  async updateWordPress(id, value, mergedDescription, appraisalType) {
     const postId = await this.getWordPressPostId(id);
     
     // Get existing post first
@@ -62,7 +71,8 @@ class AppraisalService {
     const updatedPost = await this.wordpressService.updateAppraisalPost(postId, {
       title: mergedDescription, // Use full merged description as title
       content: post.content?.rendered || '', // Preserve existing content
-      value: value
+      value: value,
+      appraisalType: appraisalType // Pass the appraisal type for template
     });
 
     return {

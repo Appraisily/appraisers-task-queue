@@ -29,83 +29,105 @@ src/
 - Graceful shutdown
 - Secure secret management using Google Cloud Secret Manager
 
-## Appraisal Process Flow
+## Detailed Process Flow
 
-When a new message is received from Pub/Sub, the following steps are executed in order:
+When a new message is received from Pub/Sub, the following steps are executed in sequence:
 
-1. **Set Appraisal Value** (Columns J-K)
+1. **Set Initial Values** (~2-3s)
    ```javascript
-   // Updates value and original description
+   // Updates value and original description in Columns J-K
    await sheetsService.updateValues(`J${id}:K${id}`, [[value, description]]);
    ```
 
-2. **Merge Descriptions** (Columns H, L)
+2. **Merge Descriptions** (~3-4s)
+   - Get IA description from Column H
+   - Merge with appraiser description using OpenAI
+   - Limited to 200 words for WordPress title compatibility
+   - Uses GPT-4 with specific prompt for concise merging
+   - Saves merged description to Column L
+
+3. **Get Appraisal Type** (~1-2s)
    ```javascript
-   // Get IA description from Column H
-   const iaDescription = await sheetsService.getValues(`H${id}`);
-   
-   // Merge descriptions using OpenAI (max 200 words)
-   const mergedDescription = await openaiService.mergeDescriptions(description, iaDescription);
-   
-   // Save merged description to Column L
-   await sheetsService.updateValues(`L${id}`, [[mergedDescription]]);
+   // Get template type from Column B
+   const values = await sheetsService.getValues(`B${id}`);
+   const appraisalType = values[0][0] || 'RegularArt';
    ```
 
-3. **Update WordPress Post**
+4. **Update WordPress Post** (~5-6s)
    ```javascript
-   // Get existing post content
+   // Get existing post
    const post = await wordpressService.getPost(postId);
    
-   // Update WordPress post with merged description as title
+   // Update with merged description as title
    const { publicUrl } = await wordpressService.updateAppraisalPost(postId, {
      title: mergedDescription,
      content: post.content,
-     value: value.toString()
+     value: value.toString(),
+     appraisalType: appraisalType
    });
+
+   // Update slug if session ID exists
+   if (post.acf?.session_id) {
+     updateData.slug = post.acf.session_id.toLowerCase();
+   }
 
    // Save public URL to Column P
    await sheetsService.updateValues(`P${id}`, [[publicUrl]]);
    ```
 
-4. **Complete Appraisal Report**
-   ```javascript
-   // Call appraisals backend to complete report
-   await fetch('https://appraisals-backend-856401495068.us-central1.run.app/complete-appraisal-report', {
-     method: 'POST',
-     headers: { 'Content-Type': 'application/json' },
-     body: JSON.stringify({ postId })
-   });
-   ```
+5. **Add Template Shortcodes** (part of WordPress update)
+   - Check `shortcodes_inserted` ACF field
+   - If not inserted, add required shortcodes:
+     ```
+     [pdf_download]
+     [AppraisalTemplates type="$TYPE"]
+     ```
+   - `$TYPE` is taken from Column B of spreadsheet
+   - Mark `shortcodes_inserted` as true after adding
 
-5. **Generate PDF and Send Email**
+6. **Complete Appraisal Report** (~30-35s)
+   - Call appraisals backend to generate report
+   - Includes retry logic with 4-minute timeout
+   - Handles template processing and data merging
+
+7. **Generate PDF** (~40s)
    ```javascript
-   // Generate PDF
+   // Generate PDF and get links
    const { pdfLink, docLink } = await pdfService.generatePDF(postId);
    
    // Update PDF links in Columns M-N
    await sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]]);
-   
+   ```
+
+8. **Send Email Notification** (~5s)
+   ```javascript
    // Get customer data
    const customerData = await sheetsService.getValues(`D${id}:E${id}`);
    
-   // Send completion email using SendGrid template
-   await emailService.sendAppraisalCompletedEmail(customerData.email, customerData.name, {
-     pdfLink,
-     appraisalUrl: publicUrl
-   });
+   // Send using SendGrid template
+   await emailService.sendAppraisalCompletedEmail(
+     customerData.email,
+     customerData.name,
+     {
+       pdfLink,
+       appraisalUrl: publicUrl
+     }
+   );
    ```
 
-6. **Mark Complete**
+9. **Mark Complete** (~2-3s)
    ```javascript
-   // Update status to "Completed" in Column F
+   // Update status in Column F
    await sheetsService.updateValues(`F${id}`, [['Completed']]);
    ```
+
+Total processing time: ~90-100 seconds per appraisal
 
 ## Google Sheets Structure
 
 | Column | Content              | Notes                                    |
 |--------|---------------------|------------------------------------------|
-| B      | Appraisal Type      | Type of item being appraised            |
+| B      | Appraisal Type      | Used for template selection             |
 | D      | Customer Email      | Used for notifications                   |
 | E      | Customer Name       | Used in email templates                  |
 | F      | Status              | Updated to "Completed" when done         |
@@ -118,102 +140,130 @@ When a new message is received from Pub/Sub, the following steps are executed in
 | N      | Doc Link           | Link to generated Doc version           |
 | P      | Public Post URL    | Public URL of the WordPress post        |
 
+## WordPress Integration
+
+### API Configuration
+
+1. **Base URL Structure**
+   - WordPress API URL in secrets must be the base REST API URL
+   - Example: `https://resources.appraisily.com/wp-json/wp/v2`
+   - Service appends `/appraisals/` for custom post type endpoints
+   - CRITICAL: Must use `/appraisals/` endpoint, not `/posts/`
+
+2. **Authentication**
+   - Uses WordPress application passwords
+   - Basic Auth header with base64 encoded credentials
+   - Format: `Authorization: Basic ${base64(username:app_password)}`
+
+3. **Post Updates**
+   - Title: Uses full merged description (max 200 words)
+   - Slug: Uses session ID from ACF field if available
+   - Content: Preserves existing content and adds required shortcodes
+   - ACF Fields:
+     - `value`: Appraisal value
+     - `shortcodes_inserted`: Boolean flag
+     - `session_id`: Used for slug generation
+
+4. **URL Management**
+   - Edit URL stored in Column G (for internal use)
+   - Public URL stored in Column P (for customer access)
+   - Slug generated from session ID when available
+
+### Shortcodes and Templates
+
+1. **Required Shortcodes**
+   Every appraisal post must contain two essential shortcodes:
+   ```
+   [pdf_download]
+   [AppraisalTemplates type="TYPE"]
+   ```
+
+2. **Template Type**
+   - The template type is determined by Column B in the spreadsheet
+   - Format: `[AppraisalTemplates type="${Column B value}"]`
+   - Example: If Column B42 contains "RegularArt", the shortcode will be:
+     ```
+     [AppraisalTemplates type="RegularArt"]
+     ```
+
+3. **Shortcode Insertion**
+   - Shortcodes are automatically added if not present
+   - The `shortcodes_inserted` ACF field tracks insertion status
+   - Order matters: PDF download first, then template
+   - Example complete content:
+     ```
+     Original content here...
+     [pdf_download]
+     [AppraisalTemplates type="RegularArt"]
+     ```
+
+4. **Template Types**
+   Common template types include:
+   - `RegularArt`: Standard artwork appraisals
+   - `Antique`: Antique items
+   - `Jewelry`: Jewelry pieces
+   - `Collection`: Multiple items
+   - `Custom`: Special cases
+
+5. **Shortcode Processing**
+   - `[pdf_download]`: Generates download button for PDF report
+   - `[AppraisalTemplates]`: Renders appropriate template with data
+   - Templates automatically pull data from ACF fields
+   - Processing happens during report completion phase
+
 ## Configuration
 
 ### Environment Variables
 
-Required environment variable in `.env`:
+Required in `.env`:
 ```
 GOOGLE_CLOUD_PROJECT_ID=your-project-id
 ```
 
 ### Google Cloud Secret Manager
 
-The following secrets must be configured:
+Required secrets:
 
 | Secret Name | Description | Example Value |
 |------------|-------------|---------------|
-| `PENDING_APPRAISALS_SPREADSHEET_ID` | Google Sheets spreadsheet ID | `1abc...xyz` |
-| `WORDPRESS_API_URL` | WordPress API endpoint URL | `https://resources.appraisily.com/wp-json/wp/v2` |
+| `PENDING_APPRAISALS_SPREADSHEET_ID` | Google Sheets ID | `1abc...xyz` |
+| `WORDPRESS_API_URL` | WordPress API URL | `https://resources.appraisily.com/wp-json/wp/v2` |
 | `wp_username` | WordPress username | `admin` |
-| `wp_app_password` | WordPress application password | `xxxx xxxx xxxx` |
+| `wp_app_password` | WordPress app password | `xxxx xxxx xxxx` |
 | `SENDGRID_API_KEY` | SendGrid API key | `SG.xxx...` |
 | `SENDGRID_EMAIL` | SendGrid sender email | `noreply@appraisily.com` |
-| `SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED` | SendGrid template ID for completion emails | `d-xxx...` |
+| `SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED` | SendGrid template ID | `d-xxx...` |
 | `OPENAI_API_KEY` | OpenAI API key | `sk-xxx...` |
-| `service-account-json` | Google Service Account JSON key | `{...}` |
-
-## WordPress Integration
-
-### API Configuration
-
-1. **Base URL Structure**
-   - The WordPress API URL in secrets should be the base REST API URL
-   - Example: `https://resources.appraisily.com/wp-json/wp/v2`
-   - The service will append `/appraisals/` for custom post type endpoints
-
-2. **Authentication**
-   - Uses WordPress application passwords
-   - Requires Basic Auth header with base64 encoded credentials
-   - Format: `Authorization: Basic ${base64(username:app_password)}`
-
-3. **Custom Post Type**
-   - Uses custom `appraisals` post type
-   - Endpoints:
-     - GET/POST `/appraisals/{id}`
-     - Supports standard WP fields plus custom ACF fields
-
-4. **Post Updates**
-   - Title: Uses full merged description (max 200 words)
-   - Slug: Uses session ID if available (no change if not present)
-   - Content: Preserves existing content, adds required shortcodes
-   - ACF Fields:
-     - `value`: Appraisal value
-     - `shortcodes_inserted`: Boolean flag
-     - `session_id`: Used for slug generation
-
-### Important Notes
-
-- Always use `/appraisals/` endpoint, not `/posts/`
-- The merged description becomes the post title without truncation
-- Only update slug when session ID is available
-- Store public post URL (not edit URL) in Column P
-- Verify shortcodes exist before adding them
-
-## Email Templates
-
-The service uses SendGrid dynamic templates for email notifications. The completion email template includes:
-
-- Customer name
-- Link to PDF report
-- Link to public WordPress post
-- Current year (for copyright)
-
-The template is configured to use the Appraisily branding and styling, including:
-- Logo
-- Brand colors
-- Responsive design
-- Support for Outlook and other email clients
-
-## WordPress Integration
-
-Posts are updated with:
-- Merged description as the title (max 200 words)
-- Session ID as the slug (when available)
-- Required shortcodes for PDF download and templates
-- Custom fields for appraisal value
-
-The service uses the WordPress REST API v2 endpoint and requires application password authentication.
+| `service-account-json` | Google Service Account | `{...}` |
 
 ## Error Handling
 
 Failed messages are:
 1. Logged with detailed error information
-2. Published to a Dead Letter Queue topic (`appraisals-failed`)
-3. Original message is acknowledged to prevent infinite retries
+2. Published to Dead Letter Queue (`appraisals-failed`)
+3. Original message acknowledged to prevent retries
 
-The DLQ message includes:
+DLQ message includes:
 - Original message ID
 - Original message data
 - Error message
 - Timestamp of failure
+
+## Health Checks
+
+The service includes a health check endpoint at `/health` that returns:
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-11-25T11:20:01.564Z"
+}
+```
+
+## Monitoring
+
+Key metrics to monitor:
+- Average processing time (~90-100s)
+- PDF generation time (~40s)
+- WordPress API response time
+- Email delivery success rate
+- DLQ message count

@@ -26,8 +26,6 @@ class WordPressService {
   }
 
   async updatePost(postId, data) {
-    this.logger.info(`Updating WordPress post ${postId}`);
-    
     // Ensure postId is a number
     const numericPostId = parseInt(postId, 10);
     if (isNaN(numericPostId)) {
@@ -38,7 +36,7 @@ class WordPressService {
     this.logger.info(`Making PUT request to: ${url}`);
 
     const response = await fetch(url, {
-      method: 'PUT', // Changed from POST to PUT for updates
+      method: 'PUT',
       headers: {
         'Authorization': `Basic ${this.auth}`,
         'Content-Type': 'application/json'
@@ -58,7 +56,7 @@ class WordPressService {
     const result = await response.json();
     this.logger.info(`Successfully updated post ${postId}`);
     
-    this.postCache.set(postId, result);
+    this.postCache.set(numericPostId, result);
     return result;
   }
 
@@ -96,23 +94,28 @@ class WordPressService {
     return post;
   }
 
-  async updateAppraisalPost(postId, { title, content, value }) {
+  async updateAppraisalPost(postId, { title, content, value, appraisalType }) {
     this.logger.info(`Updating appraisal post ${postId}`);
     
     const post = await this.getPost(postId);
-    const sessionId = post.acf?.session_id;
     const shortcodesInserted = post.acf?.shortcodes_inserted || false;
+    const sessionId = post.acf?.session_id;
     
     let updatedContent = content;
 
-    // Add shortcodes if not already present
+    // Only add shortcodes if they haven't been added before
     if (!shortcodesInserted) {
       this.logger.info(`Adding shortcodes to post ${postId}`);
+      
+      // Add PDF download shortcode if not present
       if (!updatedContent.includes('[pdf_download]')) {
         updatedContent += '\n[pdf_download]';
       }
+
+      // Add AppraisalTemplates shortcode with type from spreadsheet
       if (!updatedContent.includes('[AppraisalTemplates')) {
-        updatedContent += `\n[AppraisalTemplates type="${post.acf?.type || 'RegularArt'}"]`;
+        const templateType = appraisalType || 'RegularArt'; // Default to RegularArt if no type specified
+        updatedContent += `\n[AppraisalTemplates type="${templateType}"]`;
       }
     }
     
@@ -121,7 +124,7 @@ class WordPressService {
       content: updatedContent,
       acf: {
         value: value.toString(),
-        shortcodes_inserted: true
+        shortcodes_inserted: true // Mark shortcodes as inserted
       }
     };
 
