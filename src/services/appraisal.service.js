@@ -90,20 +90,38 @@ class AppraisalService {
     const { pdfLink, docLink } = await this.pdfService.generatePDF(postId);
     await this.sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]]);
     
-    // Send email
+    // Get customer data and send email
     const customerData = await this.getCustomerData(id);
+    
+    this.logger.info(`Sending completion email to ${customerData.email}`);
     await this.emailService.sendAppraisalCompletedEmail(
       customerData.email,
       customerData.name,
-      { value, pdfLink, description }
+      {
+        value,
+        pdfLink,
+        description
+      }
     );
+    this.logger.info(`Email sent successfully to ${customerData.email}`);
   }
 
   async getCustomerData(id) {
     const values = await this.sheetsService.getValues(`D${id}:E${id}`);
+    
+    if (!values || !values[0] || values[0].length < 2) {
+      throw new Error(`Customer data not found for appraisal ${id}`);
+    }
+
+    const [email, name] = values[0];
+    
+    if (!email) {
+      throw new Error(`Customer email not found for appraisal ${id}`);
+    }
+
     return {
-      email: values[0][0],
-      name: values[0][1]
+      email,
+      name: name || 'Valued Customer' // Fallback if name is not provided
     };
   }
 

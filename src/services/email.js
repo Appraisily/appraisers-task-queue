@@ -6,26 +6,58 @@ class EmailService {
   constructor() {
     this.logger = createLogger('Email');
     this.senderEmail = null;
+    this.templateId = null;
+    this.initialized = false;
   }
 
   async initialize() {
-    const apiKey = await secretManager.getSecret('SENDGRID_API_KEY');
-    this.senderEmail = await secretManager.getSecret('SENDGRID_EMAIL');
-    sendGridMail.setApiKey(apiKey);
+    try {
+      const apiKey = await secretManager.getSecret('SENDGRID_API_KEY');
+      this.senderEmail = await secretManager.getSecret('SENDGRID_EMAIL');
+      this.templateId = await secretManager.getSecret('SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED');
+      
+      if (!apiKey || !this.senderEmail || !this.templateId) {
+        throw new Error('Missing required SendGrid configuration');
+      }
+
+      sendGridMail.setApiKey(apiKey);
+      this.initialized = true;
+      this.logger.info('Email service initialized successfully');
+    } catch (error) {
+      this.logger.error('Failed to initialize email service:', error);
+      throw error;
+    }
   }
 
   async sendAppraisalCompletedEmail(customerEmail, customerName, appraisalData) {
+    if (!this.initialized) {
+      throw new Error('Email service not initialized');
+    }
+
+    if (!customerEmail || !appraisalData?.pdfLink) {
+      throw new Error('Missing required email data');
+    }
+
+    this.logger.info(`Preparing to send completion email to ${customerEmail}`);
+
     const msg = {
       to: customerEmail,
       from: this.senderEmail,
-      subject: 'Your Appraisal is Complete',
-      text: `Dear ${customerName},\n\nYour appraisal is now complete. The appraised value is ${appraisalData.value}.\n\nYou can view your full appraisal here: ${appraisalData.pdfLink}`,
-      html: `<p>Dear ${customerName},</p>
-            <p>Your appraisal is now complete. The appraised value is ${appraisalData.value}.</p>
-            <p>You can view your full appraisal <a href="${appraisalData.pdfLink}">here</a>.</p>`
+      templateId: this.templateId,
+      dynamicTemplateData: {
+        customer_name: customerName || 'Valued Customer',
+        pdf_link: appraisalData.pdfLink,
+        current_year: new Date().getFullYear()
+      }
     };
 
-    await sendGridMail.send(msg);
+    try {
+      await sendGridMail.send(msg);
+      this.logger.info(`Successfully sent completion email to ${customerEmail}`);
+    } catch (error) {
+      this.logger.error(`Failed to send email to ${customerEmail}:`, error);
+      throw error;
+    }
   }
 }
 
