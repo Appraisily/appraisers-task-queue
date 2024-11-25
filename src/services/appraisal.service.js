@@ -56,12 +56,15 @@ class AppraisalService {
   async updateWordPress(id, value, mergedDescription) {
     const postId = await this.getWordPressPostId(id);
     
+    // Get existing post first
+    const post = await this.wordpressService.getPost(postId);
+    
     const updatedPost = await this.wordpressService.updateAppraisalPost(postId, {
-      title: id,
-      content: mergedDescription,
+      title: mergedDescription, // Use full merged description as title
+      content: post.content?.rendered || '', // Preserve existing content
       value: value
     });
-    
+
     return {
       postId,
       publicUrl: updatedPost.publicUrl

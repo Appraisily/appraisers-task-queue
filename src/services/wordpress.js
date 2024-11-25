@@ -87,9 +87,22 @@ class WordPressService {
     const shortcodesInserted = post.acf?.shortcodes_inserted || false;
     const sessionId = post.acf?.session_id;
     
+    let updatedContent = content;
+
+    // Add shortcodes if not already present
+    if (!shortcodesInserted) {
+      this.logger.info(`Adding shortcodes to post ${postId}`);
+      if (!updatedContent.includes('[pdf_download]')) {
+        updatedContent += '\n[pdf_download]';
+      }
+      if (!updatedContent.includes('[AppraisalTemplates')) {
+        updatedContent += `\n[AppraisalTemplates type="${post.acf?.type || 'RegularArt'}"]`;
+      }
+    }
+    
     const updateData = {
-      title: title, // Use the merged description as title
-      content: content,
+      title: title,
+      content: updatedContent,
       acf: {
         value: value.toString(),
         shortcodes_inserted: true
@@ -100,12 +113,6 @@ class WordPressService {
     if (sessionId) {
       this.logger.info(`Updating slug with session ID: ${sessionId}`);
       updateData.slug = this.generateSlug(sessionId);
-    }
-
-    if (!shortcodesInserted) {
-      this.logger.info(`Adding shortcodes to post ${postId}`);
-      updateData.content += '\n[pdf_download]';
-      updateData.content += `\n[AppraisalTemplates type="${post.acf?.type || 'RegularArt'}"]`;
     }
 
     const updatedPost = await this.updatePost(postId, updateData);
