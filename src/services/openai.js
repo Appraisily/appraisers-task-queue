@@ -19,11 +19,11 @@ class OpenAIService {
       messages: [
         {
           role: "system",
-          content: "You are an expert art appraiser tasked with merging two artwork descriptions into a single, comprehensive description."
+          content: "You are an expert art appraiser tasked with merging two artwork descriptions into a single, concise description. Keep the merged description under 200 words and focus on the most important details."
         },
         {
           role: "user",
-          content: `Please merge these two artwork descriptions into a single, well-organized description:
+          content: `Please merge these two artwork descriptions into a single, concise description:
 
 Appraiser's Description:
 ${appraiserDescription}
@@ -35,11 +35,12 @@ The merged description should:
 1. Combine unique details from both descriptions
 2. Eliminate redundancy
 3. Maintain a professional tone
-4. Be organized and easy to read`
+4. Be organized and easy to read
+5. Stay under 200 words`
         }
       ],
       temperature: 0.7,
-      max_tokens: 1000
+      max_tokens: 400 // This ensures we get a complete but concise description
     });
 
     return response.choices[0].message.content.trim();

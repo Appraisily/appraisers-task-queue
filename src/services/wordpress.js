@@ -23,6 +23,13 @@ class WordPressService {
     this.auth = Buffer.from(`${username}:${password}`).toString('base64');
   }
 
+  generateSlug(sessionId) {
+    if (!sessionId) {
+      throw new Error('Session ID is required for generating slug');
+    }
+    return sessionId.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  }
+
   async updatePost(postId, data) {
     this.logger.info(`Updating WordPress post ${postId}`);
     
@@ -78,9 +85,17 @@ class WordPressService {
     
     const post = await this.getPost(postId);
     const shortcodesInserted = post.acf?.shortcodes_inserted || false;
+    const sessionId = post.acf?.session_id;
+    const postTitle = `Appraisal #${title}`;
+    
+    if (!sessionId) {
+      this.logger.warn(`No session ID found for post ${postId}, using default slug`);
+    }
     
     const updateData = {
-      title: title,
+      title: postTitle,
+      content: content,
+      slug: sessionId ? this.generateSlug(sessionId) : `appraisal-${title}`,
       acf: {
         value: value.toString(),
         shortcodes_inserted: true
@@ -89,20 +104,14 @@ class WordPressService {
 
     if (!shortcodesInserted) {
       this.logger.info(`Adding shortcodes to post ${postId}`);
-      updateData.content = post.content?.rendered || '';
-      
-      if (!updateData.content.includes('[pdf_download]')) {
-        updateData.content += '\n[pdf_download]';
-      }
-      if (!updateData.content.includes('[AppraisalTemplates')) {
-        updateData.content += `\n[AppraisalTemplates type="${post.acf?.type || 'RegularArt'}"]`;
-      }
+      updateData.content += '\n[pdf_download]';
+      updateData.content += `\n[AppraisalTemplates type="${post.acf?.type || 'RegularArt'}"]`;
     }
 
     const updatedPost = await this.updatePost(postId, updateData);
     return {
       ...updatedPost,
-      publicUrl: updatedPost.link // This is the public URL
+      publicUrl: updatedPost.link
     };
   }
 

@@ -18,6 +18,9 @@ class AppraisalService {
       // Step 2: Merge Descriptions
       const mergedDescription = await this.mergeDescriptions(id, description);
       
+      // Save merged description to spreadsheet
+      await this.sheetsService.updateValues(`L${id}`, [[mergedDescription]]);
+      
       // Step 3: Update WordPress
       const { postId, publicUrl } = await this.updateWordPress(id, value, mergedDescription);
       
@@ -47,22 +50,15 @@ class AppraisalService {
   async mergeDescriptions(id, description) {
     const values = await this.sheetsService.getValues(`H${id}`);
     const iaDescription = values[0][0];
-    
-    const mergedDescription = await this.openaiService.mergeDescriptions(description, iaDescription);
-    await this.sheetsService.updateValues(`L${id}`, [[mergedDescription]]);
-    
-    return mergedDescription;
+    return await this.openaiService.mergeDescriptions(description, iaDescription);
   }
 
-  async updateWordPress(id, value, description) {
+  async updateWordPress(id, value, mergedDescription) {
     const postId = await this.getWordPressPostId(id);
     
-    // Get existing post content and update it
-    const post = await this.wordpressService.getPost(postId);
-    
     const updatedPost = await this.wordpressService.updateAppraisalPost(postId, {
-      title: `Appraisal #${id} - ${description.substring(0, 100)}...`,
-      content: post.content?.rendered || '',
+      title: id,
+      content: mergedDescription,
       value: value
     });
     
@@ -106,7 +102,7 @@ class AppraisalService {
       customerData.name,
       { 
         pdfLink,
-        appraisalUrl: publicUrl // Use the public URL
+        appraisalUrl: publicUrl
       }
     );
     this.logger.info(`Email sent successfully to ${customerData.email}`);
@@ -127,7 +123,7 @@ class AppraisalService {
 
     return {
       email,
-      name: name || 'Valued Customer' // Fallback if name is not provided
+      name: name || 'Valued Customer'
     };
   }
 
