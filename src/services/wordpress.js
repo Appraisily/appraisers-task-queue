@@ -21,6 +21,8 @@ class WordPressService {
 
     this.baseUrl = wpUrl.replace(/\/+$/, '');
     this.auth = Buffer.from(`${username}:${password}`).toString('base64');
+    
+    this.logger.info(`WordPress API initialized with base URL: ${this.baseUrl}`);
   }
 
   async updatePost(postId, data) {
@@ -32,8 +34,11 @@ class WordPressService {
       throw new Error(`Invalid post ID: ${postId}`);
     }
 
-    const response = await fetch(`${this.baseUrl}/posts/${numericPostId}`, {
-      method: 'POST',
+    const url = `${this.baseUrl}/appraisals/${numericPostId}`;
+    this.logger.info(`Making PUT request to: ${url}`);
+
+    const response = await fetch(url, {
+      method: 'PUT', // Changed from POST to PUT for updates
       headers: {
         'Authorization': `Basic ${this.auth}`,
         'Content-Type': 'application/json'
@@ -46,6 +51,7 @@ class WordPressService {
 
     if (!response.ok) {
       const errorText = await response.text();
+      this.logger.error(`API Error Response: ${errorText}`);
       throw new Error(`WordPress API error: ${response.status} ${response.statusText}\n${errorText}`);
     }
 
@@ -64,12 +70,14 @@ class WordPressService {
     }
 
     if (useCache && this.postCache.has(numericPostId)) {
+      this.logger.info(`Returning cached post ${numericPostId}`);
       return this.postCache.get(numericPostId);
     }
 
-    this.logger.info(`Fetching WordPress post ${numericPostId}`);
+    const url = `${this.baseUrl}/appraisals/${numericPostId}`;
+    this.logger.info(`Making GET request to: ${url}`);
     
-    const response = await fetch(`${this.baseUrl}/posts/${numericPostId}`, {
+    const response = await fetch(url, {
       headers: {
         'Authorization': `Basic ${this.auth}`
       }
@@ -77,6 +85,7 @@ class WordPressService {
 
     if (!response.ok) {
       const errorText = await response.text();
+      this.logger.error(`API Error Response: ${errorText}`);
       throw new Error(`WordPress API error: ${response.status} ${response.statusText}\n${errorText}`);
     }
 
