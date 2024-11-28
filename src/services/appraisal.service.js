@@ -146,7 +146,18 @@ class AppraisalService {
   }
 
   async complete(id) {
-    await this.sheetsService.updateValues(`F${id}`, [['Completed']]);
+    try {
+      // First mark as completed
+      await this.sheetsService.updateValues(`F${id}`, [['Completed']]);
+      
+      // Then move to completed sheet
+      await this.sheetsService.moveToCompleted(id);
+      
+      this.logger.info(`Appraisal ${id} marked as complete and moved to Completed Appraisals`);
+    } catch (error) {
+      this.logger.error(`Error completing appraisal ${id}:`, error);
+      throw error;
+    }
   }
 }
 

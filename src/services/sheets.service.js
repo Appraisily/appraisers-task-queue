@@ -6,7 +6,8 @@ class SheetsService {
     this.logger = createLogger('SheetsService');
     this.sheets = null;
     this.spreadsheetId = null;
-    this.sheetName = 'Pending Appraisals';
+    this.pendingSheetName = 'Pending Appraisals';
+    this.completedSheetName = 'Completed Appraisals';
     this.initialized = false;
   }
 
@@ -78,7 +79,7 @@ class SheetsService {
     if (!this.initialized) throw new Error('Sheets service not initialized');
 
     try {
-      const fullRange = `'${this.sheetName}'!${range}`;
+      const fullRange = `'${this.pendingSheetName}'!${range}`;
       this.logger.info(`Getting values from range: ${fullRange}`);
 
       const response = await this.sheets.spreadsheets.values.get({
@@ -98,7 +99,7 @@ class SheetsService {
     if (!this.initialized) throw new Error('Sheets service not initialized');
 
     try {
-      const fullRange = `'${this.sheetName}'!${range}`;
+      const fullRange = `'${this.pendingSheetName}'!${range}`;
       this.logger.info(`Updating values in range: ${fullRange}`);
 
       await this.sheets.spreadsheets.values.update({
@@ -115,6 +116,73 @@ class SheetsService {
 
   isInitialized() {
     return this.initialized;
+  }
+
+  async moveToCompleted(rowId) {
+    try {
+      this.logger.info(`Moving appraisal ${rowId} to Completed Appraisals`);
+      
+      // Get all values from the pending row
+      const range = `${rowId}:${rowId}`;
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: this.spreadsheetId,
+        range: `'${this.pendingSheetName}'!${range}`
+      });
+      
+      if (!response.data.values || !response.data.values[0]) {
+        throw new Error(`No data found for row ${rowId}`);
+      }
+      
+      // Append the row to Completed Appraisals
+      await this.sheets.spreadsheets.values.append({
+        spreadsheetId: this.spreadsheetId,
+        range: `'${this.completedSheetName}'!A:Z`,
+        valueInputOption: 'RAW',
+        insertDataOption: 'INSERT_ROWS',
+        resource: {
+          values: response.data.values
+        }
+      });
+      
+      // Delete the row from Pending Appraisals
+      await this.sheets.spreadsheets.batchUpdate({
+        spreadsheetId: this.spreadsheetId,
+        resource: {
+          requests: [{
+            deleteDimension: {
+              range: {
+                sheetId: await this.getSheetId(this.pendingSheetName),
+                dimension: 'ROWS',
+                startIndex: rowId - 1,
+                endIndex: rowId
+              }
+            }
+          }]
+        }
+      });
+      
+      this.logger.info(`Successfully moved appraisal ${rowId} to Completed Appraisals`);
+    } catch (error) {
+      this.logger.error(`Error moving appraisal ${rowId} to Completed:`, error);
+      throw error;
+    }
+  }
+
+  async getSheetId(sheetName) {
+    const response = await this.sheets.spreadsheets.get({
+      spreadsheetId: this.spreadsheetId,
+      fields: 'sheets.properties'
+    });
+
+    const sheet = response.data.sheets.find(
+      s => s.properties.title === sheetName
+    );
+
+    if (!sheet) {
+      throw new Error(`Sheet "${sheetName}" not found`);
+    }
+
+    return sheet.properties.sheetId;
   }
 }
 
