@@ -1,19 +1,42 @@
 const { OpenAI } = require('openai');
 const { createLogger } = require('../utils/logger');
 const secretManager = require('../utils/secrets');
+const OPENAI_SECRET_NAME = 'OPENAI_API_KEY';
 
 class OpenAIService {
   constructor() {
     this.logger = createLogger('OpenAI');
     this.client = null;
+    this.initialized = false;
   }
 
   async initialize() {
-    const apiKey = await secretManager.getSecret('OPENAI_API_KEY');
-    this.client = new OpenAI({ apiKey });
+    if (this.initialized) {
+      return;
+    }
+
+    try {
+      this.logger.info('Initializing OpenAI service...');
+      const apiKey = await secretManager.getSecret(OPENAI_SECRET_NAME);
+      
+      if (!apiKey) {
+        throw new Error(`Failed to retrieve ${OPENAI_SECRET_NAME} from Secret Manager`);
+      }
+
+      this.client = new OpenAI({ apiKey });
+      this.initialized = true;
+      this.logger.info('OpenAI service initialized successfully');
+    } catch (error) {
+      this.logger.error('Failed to initialize OpenAI service:', error);
+      throw error;
+    }
   }
 
   async mergeDescriptions(appraiserDescription, iaDescription) {
+    if (!this.initialized || !this.client) {
+      throw new Error('OpenAI service not initialized');
+    }
+
     const response = await this.client.chat.completions.create({
       model: "gpt-4",
       messages: [

@@ -12,36 +12,29 @@ class AppraisalService {
 
   async processAppraisal(id, value, description) {
     try {
-      // Step 1: Save appraiser's description to Column I
-      await this.sheetsService.updateValues(`I${id}`, [[description]]);
-      this.logger.info(`Saved appraiser's description to Column I for appraisal ${id}`);
-
-      // Step 2: Set Value
+      // Step 1: Set Value
       await this.setAppraisalValue(id, value, description);
       
-      // Step 3: Merge Descriptions
+      // Step 2: Merge Descriptions
       const mergedDescription = await this.mergeDescriptions(id, description);
       
-      // Step 4: Get appraisal type from Column B
+      // Step 3: Get appraisal type from Column B
       const appraisalType = await this.getAppraisalType(id);
       
-      // Step 5: Update WordPress with type
+      // Step 4: Update WordPress with type
       const { postId, publicUrl } = await this.updateWordPress(id, value, mergedDescription, appraisalType);
       
       // Save public URL to spreadsheet
       await this.sheetsService.updateValues(`P${id}`, [[publicUrl]]);
       
-      // Step 6: Complete Appraisal Report
+      // Step 5: Complete Appraisal Report
       await this.wordpressService.completeAppraisalReport(postId);
       
-      // Step 7: Generate PDF and Send Email
+      // Step 6: Generate PDF and Send Email
       await this.finalize(id, postId, publicUrl);
       
-      // Step 8: Mark as Complete and Move Row
+      // Step 7: Mark as Complete
       await this.complete(id);
-      
-      // Step 9: Move to Completed Appraisals sheet
-      await this.sheetsService.moveAppraisalToCompleted(id);
       
       this.logger.info(`Successfully processed appraisal ${id}`);
     } catch (error) {
