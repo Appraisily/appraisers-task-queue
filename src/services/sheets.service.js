@@ -6,7 +6,8 @@ class SheetsService {
     this.logger = createLogger('SheetsService');
     this.sheets = null;
     this.spreadsheetId = null;
-    this.sheetName = 'Pending Appraisals';
+    this.pendingSheet = 'Pending Appraisals';
+    this.completedSheet = 'Completed Appraisals';
     this.initialized = false;
   }
 
@@ -74,11 +75,11 @@ class SheetsService {
     }
   }
 
-  async getValues(range) {
+  async getValues(range, sheetName = this.pendingSheet) {
     if (!this.initialized) throw new Error('Sheets service not initialized');
 
     try {
-      const fullRange = `'${this.sheetName}'!${range}`;
+      const fullRange = `'${sheetName}'!${range}`;
       this.logger.info(`Getting values from range: ${fullRange}`);
 
       const response = await this.sheets.spreadsheets.values.get({
@@ -94,11 +95,11 @@ class SheetsService {
     }
   }
 
-  async updateValues(range, values) {
+  async updateValues(range, values, sheetName = this.pendingSheet) {
     if (!this.initialized) throw new Error('Sheets service not initialized');
 
     try {
-      const fullRange = `'${this.sheetName}'!${range}`;
+      const fullRange = `'${sheetName}'!${range}`;
       this.logger.info(`Updating values in range: ${fullRange}`);
 
       await this.sheets.spreadsheets.values.update({
@@ -111,6 +112,69 @@ class SheetsService {
       this.logger.error(`Error updating values in range ${range}:`, error);
       throw error;
     }
+  }
+
+  async moveAppraisalToCompleted(id) {
+    try {
+      this.logger.info(`Moving appraisal ${id} to Completed Appraisals sheet`);
+
+      // Get the entire row from Pending Appraisals
+      const rowRange = `A${id}:Q${id}`;
+      const [rowData] = await this.getValues(rowRange, this.pendingSheet);
+
+      if (!rowData) {
+        throw new Error(`No data found for appraisal ${id}`);
+      }
+
+      // Get the last row in Completed Appraisals
+      const completedMetadata = await this.sheets.spreadsheets.get({
+        spreadsheetId: this.spreadsheetId,
+        ranges: [`'${this.completedSheet}'!A:A`],
+        fields: 'sheets.properties'
+      });
+
+      const lastRow = completedMetadata.data.sheets[0].properties.gridProperties.rowCount + 1;
+
+      // Add the row to Completed Appraisals at the end
+      await this.updateValues(`A${lastRow}:Q${lastRow}`, [rowData], this.completedSheet);
+      this.logger.info(`Added appraisal to Completed Appraisals at row ${lastRow}`);
+
+      // Clear the row from Pending Appraisals
+      await this.sheets.spreadsheets.batchUpdate({
+        spreadsheetId: this.spreadsheetId,
+        resource: {
+          requests: [{
+            deleteDimension: {
+              range: {
+                sheetId: await this.getSheetId(this.pendingSheet),
+                dimension: 'ROWS',
+                startIndex: id - 1,
+                endIndex: id
+              }
+            }
+          }]
+        }
+      });
+
+      this.logger.info(`Removed appraisal from Pending Appraisals row ${id}`);
+    } catch (error) {
+      this.logger.error(`Error moving appraisal ${id} to completed:`, error);
+      throw error;
+    }
+  }
+
+  async getSheetId(sheetName) {
+    const response = await this.sheets.spreadsheets.get({
+      spreadsheetId: this.spreadsheetId,
+      fields: 'sheets.properties'
+    });
+
+    const sheet = response.data.sheets.find(s => s.properties.title === sheetName);
+    if (!sheet) {
+      throw new Error(`Sheet "${sheetName}" not found`);
+    }
+
+    return sheet.properties.sheetId;
   }
 
   isInitialized() {
