@@ -47,14 +47,22 @@ class EmailService {
       dynamicTemplateData: {
         customer_name: customerName || 'Valued Customer',
         pdf_link: appraisalData.pdfLink,
-        wp_link: appraisalData.appraisalUrl, // Changed from appraisal_link to wp_link
+        wp_link: appraisalData.appraisalUrl,
         current_year: new Date().getFullYear()
       }
     };
 
     try {
-      await sendGridMail.send(msg);
+      const [response] = await sendGridMail.send(msg);
       this.logger.info(`Successfully sent completion email to ${customerEmail}`);
+      
+      // Return email delivery details
+      return {
+        timestamp: new Date().toISOString(),
+        messageId: response?.headers['x-message-id'],
+        recipient: customerEmail,
+        status: 'Sent'
+      };
     } catch (error) {
       this.logger.error(`Failed to send email to ${customerEmail}:`, error);
       throw error;

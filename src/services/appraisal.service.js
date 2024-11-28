@@ -69,10 +69,10 @@ class AppraisalService {
     const post = await this.wordpressService.getPost(postId);
     
     const updatedPost = await this.wordpressService.updateAppraisalPost(postId, {
-      title: mergedDescription, // Use full merged description as title
-      content: post.content?.rendered || '', // Preserve existing content
+      title: mergedDescription,
+      content: post.content?.rendered || '',
       value: value,
-      appraisalType: appraisalType // Pass the appraisal type for template
+      appraisalType: appraisalType
     });
 
     return {
@@ -108,9 +108,9 @@ class AppraisalService {
     // Get customer data
     const customerData = await this.getCustomerData(id);
     
-    // Send email notification
+    // Send email notification and track delivery
     this.logger.info(`Sending completion email to ${customerData.email}`);
-    await this.emailService.sendAppraisalCompletedEmail(
+    const emailResult = await this.emailService.sendAppraisalCompletedEmail(
       customerData.email,
       customerData.name,
       { 
@@ -118,7 +118,12 @@ class AppraisalService {
         appraisalUrl: publicUrl
       }
     );
-    this.logger.info(`Email sent successfully to ${customerData.email}`);
+
+    // Save email delivery status to Column Q
+    const emailStatus = `Email sent on ${emailResult.timestamp} (ID: ${emailResult.messageId})`;
+    await this.sheetsService.updateValues(`Q${id}`, [[emailStatus]]);
+    
+    this.logger.info(`Email delivery status saved for appraisal ${id}`);
   }
 
   async getCustomerData(id) {
