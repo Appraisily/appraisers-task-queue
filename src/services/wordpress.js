@@ -89,6 +89,7 @@ class WordPressService {
 
     const post = await response.json();
     this.logger.info(`Successfully fetched post ${numericPostId}`);
+    this.logger.info('Post ACF fields:', post.acf);
     
     this.postCache.set(numericPostId, post);
     return post;
