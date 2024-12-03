@@ -50,7 +50,12 @@ class AppraisalService {
   async mergeDescriptions(id, description) {
     const values = await this.sheetsService.getValues(`H${id}`);
     const iaDescription = values[0][0];
-    return await this.openaiService.mergeDescriptions(description, iaDescription);
+    const mergedDescription = await this.openaiService.mergeDescriptions(description, iaDescription);
+    
+    // Save merged description to Column L
+    await this.sheetsService.updateValues(`L${id}`, [[mergedDescription]]);
+    
+    return mergedDescription;
   }
 
   async getAppraisalType(id) {
