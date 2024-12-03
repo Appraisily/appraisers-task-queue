@@ -124,7 +124,8 @@ class WordPressService {
       content: updatedContent,
       acf: {
         value: value.toString(),
-        shortcodes_inserted: true // Mark shortcodes as inserted
+        shortcodes_inserted: true, // Mark shortcodes as inserted
+        appraisaltype: appraisalType // Lowercase field name to match ACF configuration
       }
     };
 
