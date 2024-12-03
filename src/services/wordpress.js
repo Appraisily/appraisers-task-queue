@@ -96,6 +96,7 @@ class WordPressService {
 
   async updateAppraisalPost(postId, { title, content, value, appraisalType }) {
     this.logger.info(`Updating appraisal post ${postId}`);
+    this.logger.info(`Received appraisal type: ${appraisalType}`);
     
     const post = await this.getPost(postId);
     const shortcodesInserted = post.acf?.shortcodes_inserted || false;
@@ -128,6 +129,7 @@ class WordPressService {
         appraisaltype: appraisalType // Lowercase field name to match ACF configuration
       }
     };
+    this.logger.info(`Setting ACF appraisaltype to: ${updateData.acf.appraisaltype}`);
 
     // Only update slug if session ID exists
     if (sessionId) {
