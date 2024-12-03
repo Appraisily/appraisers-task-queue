@@ -121,9 +121,9 @@ class SheetsService {
   async moveToCompleted(rowId) {
     try {
       this.logger.info(`Moving appraisal ${rowId} to Completed Appraisals`);
-      
-      // Get all values from the pending row
-      const range = `${rowId}:${rowId}`;
+
+      // Get all values from A to Q for the pending row
+      const range = `A${rowId}:Q${rowId}`;
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
         range: `'${this.pendingSheetName}'!${range}`
@@ -131,6 +131,12 @@ class SheetsService {
       
       if (!response.data.values || !response.data.values[0]) {
         throw new Error(`No data found for row ${rowId}`);
+      }
+
+      // Ensure we have exactly 17 columns (A to Q)
+      const rowData = response.data.values[0];
+      while (rowData.length < 17) {
+        rowData.push(''); // Pad with empty values if needed
       }
       
       // Append the row to Completed Appraisals
@@ -140,7 +146,7 @@ class SheetsService {
         valueInputOption: 'RAW',
         insertDataOption: 'INSERT_ROWS',
         resource: {
-          values: response.data.values
+          values: [rowData]
         }
       });
       
