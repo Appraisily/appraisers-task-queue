@@ -89,7 +89,6 @@ class WordPressService {
 
     const post = await response.json();
     this.logger.info(`Successfully fetched post ${numericPostId}`);
-    this.logger.info('Post ACF fields:', post.acf);
     
     this.postCache.set(numericPostId, post);
     return post;
@@ -124,13 +123,15 @@ class WordPressService {
     const updateData = {
       title: title,
       content: updatedContent,
+      meta: {
+        appraisaltype: appraisalType || 'RegularArt'
+      },
       acf: {
         value: value.toString(),
-        shortcodes_inserted: true, // Mark shortcodes as inserted
-        appraisaltype: appraisalType // Lowercase field name to match ACF configuration
+        shortcodes_inserted: true // Mark shortcodes as inserted
       }
     };
-    this.logger.info(`Setting ACF appraisaltype to: ${updateData.acf.appraisaltype}`);
+    this.logger.info(`Setting meta appraisaltype to: ${updateData.meta.appraisaltype}`);
 
     // Only update slug if session ID exists
     if (sessionId) {
