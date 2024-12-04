@@ -152,7 +152,15 @@ class WordPressService {
     }
 
     const url = `${this.baseUrl}/appraisals/${numericPostId}`;
-    this.logger.info(`Updating ACF field ${fieldName} for post ${postId}`);
+    this.logger.info(`Updating ACF field ${fieldName} for post ${postId} with value:`, value);
+
+    const requestBody = {
+      acf: {
+        [fieldName]: value
+      }
+    };
+    
+    this.logger.info(`Request body for ${fieldName}:`, JSON.stringify(requestBody));
 
     const response = await fetch(url, {
       method: 'POST',
@@ -160,21 +168,18 @@ class WordPressService {
         'Authorization': `Basic ${this.auth}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        acf: {
-          [fieldName]: value
-        }
-      })
+      body: JSON.stringify(requestBody)
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      this.logger.error(`API Error Response: ${errorText}`);
+      this.logger.error(`API Error Response for ${fieldName}: ${errorText}`);
       throw new Error(`WordPress API error: ${response.status} ${response.statusText}\n${errorText}`);
     }
 
     const result = await response.json();
-    this.logger.info(`Successfully updated ACF field ${fieldName} for post ${postId}`);
+    this.logger.info(`Response for ${fieldName} update:`, JSON.stringify(result.acf));
+    this.logger.info(`Successfully updated ACF field ${fieldName} for post ${postId} to value: ${value}`);
     this.postCache.set(numericPostId, result);
   }
 
