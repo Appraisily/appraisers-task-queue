@@ -122,14 +122,8 @@ class WordPressService {
     
     const updateData = {
       title: title,
-      content: updatedContent,
-      acf: {
-        value: value.toString(),
-        shortcodes_inserted: true, // Mark shortcodes as inserted
-        appraisal_type: appraisalType || 'RegularArt'
-      }
+      content: updatedContent
     };
-    this.logger.info(`Setting ACF appraisal_type to: ${updateData.acf.appraisal_type}`);
 
     // Only update slug if session ID exists
     if (sessionId) {
@@ -137,11 +131,51 @@ class WordPressService {
       updateData.slug = this.generateSlug(sessionId);
     }
 
-    const updatedPost = await this.updatePost(postId, updateData);
+    // First update the post content and title
+    let updatedPost = await this.updatePost(postId, updateData);
+
+    // Then update each ACF field individually
+    await this.updateACFField(postId, 'value', value.toString());
+    await this.updateACFField(postId, 'shortcodes_inserted', true);
+    await this.updateACFField(postId, 'appraisaltype', appraisalType || 'RegularArt');
+
     return {
       ...updatedPost,
       publicUrl: updatedPost.link
     };
+  }
+
+  async updateACFField(postId, fieldName, value) {
+    const numericPostId = parseInt(postId, 10);
+    if (isNaN(numericPostId)) {
+      throw new Error(`Invalid post ID: ${postId}`);
+    }
+
+    const url = `${this.baseUrl}/appraisals/${numericPostId}`;
+    this.logger.info(`Updating ACF field ${fieldName} for post ${postId}`);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${this.auth}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        acf: {
+          [fieldName]: value
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      this.logger.error(`API Error Response: ${errorText}`);
+      throw new Error(`WordPress API error: ${response.status} ${response.statusText}\n${errorText}`);
+    }
+
+    const result = await response.json();
+    this.logger.info(`Successfully updated ACF field ${fieldName} for post ${postId}`);
+    this.postCache.set(numericPostId, result);
   }
 
   async completeAppraisalReport(postId) {
