@@ -123,15 +123,13 @@ class WordPressService {
     const updateData = {
       title: title,
       content: updatedContent,
-      meta: {
-        appraisaltype: appraisalType || 'RegularArt'
-      },
       acf: {
         value: value.toString(),
-        shortcodes_inserted: true // Mark shortcodes as inserted
+        shortcodes_inserted: true, // Mark shortcodes as inserted
+        appraisaltype: appraisalType || 'RegularArt'
       }
     };
-    this.logger.info(`Setting meta appraisaltype to: ${updateData.meta.appraisaltype}`);
+    this.logger.info(`Setting ACF appraisaltype to: ${updateData.acf.appraisaltype}`);
 
     // Only update slug if session ID exists
     if (sessionId) {
