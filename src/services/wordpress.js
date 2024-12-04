@@ -126,10 +126,10 @@ class WordPressService {
       acf: {
         value: value.toString(),
         shortcodes_inserted: true, // Mark shortcodes as inserted
-        appraisaltype: appraisalType || 'RegularArt'
+        appraisal_type: appraisalType || 'RegularArt'
       }
     };
-    this.logger.info(`Setting ACF appraisaltype to: ${updateData.acf.appraisaltype}`);
+    this.logger.info(`Setting ACF appraisal_type to: ${updateData.acf.appraisal_type}`);
 
     // Only update slug if session ID exists
     if (sessionId) {
