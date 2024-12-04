@@ -25,26 +25,67 @@ class WordPressService {
     this.logger.info(`WordPress API initialized with base URL: ${this.baseUrl}`);
   }
 
-  async updatePost(postId, data) {
-    // Ensure postId is a number
+  async updateAppraisalPost(postId, { title, content, value, appraisalType }) {
+    this.logger.info(`Updating appraisal post ${postId}`);
+    this.logger.info(`Received appraisal type: ${appraisalType}`);
+    
+    const post = await this.getPost(postId);
+    const shortcodesInserted = post.acf?.shortcodes_inserted || false;
+    const sessionId = post.acf?.session_id;
+    
+    let updatedContent = content;
+
+    // Only add shortcodes if they haven't been added before
+    if (!shortcodesInserted) {
+      this.logger.info(`Adding shortcodes to post ${postId}`);
+      
+      // Add PDF download shortcode if not present
+      if (!updatedContent.includes('[pdf_download]')) {
+        updatedContent += '\n[pdf_download]';
+      }
+
+      // Add AppraisalTemplates shortcode with type from spreadsheet
+      if (!updatedContent.includes('[AppraisalTemplates')) {
+        const templateType = appraisalType || 'RegularArt'; // Default to RegularArt if no type specified
+        updatedContent += `\n[AppraisalTemplates type="${templateType}"]`;
+      }
+    }
+    
     const numericPostId = parseInt(postId, 10);
     if (isNaN(numericPostId)) {
       throw new Error(`Invalid post ID: ${postId}`);
     }
 
     const url = `${this.baseUrl}/appraisals/${numericPostId}`;
-    this.logger.info(`Making PUT request to: ${url}`);
+    this.logger.info(`Making POST request to: ${url}`);
+
+    // Combine all updates into a single request body
+    const requestBody = {
+      title: title,
+      content: updatedContent,
+      status: 'publish',
+      acf: {
+        value: value.toString(),
+        shortcodes_inserted: true,
+        appraisaltype: appraisalType || 'RegularArt'
+      }
+    };
+
+    // Add slug if session ID exists
+    if (sessionId) {
+      this.logger.info(`Adding slug with session ID: ${sessionId}`);
+      requestBody.slug = this.generateSlug(sessionId);
+    }
+
+    this.logger.info(`Request body:`, JSON.stringify(requestBody));
 
     const response = await fetch(url, {
-      method: 'PUT',
+      method: 'POST',
       headers: {
         'Authorization': `Basic ${this.auth}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        ...data,
-        status: 'publish'
-      })
+      body: JSON.stringify(requestBody)
     });
 
     if (!response.ok) {
@@ -53,11 +94,16 @@ class WordPressService {
       throw new Error(`WordPress API error: ${response.status} ${response.statusText}\n${errorText}`);
     }
 
-    const result = await response.json();
+    const updatedPost = await response.json();
     this.logger.info(`Successfully updated post ${postId}`);
+    this.logger.info(`Updated ACF fields:`, JSON.stringify(updatedPost.acf));
     
-    this.postCache.set(numericPostId, result);
-    return result;
+    this.postCache.set(numericPostId, updatedPost);
+
+    return {
+      ...updatedPost,
+      publicUrl: updatedPost.link
+    };
   }
 
   async getPost(postId, useCache = true) {
@@ -92,111 +138,6 @@ class WordPressService {
     
     this.postCache.set(numericPostId, post);
     return post;
-  }
-
-  async updateAppraisalPost(postId, { title, content, value, appraisalType }) {
-    this.logger.info(`Updating appraisal post ${postId}`);
-    this.logger.info(`Received appraisal type: ${appraisalType}`);
-    
-    const post = await this.getPost(postId);
-    const shortcodesInserted = post.acf?.shortcodes_inserted || false;
-    const sessionId = post.acf?.session_id;
-    
-    let updatedContent = content;
-
-    // Only add shortcodes if they haven't been added before
-    if (!shortcodesInserted) {
-      this.logger.info(`Adding shortcodes to post ${postId}`);
-      
-      // Add PDF download shortcode if not present
-      if (!updatedContent.includes('[pdf_download]')) {
-        updatedContent += '\n[pdf_download]';
-      }
-
-      // Add AppraisalTemplates shortcode with type from spreadsheet
-      if (!updatedContent.includes('[AppraisalTemplates')) {
-        const templateType = appraisalType || 'RegularArt'; // Default to RegularArt if no type specified
-        updatedContent += `\n[AppraisalTemplates type="${templateType}"]`;
-      }
-    }
-    
-    const updateData = {
-      title: title,
-      content: updatedContent
-    };
-
-    // Only update slug if session ID exists
-    if (sessionId) {
-      this.logger.info(`Updating slug with session ID: ${sessionId}`);
-      updateData.slug = this.generateSlug(sessionId);
-    }
-
-    // First update the post content and title
-    let updatedPost = await this.updatePost(postId, updateData);
-
-    // Then update each ACF field individually
-    await this.updateACFField(postId, 'value', value.toString());
-    await this.updateACFField(postId, 'shortcodes_inserted', true);
-    await this.updateACFField(postId, 'appraisaltype', appraisalType || 'RegularArt');
-
-    return {
-      ...updatedPost,
-      publicUrl: updatedPost.link
-    };
-  }
-
-  async updateACFField(postId, fieldName, value) {
-    const numericPostId = parseInt(postId, 10);
-    if (isNaN(numericPostId)) {
-      throw new Error(`Invalid post ID: ${postId}`);
-    }
-
-    const url = `${this.baseUrl}/appraisals/${numericPostId}`;
-    this.logger.info(`[DEBUG] Updating ACF field ${fieldName} for post ${postId}`);
-    this.logger.info(`[DEBUG] Field value:`, value);
-    this.logger.info(`[DEBUG] Request URL: ${url}`);
-
-    const requestBody = {
-      acf: {
-        [fieldName]: value
-      }
-    };
-    
-    this.logger.info(`[DEBUG] Complete request body:`, JSON.stringify(requestBody));
-    this.logger.info(`[DEBUG] Authorization header present:`, !!this.auth);
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Basic ${this.auth}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(requestBody)
-    });
-
-    const responseText = await response.text();
-    this.logger.info(`[DEBUG] Raw response:`, responseText);
-
-    if (!response.ok) {
-      this.logger.error(`[DEBUG] Error status:`, response.status);
-      this.logger.error(`[DEBUG] Error response:`, responseText);
-      throw new Error(`WordPress API error: ${response.status} ${response.statusText}\n${responseText}`);
-    }
-
-    let result;
-    try {
-      result = JSON.parse(responseText);
-      this.logger.info(`[DEBUG] Parsed response:`, JSON.stringify(result));
-      this.logger.info(`[DEBUG] ACF fields in response:`, JSON.stringify(result.acf));
-      this.logger.info(`[DEBUG] Target field ${fieldName} value:`, result.acf?.[fieldName]);
-    } catch (error) {
-      this.logger.error(`[DEBUG] Error parsing response:`, error);
-      throw new Error(`Failed to parse WordPress response: ${error.message}`);
-    }
-
-    this.logger.info(`Successfully updated ACF field ${fieldName} for post ${postId} to value: ${value}`);
-    this.postCache.set(numericPostId, result);
-    return result;
   }
 
   async completeAppraisalReport(postId) {
