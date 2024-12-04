@@ -60,11 +60,15 @@ class AppraisalService {
 
   async getAppraisalType(id) {
     const values = await this.sheetsService.getValues(`B${id}`);
+    this.logger.info(`[DEBUG] Column B value type: ${typeof values?.[0]?.[0]}`);
+    this.logger.info(`[DEBUG] Column B raw value: ${values?.[0]?.[0]}`);
     if (!values || !values[0] || !values[0][0]) {
       this.logger.warn(`No appraisal type found for ID ${id}, using default`);
       return 'RegularArt';
     }
-    return values[0][0];
+    const appraisalType = values[0][0].toString();
+    this.logger.info(`[DEBUG] Processed appraisal type: ${appraisalType}`);
+    return appraisalType;
   }
 
   async updateWordPress(id, value, mergedDescription, appraisalType) {
