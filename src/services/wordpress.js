@@ -152,7 +152,9 @@ class WordPressService {
     }
 
     const url = `${this.baseUrl}/appraisals/${numericPostId}`;
-    this.logger.info(`Updating ACF field ${fieldName} for post ${postId} with value:`, value);
+    this.logger.info(`[DEBUG] Updating ACF field ${fieldName} for post ${postId}`);
+    this.logger.info(`[DEBUG] Field value:`, value);
+    this.logger.info(`[DEBUG] Request URL: ${url}`);
 
     const requestBody = {
       acf: {
@@ -160,7 +162,8 @@ class WordPressService {
       }
     };
     
-    this.logger.info(`Request body for ${fieldName}:`, JSON.stringify(requestBody));
+    this.logger.info(`[DEBUG] Complete request body:`, JSON.stringify(requestBody));
+    this.logger.info(`[DEBUG] Authorization header present:`, !!this.auth);
 
     const response = await fetch(url, {
       method: 'POST',
@@ -171,16 +174,29 @@ class WordPressService {
       body: JSON.stringify(requestBody)
     });
 
+    const responseText = await response.text();
+    this.logger.info(`[DEBUG] Raw response:`, responseText);
+
     if (!response.ok) {
-      const errorText = await response.text();
-      this.logger.error(`API Error Response for ${fieldName}: ${errorText}`);
-      throw new Error(`WordPress API error: ${response.status} ${response.statusText}\n${errorText}`);
+      this.logger.error(`[DEBUG] Error status:`, response.status);
+      this.logger.error(`[DEBUG] Error response:`, responseText);
+      throw new Error(`WordPress API error: ${response.status} ${response.statusText}\n${responseText}`);
     }
 
-    const result = await response.json();
-    this.logger.info(`Response for ${fieldName} update:`, JSON.stringify(result.acf));
+    let result;
+    try {
+      result = JSON.parse(responseText);
+      this.logger.info(`[DEBUG] Parsed response:`, JSON.stringify(result));
+      this.logger.info(`[DEBUG] ACF fields in response:`, JSON.stringify(result.acf));
+      this.logger.info(`[DEBUG] Target field ${fieldName} value:`, result.acf?.[fieldName]);
+    } catch (error) {
+      this.logger.error(`[DEBUG] Error parsing response:`, error);
+      throw new Error(`Failed to parse WordPress response: ${error.message}`);
+    }
+
     this.logger.info(`Successfully updated ACF field ${fieldName} for post ${postId} to value: ${value}`);
     this.postCache.set(numericPostId, result);
+    return result;
   }
 
   async completeAppraisalReport(postId) {
