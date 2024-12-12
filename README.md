@@ -115,7 +115,13 @@ When a new message is received from Pub/Sub, the following steps are executed in
    await sheetsService.updateValues(`F${id}`, [['Completed']]);
    ```
 
-Total processing time: ~90-100 seconds per appraisal
+9. **Move to Completed Sheet** (~2-3s)
+   ```javascript
+   // Move row from Pending to Completed sheet
+   await sheetsService.moveToCompleted(id);
+   ```
+
+Total processing time: ~92-103 seconds per appraisal
 
 ## Google Sheets Structure
 

@@ -142,12 +142,13 @@ class SheetsService {
       // Append the row to Completed Appraisals
       await this.sheets.spreadsheets.values.append({
         spreadsheetId: this.spreadsheetId,
-        range: `'${this.completedSheetName}'!A:Z`,
+        range: `'${this.completedSheetName}'!A1`,
         valueInputOption: 'RAW',
         insertDataOption: 'INSERT_ROWS',
         resource: {
           values: [rowData]
-        }
+        },
+        includeValuesInResponse: true
       });
       
       // Delete the row from Pending Appraisals
