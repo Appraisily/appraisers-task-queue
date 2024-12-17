@@ -121,36 +121,43 @@ class SheetsService {
   async moveToCompleted(rowId) {
     try {
       this.logger.info(`Moving appraisal ${rowId} to Completed Appraisals`);
-
+      
       // Get all values from A to Q for the pending row
       const range = `A${rowId}:Q${rowId}`;
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
         range: `'${this.pendingSheetName}'!${range}`
       });
-      
+
       if (!response.data.values || !response.data.values[0]) {
         throw new Error(`No data found for row ${rowId}`);
       }
-
+      
       // Ensure we have exactly 17 columns (A to Q)
       const rowData = response.data.values[0];
       while (rowData.length < 17) {
         rowData.push(''); // Pad with empty values if needed
       }
-      
-      // Append the row to Completed Appraisals
-      await this.sheets.spreadsheets.values.append({
+
+      // First, get the last row number of the Completed sheet
+      const completedResponse = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: `'${this.completedSheetName}'!A1`,
+        range: `'${this.completedSheetName}'!A:A`
+      });
+
+      // Calculate the next empty row (length + 1 since array is 0-based)
+      const nextRow = (completedResponse.data.values?.length || 0) + 1;
+
+      // Update the specific row in Completed Appraisals
+      await this.sheets.spreadsheets.values.update({
+        spreadsheetId: this.spreadsheetId,
+        range: `'${this.completedSheetName}'!A${nextRow}:Q${nextRow}`,
         valueInputOption: 'RAW',
-        insertDataOption: 'INSERT_ROWS',
         resource: {
           values: [rowData]
-        },
-        includeValuesInResponse: true
+        }
       });
-      
+
       // Delete the row from Pending Appraisals
       await this.sheets.spreadsheets.batchUpdate({
         spreadsheetId: this.spreadsheetId,
@@ -167,7 +174,7 @@ class SheetsService {
           }]
         }
       });
-      
+
       this.logger.info(`Successfully moved appraisal ${rowId} to Completed Appraisals`);
     } catch (error) {
       this.logger.error(`Error moving appraisal ${rowId} to Completed:`, error);
