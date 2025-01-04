@@ -9,7 +9,9 @@ class WordPressService {
     this.auth = null;
     this.appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
     this.postCache = new Map();
-    this.completeReportTimeout = 300000; // 5 minutes timeout
+    this.completeReportTimeout = 360000; // 6 minutes timeout
+    this.maxRetries = 3;
+    this.retryDelay = 10000; // 10 seconds between retries
   }
 
   async initialize() {
@@ -141,33 +143,57 @@ class WordPressService {
   async completeAppraisalReport(postId) {
     this.logger.info(`Completing appraisal report for post ${postId} via appraisals backend`);
     
+    let lastError;
+    
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.completeReportTimeout);
+      for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), this.completeReportTimeout);
 
-      const response = await fetch(`${this.appraisalsBackendUrl}/complete-appraisal-report`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ postId: postId.toString() }),
-        signal: controller.signal
-      });
+          const response = await fetch(`${this.appraisalsBackendUrl}/complete-appraisal-report`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ postId: postId.toString() }),
+            signal: controller.signal
+          });
 
-      clearTimeout(timeoutId);
+          clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to complete appraisal report: ${response.statusText}\n${errorText}`);
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to complete appraisal report: ${response.statusText}\n${errorText}`);
+          }
+
+          // Wait for completion confirmation
+          const data = await response.json();
+          
+          if (data.status === 'completed' || response.status === 200) {
+            this.logger.info(`Successfully completed appraisal report for post ${postId}`);
+            return;
+          }
+          
+          throw new Error('Report completion did not return success status');
+        } catch (error) {
+          lastError = error;
+          
+          if (error.name === 'AbortError') {
+            throw new Error(`Complete appraisal report timed out after ${this.completeReportTimeout/1000} seconds`);
+          }
+          
+          if (attempt < this.maxRetries) {
+            this.logger.warn(`Attempt ${attempt} failed, retrying in ${this.retryDelay/1000} seconds...`);
+            await new Promise(resolve => setTimeout(resolve, this.retryDelay));
+          }
+        }
       }
 
-      // We expect a 200 status code, but don't need any specific response data
-      this.logger.info(`Successfully completed appraisal report for post ${postId}`);
-    } catch (error) {
-      if (error.name === 'AbortError') {
-        throw new Error(`Complete appraisal report timed out after ${this.completeReportTimeout/1000} seconds`);
-      }
-      throw error;
+      throw new Error(`Failed to complete report after ${this.maxRetries} attempts. Last error: ${lastError.message}`);
+    } catch (finalError) {
+      this.logger.error(`Error completing report for post ${postId}:`, finalError);
+      throw finalError;
     }
   }
 
