@@ -74,14 +74,13 @@ class AppraisalService {
   async updateWordPress(id, value, mergedDescription, appraisalType) {
     const postId = await this.getWordPressPostId(id);
     
-    // Get existing post first
     const post = await this.wordpressService.getPost(postId);
     
     const updatedPost = await this.wordpressService.updateAppraisalPost(postId, {
       title: mergedDescription,
       content: post.content?.rendered || '',
-      value: value,
-      appraisalType: appraisalType
+      value: value.toString(),
+      appraisalType: 'RegularArt' // Always use RegularArt since we only have one template type now
     });
 
     return {

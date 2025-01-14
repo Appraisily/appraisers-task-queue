@@ -28,6 +28,7 @@ class WordPressService {
   async updateAppraisalPost(postId, { title, content, value, appraisalType }) {
     this.logger.info(`Updating appraisal post ${postId}`);
     this.logger.info(`Received appraisal type: ${appraisalType}`);
+    this.logger.info(`Updating post metadata for type: ${appraisalType}`);
     
     const post = await this.getPost(postId);
     const shortcodesInserted = post.acf?.shortcodes_inserted || false;
@@ -46,8 +47,7 @@ class WordPressService {
 
       // Add AppraisalTemplates shortcode with type from spreadsheet
       if (!updatedContent.includes('[AppraisalTemplates')) {
-        const templateType = appraisalType || 'RegularArt'; // Default to RegularArt if no type specified
-        updatedContent += `\n[AppraisalTemplates type="${templateType}"]`;
+        updatedContent += '\n[AppraisalTemplates type="MasterTemplate"]';
       }
     }
     
@@ -95,6 +95,7 @@ class WordPressService {
     }
 
     const updatedPost = await response.json();
+    
     this.logger.info(`Successfully updated post ${postId}`);
     this.logger.info(`Updated ACF fields:`, JSON.stringify(updatedPost.acf));
     

@@ -60,9 +60,9 @@ When a new message is received from Pub/Sub, the following steps are executed in
    const { publicUrl } = await wordpressService.updateAppraisalPost(postId, {
      title: mergedDescription,
      content: post.content,
-     value: value.toString(),
-     appraisalType: templateType
+     value: value.toString()
    });
+
 
    // Update slug if session ID exists in ACF
    if (post.acf?.session_id) {
@@ -72,7 +72,7 @@ When a new message is received from Pub/Sub, the following steps are executed in
    // Add template shortcodes if not present
    if (!post.acf?.shortcodes_inserted) {
      content += '\n[pdf_download]';
-     content += `\n[AppraisalTemplates type="${templateType}"]`;
+     content += '\n[AppraisalTemplates type="MasterTemplate"]';
    }
 
    // Save public URL to Column P
@@ -140,6 +140,17 @@ Total processing time: ~92-103 seconds per appraisal
 | N      | Doc Link           | Link to generated Doc version           |
 | P      | Public Post URL    | Public URL of the WordPress post        |
 
+## Appraisal Types and Templates
+
+The system uses a single master template for all appraisals:
+
+1. **Master Template**
+   - Universal template for all appraisal types
+   - Comprehensive market analysis
+   - Fair market value assessment
+   - Professional presentation
+   - Standardized format
+
 ## WordPress Integration
 
 ### API Configuration
@@ -161,6 +172,7 @@ Total processing time: ~92-103 seconds per appraisal
    - Content: Preserves existing content and adds required shortcodes
    - ACF Fields:
      - `value`: Appraisal value
+     - `appraisaltype`: Always set to "RegularArt"
      - `shortcodes_inserted`: Boolean flag for template insertion
      - `session_id`: Used for slug generation
 
@@ -169,22 +181,24 @@ Total processing time: ~92-103 seconds per appraisal
    - Public URL stored in Column P (for customer access)
    - Slug generated from session ID when available
 
+5. **Template and Metadata Management**
+   - All appraisals use the same master template structure
+   - Single master template used for all appraisals
+   - Simplified metadata management
+   - Consistent presentation across all reports
+
 ### Template System
 
 1. **Required Shortcodes**
    Every appraisal post must contain two essential shortcodes:
    ```
    [pdf_download]
-   [AppraisalTemplates type="TYPE"]
+   [AppraisalTemplates type="MasterTemplate"]  // Always uses MasterTemplate
    ```
 
-2. **Template Type**
-   - Type determined by Column B in spreadsheet
-   - Format: `[AppraisalTemplates type="${Column B value}"]`
-   - Example: If B42 contains "RegularArt":
-     ```
-     [AppraisalTemplates type="RegularArt"]
-     ```
+2. **Template Structure**
+   - All appraisals use a single master template structure
+   - The template shortcode always uses "MasterTemplate" regardless of type
 
 3. **Shortcode Management**
    - Controlled by `shortcodes_inserted` ACF field
@@ -194,7 +208,7 @@ Total processing time: ~92-103 seconds per appraisal
      ```
      Original content here...
      [pdf_download]
-     [AppraisalTemplates type="RegularArt"]
+     [AppraisalTemplates type="MasterTemplate"]
      ```
 
 ## Configuration
