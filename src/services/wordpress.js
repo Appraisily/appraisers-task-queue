@@ -40,14 +40,18 @@ class WordPressService {
     if (!shortcodesInserted) {
       this.logger.info(`Adding shortcodes to post ${postId}`);
       
-      // Add PDF download shortcode if not present
-      if (!updatedContent.includes('[pdf_download]')) {
-        updatedContent += '\n[pdf_download]';
-      }
+      
+      // Add shortcodes in Gutenberg block format if not present
+      if (!updatedContent.includes('<!-- wp:shortcode -->')) {
+        updatedContent += `
 
-      // Add AppraisalTemplates shortcode with type from spreadsheet
-      if (!updatedContent.includes('[AppraisalTemplates')) {
-        updatedContent += '\n[AppraisalTemplates type="MasterTemplate"]';
+<!-- wp:shortcode -->
+[pdf_download]
+<!-- /wp:shortcode -->
+
+<!-- wp:shortcode -->
+[AppraisalTemplates type="MasterTemplate"]
+<!-- /wp:shortcode -->`;
       }
     }
     
@@ -88,22 +92,6 @@ class WordPressService {
     } else {
       this.logger.info('No valid ACF fields to update');
     }
-
-    // Add slug if session ID exists
-    if (sessionId) {
-      this.logger.info(`Adding slug with session ID: ${sessionId}`);
-      requestBody.slug = this.generateSlug(sessionId);
-    }
-
-    this.logger.info(`Request body:`, JSON.stringify(requestBody));
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Basic ${this.auth}`,
-        'Content-Type': 'application/json'
-      }
-    });
 
     // Add slug if session ID exists
     if (sessionId) {

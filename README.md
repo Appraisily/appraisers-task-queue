@@ -158,7 +158,7 @@ Expected Pub/Sub message format:
 | B      | Appraisal Type      | Used for WordPress template selection    |
 | D      | Customer Email      | Used for notifications                   |
 | E      | Customer Name       | Used in email templates                  |
-| F      | Status              | Updated to "Completed" when done         |
+| F      | Status              | Current processing status (see below)    |
 | G      | WordPress Post URL  | Edit URL of the post                    |
 | H      | IA Description      | Initial AI-generated description        |
 | J      | Appraisal Value    | Final appraised value                   |
@@ -167,6 +167,39 @@ Expected Pub/Sub message format:
 | M      | PDF Link           | Link to generated PDF report            |
 | N      | Doc Link           | Link to generated Doc version           |
 | P      | Public Post URL    | Public URL of the WordPress post        |
+
+## Status Tracking
+
+The service maintains detailed status tracking in Column F of the spreadsheet. Each appraisal goes through the following status progression:
+
+1. **Initial Status**
+   - `Pending` - Initial state when appraisal is created but not yet processed
+
+2. **Processing Stages**
+   - `Processing` - Initial processing has begun
+   - `Merging Descriptions` - Merging AI and appraiser descriptions using OpenAI
+   - `Updating WordPress` - Updating WordPress post with merged content
+   - `Generating Report` - Generating the appraisal report
+   - `Generating PDF` - Creating PDF version of the report
+
+3. **Final Statuses**
+   - `Completed` - Successfully processed and moved to completed sheet
+   - `Failed` - Error occurred during processing (message moved to DLQ)
+
+Status updates are:
+- Non-blocking (failures don't interrupt main process)
+- Real-time (updated immediately as stages progress)
+- Logged with timestamps for monitoring
+- Used for process tracking and debugging
+
+Typical progression time:
+- `Processing` → `Merging Descriptions`: ~2-3s
+- `Merging Descriptions` → `Updating WordPress`: ~3-4s
+- `Updating WordPress` → `Generating Report`: ~5-6s
+- `Generating Report` → `Generating PDF`: ~30-35s
+- `Generating PDF` → `Completed`: ~45-50s
+
+Total time from `Processing` to `Completed`: ~90-100s
 
 ## Appraisal Types and Templates
 
@@ -225,10 +258,15 @@ All types use the same master template with type-specific content handling.
 ### Template System
 
 1. **Required Shortcodes**
-   Every appraisal post must contain two essential shortcodes:
+   Every appraisal post must contain two essential shortcodes in Gutenberg block format:
    ```
+   <!-- wp:shortcode -->
    [pdf_download]
-   [AppraisalTemplates type="MasterTemplate"]  // Always uses MasterTemplate
+   <!-- /wp:shortcode -->
+
+   <!-- wp:shortcode -->
+   [AppraisalTemplates type="MasterTemplate"]
+   <!-- /wp:shortcode -->
    ```
 
 2. **Template Structure**
@@ -238,13 +276,27 @@ All types use the same master template with type-specific content handling.
 3. **Shortcode Management**
    - Controlled by `shortcodes_inserted` ACF field
    - Only inserted if field is false
-   - Order: PDF download first, then template
+   - Order: PDF download block first, then template block
+   - Shortcodes are wrapped in Gutenberg block format for proper editor integration
    - Example complete content:
      ```
      Original content here...
+
+     <!-- wp:shortcode -->
      [pdf_download]
+     <!-- /wp:shortcode -->
+
+     <!-- wp:shortcode -->
      [AppraisalTemplates type="MasterTemplate"]
+     <!-- /wp:shortcode -->
      ```
+
+4. **Gutenberg Integration**
+   - Shortcodes are wrapped in Gutenberg block format for compatibility
+   - Each shortcode is contained in its own block
+   - Blocks are properly spaced for readability
+   - Format ensures proper rendering in both classic and block editors
+   - Prevents shortcode corruption during content editing
 
 ## Configuration
 

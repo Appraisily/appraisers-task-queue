@@ -12,10 +12,14 @@ class AppraisalService {
 
   async processAppraisal(id, value, description, userProvidedType = null) {
     try {
+      // Update initial status
+      await this.updateStatus(id, 'Processing');
+
       // Step 1: Set Value
       await this.setAppraisalValue(id, value, description);
       
       // Step 2: Merge Descriptions
+      await this.updateStatus(id, 'Merging Descriptions');
       const mergedDescription = await this.mergeDescriptions(id, description);
       
       // Step 3: Get appraisal type from Column B
@@ -25,24 +29,39 @@ class AppraisalService {
       this.logger.info(`Using appraisal type: ${appraisalType} (${userProvidedType ? 'from message' : 'from spreadsheet'})`);
       
       // Step 4: Update WordPress with type
+      await this.updateStatus(id, 'Updating WordPress');
       const { postId, publicUrl } = await this.updateWordPress(id, value, mergedDescription, appraisalType);
       
       // Save public URL to spreadsheet
       await this.sheetsService.updateValues(`P${id}`, [[publicUrl]]);
       
       // Step 5: Complete Appraisal Report
+      await this.updateStatus(id, 'Generating Report');
       await this.wordpressService.completeAppraisalReport(postId);
       
       // Step 6: Generate PDF and Send Email
+      await this.updateStatus(id, 'Generating PDF');
       await this.finalize(id, postId, publicUrl);
       
       // Step 7: Mark as Complete
+      await this.updateStatus(id, 'Completed');
       await this.complete(id);
       
       this.logger.info(`Successfully processed appraisal ${id}`);
     } catch (error) {
       this.logger.error(`Error processing appraisal ${id}:`, error);
+      await this.updateStatus(id, 'Failed');
       throw error;
+    }
+  }
+
+  async updateStatus(id, status) {
+    try {
+      this.logger.info(`Updating status for appraisal ${id} to: ${status}`);
+      await this.sheetsService.updateValues(`F${id}`, [[status]]);
+    } catch (error) {
+      this.logger.error(`Error updating status for appraisal ${id}:`, error);
+      // Don't throw here to prevent status updates from breaking the main flow
     }
   }
 
@@ -166,9 +185,6 @@ class AppraisalService {
 
   async complete(id) {
     try {
-      // First mark as completed
-      await this.sheetsService.updateValues(`F${id}`, [['Completed']]);
-      
       // Then move to completed sheet
       await this.sheetsService.moveToCompleted(id);
       
