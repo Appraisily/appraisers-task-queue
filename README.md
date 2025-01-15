@@ -33,6 +33,11 @@ src/
 
 When a new message is received from Pub/Sub, the following steps are executed in sequence:
 
+0. **Message Validation and Type Processing** (~1s)
+   - Validate message format and required fields
+   - Extract appraisal type if provided in message
+   - Validate appraisal type against allowed values: Regular, IRS, Insurance
+
 1. **Set Initial Values** (~2-3s)
    ```javascript
    // Updates value and original description in Columns J-K
@@ -47,9 +52,11 @@ When a new message is received from Pub/Sub, the following steps are executed in
    - Saves merged description to Column L
 
 3. **Get Template Type** (~1-2s)
-   - Retrieve appraisal type from Column B
-   - Used for WordPress template shortcode
-   - Defaults to "RegularArt" if not specified
+   - If message contains valid appraisal type (Regular, IRS, Insurance), use it
+   - Otherwise, retrieve type from Column B of spreadsheet
+   - Validate spreadsheet type against allowed values
+   - Default to "Regular" if type is invalid or missing
+   - Log source of appraisal type (message or spreadsheet)
 
 4. **Update WordPress Post** (~5-6s)
    ```javascript
@@ -60,9 +67,15 @@ When a new message is received from Pub/Sub, the following steps are executed in
    const { publicUrl } = await wordpressService.updateAppraisalPost(postId, {
      title: mergedDescription,
      content: post.content,
-     value: value.toString()
+     value: value.toString(),
+     appraisalType: appraisalType // Use validated type from step 3
    });
-
+   // ACF fields are updated in a single request to minimize API calls
+   const acfFields = {
+     value: value.toString(),
+     appraisaltype: appraisalType,
+     shortcodes_inserted: true
+   };
 
    // Update slug if session ID exists in ACF
    if (post.acf?.session_id) {
@@ -72,7 +85,7 @@ When a new message is received from Pub/Sub, the following steps are executed in
    // Add template shortcodes if not present
    if (!post.acf?.shortcodes_inserted) {
      content += '\n[pdf_download]';
-     content += '\n[AppraisalTemplates type="MasterTemplate"]';
+     content += '\n[AppraisalTemplates type="MasterTemplate"]'; // Template type is always MasterTemplate
    }
 
    // Save public URL to Column P
@@ -122,6 +135,21 @@ When a new message is received from Pub/Sub, the following steps are executed in
    ```
 
 Total processing time: ~92-103 seconds per appraisal
+
+## Message Format
+
+Expected Pub/Sub message format:
+```json
+{
+  "type": "COMPLETE_APPRAISAL",
+  "data": {
+    "id": "123",
+    "appraisalValue": 1500,
+    "description": "A beautiful oil painting",
+    "appraisalType": "Regular"  // Optional, one of: Regular, IRS, Insurance
+  }
+}
+```
 
 ## Google Sheets Structure
 

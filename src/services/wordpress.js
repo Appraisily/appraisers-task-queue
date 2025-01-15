@@ -59,17 +59,51 @@ class WordPressService {
     const url = `${this.baseUrl}/appraisals/${numericPostId}`;
     this.logger.info(`Making POST request to: ${url}`);
 
-    // Combine all updates into a single request body
+    // Build ACF fields object, excluding null values
+    const acfFields = {};
+    
+    // Only add non-null ACF fields
+    if (value !== null && value !== undefined) {
+      acfFields.value = value.toString();
+    }
+    
+    if (appraisalType !== null && appraisalType !== undefined) {
+      acfFields.appraisaltype = appraisalType || 'Regular';
+    }
+    
+    // shortcodes_inserted is a boolean, so we can safely set it
+    acfFields.shortcodes_inserted = true;
+
+    // Build the complete request body
     const requestBody = {
-      title: title,
+      title,
       content: updatedContent,
-      status: 'publish', 
-      acf: {
-        value: value.toString(),
-        shortcodes_inserted: true,
-        appraisaltype: appraisalType || 'Regular' // Use provided type or default to Regular
-      }
+      status: 'publish'
     };
+
+    // Only include ACF if we have fields to update
+    if (Object.keys(acfFields).length > 0) {
+      requestBody.acf = acfFields;
+      this.logger.info('Including ACF fields:', acfFields);
+    } else {
+      this.logger.info('No valid ACF fields to update');
+    }
+
+    // Add slug if session ID exists
+    if (sessionId) {
+      this.logger.info(`Adding slug with session ID: ${sessionId}`);
+      requestBody.slug = this.generateSlug(sessionId);
+    }
+
+    this.logger.info(`Request body:`, JSON.stringify(requestBody));
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${this.auth}`,
+        'Content-Type': 'application/json'
+      }
+    });
 
     // Add slug if session ID exists
     if (sessionId) {
