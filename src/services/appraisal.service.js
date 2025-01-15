@@ -10,7 +10,7 @@ class AppraisalService {
     this.pdfService = pdfService;
   }
 
-  async processAppraisal(id, value, description) {
+  async processAppraisal(id, value, description, userProvidedType = null) {
     try {
       // Step 1: Set Value
       await this.setAppraisalValue(id, value, description);
@@ -19,7 +19,10 @@ class AppraisalService {
       const mergedDescription = await this.mergeDescriptions(id, description);
       
       // Step 3: Get appraisal type from Column B
-      const appraisalType = await this.getAppraisalType(id);
+      const spreadsheetType = await this.getAppraisalType(id);
+      // Use user provided type if available, otherwise use spreadsheet type
+      const appraisalType = userProvidedType || spreadsheetType;
+      this.logger.info(`Using appraisal type: ${appraisalType} (${userProvidedType ? 'from message' : 'from spreadsheet'})`);
       
       // Step 4: Update WordPress with type
       const { postId, publicUrl } = await this.updateWordPress(id, value, mergedDescription, appraisalType);
@@ -64,9 +67,17 @@ class AppraisalService {
     this.logger.info(`[DEBUG] Column B raw value: ${values?.[0]?.[0]}`);
     if (!values || !values[0] || !values[0][0]) {
       this.logger.warn(`No appraisal type found for ID ${id}, using default`);
-      return 'RegularArt';
+      return 'Regular';
     }
-    const appraisalType = values[0][0].toString();
+    let appraisalType = values[0][0].toString();
+    
+    // Validate and normalize appraisal type
+    const validTypes = ['Regular', 'IRS', 'Insurance'];
+    if (!validTypes.includes(appraisalType)) {
+      this.logger.warn(`Invalid appraisal type "${appraisalType}" found for ID ${id}, using default`);
+      appraisalType = 'Regular';
+    }
+    
     this.logger.info(`[DEBUG] Processed appraisal type: ${appraisalType}`);
     return appraisalType;
   }
@@ -80,7 +91,7 @@ class AppraisalService {
       title: mergedDescription,
       content: post.content?.rendered || '',
       value: value.toString(),
-      appraisalType: 'RegularArt' // Always use RegularArt since we only have one template type now
+      appraisalType: appraisalType // Use the provided appraisal type
     });
 
     return {

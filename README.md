@@ -142,14 +142,21 @@ Total processing time: ~92-103 seconds per appraisal
 
 ## Appraisal Types and Templates
 
-The system uses a single master template for all appraisals:
+The system supports three specific types of appraisals:
 
-1. **Master Template**
-   - Universal template for all appraisal types
-   - Comprehensive market analysis
-   - Fair market value assessment
-   - Professional presentation
-   - Standardized format
+1. **Regular**
+   - Standard appraisal type
+   - Default when no specific type is provided
+
+2. **IRS**
+   - Specialized appraisal for IRS purposes
+   - Follows IRS documentation requirements
+
+3. **Insurance**
+   - Appraisal for insurance purposes
+   - Focuses on replacement value
+
+All types use the same master template with type-specific content handling.
 
 ## WordPress Integration
 
@@ -172,7 +179,7 @@ The system uses a single master template for all appraisals:
    - Content: Preserves existing content and adds required shortcodes
    - ACF Fields:
      - `value`: Appraisal value
-     - `appraisaltype`: Always set to "RegularArt"
+    - `appraisaltype`: One of: "Regular", "IRS", or "Insurance"
      - `shortcodes_inserted`: Boolean flag for template insertion
      - `session_id`: Used for slug generation
 

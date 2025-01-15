@@ -99,16 +99,23 @@ class PubSubWorker {
       const messageData = message.data.toString();
       this.logger.info(`Raw message data: ${messageData}`);
 
-      const data = JSON.parse(messageData);
+      const parsedMessage = JSON.parse(messageData);
       
-      if (data.type !== 'COMPLETE_APPRAISAL' || !data.data?.id || !data.data?.appraisalValue || !data.data?.description) {
+      if (parsedMessage.type !== 'COMPLETE_APPRAISAL' || !parsedMessage.data?.id || !parsedMessage.data?.appraisalValue || !parsedMessage.data?.description) {
         throw new Error('Invalid message format');
       }
 
-      const { id, appraisalValue, description } = data.data;
+      const { id, appraisalValue, description, appraisalType } = parsedMessage.data;
+      
+      // Validate appraisal type if provided
+      if (appraisalType && !['Regular', 'IRS', 'Insurance'].includes(appraisalType)) {
+        this.logger.warn(`Invalid appraisal type "${appraisalType}" in message, will use type from spreadsheet`);
+        await this.appraisalService.processAppraisal(id, appraisalValue, description, null);
+      } else {
+        await this.appraisalService.processAppraisal(id, appraisalValue, description, appraisalType);
+      }
       this.logger.info(`Processing appraisal ${id}`);
 
-      await this.appraisalService.processAppraisal(id, appraisalValue, description);
       
       this.logger.info(`Successfully processed appraisal ${id}`);
       message.ack();

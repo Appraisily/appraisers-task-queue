@@ -63,11 +63,11 @@ class WordPressService {
     const requestBody = {
       title: title,
       content: updatedContent,
-      status: 'publish',
+      status: 'publish', 
       acf: {
         value: value.toString(),
         shortcodes_inserted: true,
-        appraisaltype: appraisalType || 'RegularArt'
+        appraisaltype: appraisalType || 'Regular' // Use provided type or default to Regular
       }
     };
 
