@@ -9,7 +9,7 @@ class WordPressService {
     this.auth = null;
     this.appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
     this.postCache = new Map();
-    this.completeReportTimeout = 360000; // 6 minutes timeout
+    this.completeReportTimeout = 1000000; // 1000 seconds timeout
     this.maxRetries = 3;
     this.retryDelay = 10000; // 10 seconds between retries
   }
