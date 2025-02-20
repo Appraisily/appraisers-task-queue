@@ -167,19 +167,21 @@ class AppraisalService {
   async getCustomerData(id) {
     const values = await this.sheetsService.getValues(`D${id}:E${id}`);
     
-    if (!values || !values[0] || values[0].length < 2) {
-      throw new Error(`Customer data not found for appraisal ${id}`);
+    let email = 'NA';
+    let name = 'NA';
+    
+    if (values && values[0] && values[0].length >= 2) {
+      [email, name] = values[0];
+      // If either value is empty, set it to 'NA'
+      email = email || 'NA';
+      name = name || 'NA';
     }
 
-    const [email, name] = values[0];
-    
-    if (!email) {
-      throw new Error(`Customer email not found for appraisal ${id}`);
-    }
+    this.logger.info(`Customer data for appraisal ${id}: email=${email}, name=${name}`);
 
     return {
       email,
-      name: name || 'Valued Customer'
+      name
     };
   }
 
