@@ -2,12 +2,15 @@ const { PubSub } = require('@google-cloud/pubsub');
 const { createLogger } = require('./utils/logger');
 const secretManager = require('./utils/secrets');
 const SheetsService = require('./services/sheets.service');
-const WordPressService = require('./services/wordpress');
-const OpenAIService = require('./services/openai');
-const EmailService = require('./services/email');
-const PDFService = require('./services/pdf');
+const WordPressService = require('./services/wordpress.service');
+const OpenAIService = require('./services/openai.service');
+const EmailService = require('./services/email.service');
+const PDFService = require('./services/pdf.service');
 const AppraisalService = require('./services/appraisal.service');
 
+/**
+ * Worker class that handles Pub/Sub message processing
+ */
 class PubSubWorker {
   constructor() {
     this.logger = createLogger('PubSubWorker');
@@ -18,6 +21,10 @@ class PubSubWorker {
     this.isShuttingDown = false;
   }
 
+  /**
+   * Initialize the worker and all services
+   * @returns {Promise<void>}
+   */
   async initialize() {
     try {
       this.logger.info('Initializing PubSub worker...');
@@ -84,6 +91,10 @@ class PubSubWorker {
     }
   }
 
+  /**
+   * Handle incoming Pub/Sub messages
+   * @param {Object} message - The Pub/Sub message
+   */
   async handleMessage(message) {
     // If shutting down, don't accept new messages
     if (this.isShuttingDown) {
@@ -114,8 +125,6 @@ class PubSubWorker {
       } else {
         await this.appraisalService.processAppraisal(id, appraisalValue, description, appraisalType);
       }
-      this.logger.info(`Processing appraisal ${id}`);
-
       
       this.logger.info(`Successfully processed appraisal ${id}`);
       message.ack();
@@ -128,10 +137,21 @@ class PubSubWorker {
     }
   }
 
+  /**
+   * Handle subscription errors
+   * @param {Error} error - The error
+   */
   handleError(error) {
     this.logger.error('Subscription error:', error);
   }
 
+  /**
+   * Publish failed messages to a Dead Letter Queue
+   * @param {string} messageId - Original message ID
+   * @param {string} data - Original message data
+   * @param {string} errorMessage - Error message
+   * @returns {Promise<void>}
+   */
   async publishToDeadLetterQueue(messageId, data, errorMessage) {
     try {
       const pubsub = new PubSub();
@@ -150,6 +170,10 @@ class PubSubWorker {
     }
   }
 
+  /**
+   * Gracefully shut down the worker
+   * @returns {Promise<void>}
+   */
   async shutdown() {
     this.isShuttingDown = true;
     this.logger.info('Starting graceful shutdown...');
@@ -164,9 +188,17 @@ class PubSubWorker {
       this.logger.info(`Waiting for ${this.activeProcesses.size} active processes to complete...`);
       
       // Check every second if processes are done
-      while (this.activeProcesses.size > 0) {
+      let waitTime = 0;
+      const maxWaitTime = 60; // Maximum 60 seconds wait
+      
+      while (this.activeProcesses.size > 0 && waitTime < maxWaitTime) {
         await new Promise(resolve => setTimeout(resolve, 1000));
-        this.logger.info(`Remaining processes: ${this.activeProcesses.size}`);
+        waitTime++;
+        this.logger.info(`Remaining processes: ${this.activeProcesses.size}, waited ${waitTime}s/${maxWaitTime}s`);
+      }
+      
+      if (this.activeProcesses.size > 0) {
+        this.logger.warn(`Forcing shutdown with ${this.activeProcesses.size} active processes remaining`);
       }
     }
 
