@@ -31,6 +31,135 @@ src/
 
 ## Detailed Process Flow
 
+### Appraisal Processing Workflow
+
+```mermaid
+graph TD
+    %% Main components and entry points
+    subgraph "PubSub Integration"
+        A[Receive Pub/Sub Message] --> B{Validate Message}
+        B -->|Valid| C[Process Message]
+        B -->|Invalid| D[Reject & Log Error]
+        
+        %% Link to source file
+        A -.-> AFile["src/worker.js: PubSub subscription"]
+        B -.-> BFile["src/worker.js: Message validation"]
+        D -.-> DFile["src/utils/logger.js: Error logging"]
+    end
+    
+    subgraph "Processing Sequence"
+        C --> E[Update Status: 'Processing']
+        E --> F["Set Initial Values (J-K columns)"]
+        F --> G["Get AI Description (Column H)"]
+        G --> H["Merge Descriptions using OpenAI"]
+        H --> I["Save Merged Description (Column L)"]
+        I --> J["Get Template Type (message or Column B)"]
+        J --> K["Update WordPress Post"]
+        K --> L["Update Status: 'Generating Report'"]
+        L --> M["Call Appraisals Backend API"]
+        M --> N["Update Status: 'Generating PDF'"]
+        N --> O["Generate PDF Document"]
+        O --> P["Update PDF Links (Columns M-N)"]
+        P --> Q["Get Customer Data (Columns D-E)"]
+        Q --> R["Send Email Notification"]
+        R --> S["Update Status: 'Completed'"]
+        S --> T["Move Row to Completed Sheet"]
+        
+        %% Link processes to source files
+        E -.-> EFile["src/services/sheets.service.js: updateValues"]
+        F -.-> FFile["src/services/sheets.service.js: updateValues"]
+        G -.-> GFile["src/services/sheets.service.js: getValues"]
+        H -.-> HFile["src/services/openai.service.js: mergeDescriptions"]
+        J -.-> JFile["src/services/appraisal.service.js: getTemplateType"]
+        K -.-> KFile["src/services/wordpress.service.js: updateAppraisalPost"]
+        M -.-> MFile["src/services/appraisal.service.js: completeAppraisalReport"]
+        O -.-> OFile["src/services/pdf.service.js: generatePDF"]
+        R -.-> RFile["src/services/email.service.js: sendAppraisalCompletedEmail"]
+        T -.-> TFile["src/services/sheets.service.js: moveToCompleted"]
+    end
+    
+    subgraph "Error Handling"
+        C -->|Error| Z["Log Error Details"]
+        Z --> Y["Update Status: 'Failed'"]
+        Y --> X["Publish to DLQ (appraisals-failed)"]
+        X --> W["Acknowledge Original Message"]
+        
+        F -->|Error| Z
+        H -->|Error| Z
+        K -->|Error| Z
+        M -->|Error| Z
+        O -->|Error| Z
+        R -->|Error| Z
+        T -->|Error| Z
+        
+        %% Link error handling to source files
+        Z -.-> ZFile["src/utils/logger.js: Error logging"]
+        X -.-> XFile["src/worker.js: DLQ publishing"]
+    end
+    
+    %% Performance annotations
+    E:::fast
+    F:::fast
+    G:::fast
+    H:::medium
+    I:::fast
+    J:::fast
+    K:::medium
+    L:::fast
+    M:::slow
+    N:::fast
+    O:::slowest
+    P:::fast
+    Q:::fast
+    R:::medium
+    S:::fast
+    T:::fast
+    
+    %% Timing labels
+    TimeA["~1s: Message validation"] -.-> B
+    TimeB["~2-3s: Set initial values"] -.-> F
+    TimeC["~3-4s: Description merging"] -.-> H
+    TimeD["~5-6s: WordPress update"] -.-> K
+    TimeE["~30-35s: Report generation"] -.-> M
+    TimeF["~40s: PDF generation"] -.-> O
+    TimeG["~5s: Email notification"] -.-> R
+    TimeH["~2-3s: Status updates"] -.-> S
+    TimeI["~2-3s: Sheet movement"] -.-> T
+    
+    classDef fast fill:#d4f0d0,stroke:#333,stroke-width:1px
+    classDef medium fill:#ffd700,stroke:#333,stroke-width:1px
+    classDef slow fill:#ffb366,stroke:#333,stroke-width:1px
+    classDef slowest fill:#ff9999,stroke:#333,stroke-width:1px
+    
+    style AFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style BFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style DFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style EFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style FFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style GFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style HFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style JFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style KFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style MFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style OFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style RFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style TFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style ZFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style XFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    
+    style TimeA fill:none,stroke:none
+    style TimeB fill:none,stroke:none
+    style TimeC fill:none,stroke:none
+    style TimeD fill:none,stroke:none
+    style TimeE fill:none,stroke:none
+    style TimeF fill:none,stroke:none
+    style TimeG fill:none,stroke:none
+    style TimeH fill:none,stroke:none
+    style TimeI fill:none,stroke:none
+```
+
+### Process Steps in Detail
+
 When a new message is received from Pub/Sub, the following steps are executed in sequence:
 
 0. **Message Validation and Type Processing** (~1s)
