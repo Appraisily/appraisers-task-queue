@@ -1,19 +1,17 @@
-const AWS = require('aws-sdk');
+const { Storage } = require('@google-cloud/storage');
 
-class S3Logger {
+/**
+ * Google Cloud Storage Logger
+ * Saves logs to GCS bucket in session ID folders
+ */
+class GCSLogger {
   constructor(bucketName) {
-    // Configure AWS SDK to use Google Cloud Storage
-    // GCS has an S3-compatible API endpoint
-    this.s3 = new AWS.S3({
-      endpoint: 'https://storage.googleapis.com',
-      region: 'us-central1',
-      signatureVersion: 'v4'
-    });
+    this.storage = new Storage();
     this.bucketName = bucketName || 'appraisily-image-backups';
   }
 
   /**
-   * Save a log entry to S3
+   * Save a log entry to GCS
    * @param {string} sessionId - The session ID from the sheets (column C in Pending Appraisals)
    * @param {string} logType - Type of log (info, error, etc)
    * @param {string} message - Log message
@@ -22,7 +20,7 @@ class S3Logger {
    */
   async log(sessionId, logType, message, data = {}) {
     if (!sessionId) {
-      console.warn('[S3Logger] No sessionId provided, skipping S3 logging');
+      console.warn('[GCSLogger] No sessionId provided, skipping GCS logging');
       return;
     }
 
@@ -39,17 +37,19 @@ class S3Logger {
     const key = `${sessionId}/logs/task_queue_${logType}_${timestamp.replace(/:/g, '-')}.json`;
 
     try {
-      await this.s3.putObject({
-        Bucket: this.bucketName,
-        Key: key,
-        Body: logString,
-        ContentType: 'application/json'
-      }).promise();
+      const bucket = this.storage.bucket(this.bucketName);
+      const file = bucket.file(key);
+      await file.save(logString, {
+        contentType: 'application/json',
+        metadata: {
+          contentType: 'application/json'
+        }
+      });
       
-      console.log(`[S3Logger] Log saved to gs://${this.bucketName}/${key}`);
+      console.log(`[GCSLogger] Log saved to gs://${this.bucketName}/${key}`);
       return key;
     } catch (error) {
-      console.error('[S3Logger] Error saving log to GCS:', error.message);
+      console.error('[GCSLogger] Error saving log to GCS:', error.message);
       // Continue execution even if logging fails
     }
   }
@@ -83,4 +83,4 @@ class S3Logger {
   }
 }
 
-module.exports = new S3Logger(); 
+module.exports = new GCSLogger(); 

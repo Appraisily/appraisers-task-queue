@@ -48,7 +48,7 @@ process.on('SIGTERM', () => {
   setTimeout(forceShutdown, 30000);
 });
 
-// Test route for logging
+// Legacy test route for logging
 app.post('/test-log', async (req, res) => {
   const { sessionId, message } = req.body;
   
@@ -72,6 +72,35 @@ app.post('/test-log', async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Error in logging test',
+      error: error.message
+    });
+  }
+});
+
+// Test route for GCS logging
+app.post('/test-gcs-log', async (req, res) => {
+  const { sessionId, message } = req.body;
+  
+  if (!sessionId) {
+    return res.status(400).json({
+      success: false,
+      message: 'sessionId is required'
+    });
+  }
+  
+  try {
+    logger.info(`GCS test message: ${message || 'Hello GCS logging!'}`, { sessionId });
+    logger.s3Log(sessionId, 'info', 'Explicit GCS log test', { timestamp: new Date().toISOString() });
+    
+    return res.json({
+      success: true,
+      message: 'GCS logging test executed successfully'
+    });
+  } catch (error) {
+    logger.error('Error in GCS logging test', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error in GCS logging test',
       error: error.message
     });
   }

@@ -160,22 +160,32 @@ class AppraisalService {
 
       this.logger.info(`Updating WordPress post ${postId} for appraisal ${id}`, { sessionId });
       
-      // First update the post with merged description and appraisal type
-      await this.wordpressService.updatePost(
-        postId,
-        appraisalType,
-        mergedDescription,
-        value
+      // Get the post title from column D
+      const titleRow = await this.sheetsService.getValues(`D${id}`);
+      const title = (titleRow && titleRow.length > 0 && titleRow[0].length > 0) ? 
+        titleRow[0][0] : `Appraisal #${id}`;
+      
+      // Update the post with merged description and appraisal type
+      const result = await this.wordpressService.updateAppraisalPost(
+        postId, 
+        {
+          title,
+          content: mergedDescription,
+          value,
+          appraisalType
+        }
       );
       
       this.logger.info(`WordPress post ${postId} updated successfully`, { sessionId });
       
       // Get the public URL
-      const publicUrl = await this.wordpressService.getPostUrl(postId);
+      const publicUrl = result.link || result.publicUrl;
       
       // Save public URL to spreadsheet
-      await this.sheetsService.updateValues(`P${id}`, [[publicUrl]]);
-      this.logger.info(`Saved public URL for appraisal ${id}: ${publicUrl}`, { sessionId });
+      if (publicUrl) {
+        await this.sheetsService.updateValues(`P${id}`, [[publicUrl]]);
+        this.logger.info(`Saved public URL for appraisal ${id}: ${publicUrl}`, { sessionId });
+      }
       
       // Complete the appraisal report
       this.logger.info(`Completing appraisal report for post ${postId}`, { sessionId });
