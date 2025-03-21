@@ -128,12 +128,15 @@ class WordPressService {
   
   /**
    * Trigger the appraisal report generation process
+   * This is a two-step process:
+   * 1. Complete the appraisal processing 
+   * 2. Generate the PDF document
    * @param {string} postId - The WordPress post ID
    * @returns {Promise<void>}
    */
   async completeAppraisalReport(postId) {
     try {
-      this.logger.info(`Triggering appraisal report generation for post ${postId}`);
+      this.logger.info(`Starting appraisal completion process for post ${postId}`);
       
       // Get backend URL directly from environment variable
       let appraisalsBackendUrl = process.env.APPRAISALS_BACKEND_URL;
@@ -146,29 +149,58 @@ class WordPressService {
         this.logger.info(`Using APPRAISALS_BACKEND_URL from environment variable: ${appraisalsBackendUrl}`);
       }
       
-      // Use /generate-pdf endpoint with postId as a parameter in the body
-      const response = await fetch(`${appraisalsBackendUrl}/generate-pdf`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': this.authHeader
-        },
-        body: JSON.stringify({ postId })
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Report generation failed: ${response.status} ${response.statusText} - ${errorText}`);
+      // STEP 1: Complete the appraisal processing
+      this.logger.info(`STEP 1: Completing appraisal processing for post ${postId}`);
+      try {
+        const completeResponse = await fetch(`${appraisalsBackendUrl}/complete-appraisal-report`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': this.authHeader
+          },
+          body: JSON.stringify({ postId: postId.toString() })
+        });
+        
+        if (!completeResponse.ok) {
+          const errorText = await completeResponse.text();
+          this.logger.warn(`Appraisal completion step failed: ${completeResponse.status} ${completeResponse.statusText} - ${errorText}`);
+        } else {
+          this.logger.info(`Successfully completed appraisal for post ${postId}`);
+        }
+      } catch (firstError) {
+        this.logger.warn(`Error completing appraisal: ${firstError.message}`);
       }
       
-      this.logger.info(`Successfully triggered report generation for post ${postId}`);
+      // STEP 2: Generate the PDF document
+      this.logger.info(`STEP 2: Generating PDF for post ${postId}`);
+      try {
+        const pdfResponse = await fetch(`${appraisalsBackendUrl}/generate-pdf`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': this.authHeader
+          },
+          body: JSON.stringify({ postId: postId.toString() })
+        });
+        
+        if (!pdfResponse.ok) {
+          const errorText = await pdfResponse.text();
+          this.logger.warn(`PDF generation step failed: ${pdfResponse.status} ${pdfResponse.statusText} - ${errorText}`);
+        } else {
+          this.logger.info(`Successfully generated PDF for post ${postId}`);
+        }
+      } catch (secondError) {
+        this.logger.warn(`Error generating PDF: ${secondError.message}`);
+      }
+      
+      this.logger.info(`Appraisal report processing completed for post ${postId}`);
     } catch (error) {
-      this.logger.error(`Error completing appraisal report for post ${postId}:`, error);
+      this.logger.error(`Error during appraisal report workflow for post ${postId}:`, error);
       // Treat this as a non-fatal error - log it but don't throw
       // We've already updated WordPress with the content at this point
       this.logger.warn(
-        `Appraisal report generation failed for post ${postId}, but the post was updated successfully. ` +
-        `You may need to manually trigger report generation.`
+        `Some appraisal report steps failed for post ${postId}, but the post was updated successfully. ` +
+        `You may need to manually complete the process.`
       );
     }
   }
