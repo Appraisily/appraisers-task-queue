@@ -146,12 +146,14 @@ class WordPressService {
         this.logger.info(`Using APPRAISALS_BACKEND_URL from environment variable: ${appraisalsBackendUrl}`);
       }
       
-      const response = await fetch(`${appraisalsBackendUrl}/appraisal/generate-report/${postId}`, {
+      // Use /generate-pdf endpoint with postId as a parameter in the body
+      const response = await fetch(`${appraisalsBackendUrl}/generate-pdf`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': this.authHeader
-        }
+        },
+        body: JSON.stringify({ postId })
       });
       
       if (!response.ok) {
