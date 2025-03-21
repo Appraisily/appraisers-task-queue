@@ -7,6 +7,7 @@ const OpenAIService = require('./services/openai');
 const EmailService = require('./services/email');
 const PDFService = require('./services/pdf');
 const AppraisalService = require('./services/appraisal.service');
+const gcsLogger = require('./utils/gcsLogger');
 
 class PubSubWorker {
   constructor() {
@@ -153,6 +154,7 @@ class PubSubWorker {
 
     const processId = `${message.id}-${Date.now()}`;
     this.activeProcesses.add(processId);
+    let sessionId = null;
 
     try {
       this.logger.info(`Processing message ${message.id}`);
@@ -167,6 +169,13 @@ class PubSubWorker {
 
       const { id, appraisalValue, description, appraisalType } = parsedMessage.data;
       
+      // Get sessionId for the appraisal (might be needed for cleanup)
+      try {
+        sessionId = await this.appraisalService.getSessionId(id);
+      } catch (error) {
+        this.logger.warn(`Could not get sessionId for appraisal ${id}, continuing anyway`);
+      }
+      
       // Validate appraisal type if provided
       if (appraisalType && !['Regular', 'IRS', 'Insurance'].includes(appraisalType)) {
         this.logger.warn(`Invalid appraisal type "${appraisalType}" in message, will use type from spreadsheet`);
@@ -174,14 +183,18 @@ class PubSubWorker {
       } else {
         await this.appraisalService.processAppraisal(id, appraisalValue, description, appraisalType);
       }
-      this.logger.info(`Processing appraisal ${id}`);
-
       
       this.logger.info(`Successfully processed appraisal ${id}`);
       message.ack();
     } catch (error) {
       this.logger.error(`Error processing message ${message.id}:`, error);
       await this.publishToDeadLetterQueue(message.id, message.data.toString(), error.message);
+      
+      // Ensure logs are flushed for this session if we know it
+      if (sessionId) {
+        await gcsLogger.flushBatch(sessionId);
+      }
+      
       message.ack(); // Acknowledge to prevent retries
     } finally {
       this.activeProcesses.delete(processId);
@@ -229,6 +242,10 @@ class PubSubWorker {
         this.logger.info(`Remaining processes: ${this.activeProcesses.size}`);
       }
     }
+
+    // Flush any remaining logs
+    await gcsLogger.flushAll();
+    this.logger.info('All logs flushed to GCS');
 
     // Close subscription
     if (this.subscription) {

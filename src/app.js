@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const { createLogger } = require('./utils/logger');
+const gcsLogger = require('./utils/gcsLogger');
 
 const logger = createLogger('App');
 const worker = require('./worker');  // Import the singleton instance
@@ -21,10 +22,18 @@ const handleShutdown = async (signal) => {
   
   try {
     await worker.shutdown();
+    // Flush any remaining logs
+    await gcsLogger.flushAll();
     logger.info('Graceful shutdown completed');
     process.exit(0);
   } catch (error) {
     logger.error('Error during shutdown:', error);
+    // Try to flush logs even if shutdown failed
+    try {
+      await gcsLogger.flushAll();
+    } catch (logError) {
+      logger.error('Error flushing logs during shutdown:', logError);
+    }
     process.exit(1);
   }
 };

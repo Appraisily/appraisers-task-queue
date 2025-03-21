@@ -1,22 +1,29 @@
 const { Storage } = require('@google-cloud/storage');
 
 /**
- * Google Cloud Storage Logger
+ * Google Cloud Storage Logger with batch capabilities
  * Saves logs to GCS bucket in session ID folders
  */
 class GCSLogger {
   constructor(bucketName) {
     this.storage = new Storage();
     this.bucketName = bucketName || 'appraisily-image-backups';
+    
+    // Batch logging storage 
+    this.logBatches = new Map(); // sessionId -> array of log entries
+    this.batchLimits = {
+      maxSize: 100, // Max number of logs per batch before auto-save
+      flushTimeoutMs: 60000 // 1 minute timeout before auto-save
+    };
+    this.batchTimers = new Map(); // sessionId -> timeout handle
   }
 
   /**
-   * Save a log entry to GCS
-   * @param {string} sessionId - The session ID from the sheets (column C in Pending Appraisals)
+   * Add a log entry to the batch for the given session ID
+   * @param {string} sessionId - The session ID
    * @param {string} logType - Type of log (info, error, etc)
    * @param {string} message - Log message
    * @param {Object} data - Additional data to log
-   * @returns {Promise} Promise that resolves when log is saved
    */
   async log(sessionId, logType, message, data = {}) {
     if (!sessionId) {
@@ -25,7 +32,7 @@ class GCSLogger {
     }
 
     const timestamp = new Date().toISOString();
-    const logData = {
+    const logEntry = {
       timestamp,
       type: logType,
       message,
@@ -33,12 +40,61 @@ class GCSLogger {
       data
     };
 
-    const logString = JSON.stringify(logData, null, 2);
-    const key = `${sessionId}/logs/task_queue_${logType}_${timestamp.replace(/:/g, '-')}.json`;
+    // Create a new batch if one doesn't exist for this session
+    if (!this.logBatches.has(sessionId)) {
+      this.logBatches.set(sessionId, []);
+      
+      // Set a timer to flush this batch after the timeout
+      const timeoutHandle = setTimeout(() => {
+        this.flushBatch(sessionId);
+      }, this.batchLimits.flushTimeoutMs);
+      
+      this.batchTimers.set(sessionId, timeoutHandle);
+    }
 
+    // Add to the batch
+    const batch = this.logBatches.get(sessionId);
+    batch.push(logEntry);
+    
+    // Check if we need to flush the batch (if it's an error or batch size limit reached)
+    if (logType === 'error' || batch.length >= this.batchLimits.maxSize) {
+      await this.flushBatch(sessionId);
+    }
+  }
+
+  /**
+   * Flush the batch of logs for the given session ID to GCS
+   * @param {string} sessionId - The session ID 
+   */
+  async flushBatch(sessionId) {
+    // Clear any pending timeout
+    if (this.batchTimers.has(sessionId)) {
+      clearTimeout(this.batchTimers.get(sessionId));
+      this.batchTimers.delete(sessionId);
+    }
+    
+    // Get the batch and clear it from memory
+    if (!this.logBatches.has(sessionId) || this.logBatches.get(sessionId).length === 0) {
+      return; // Nothing to flush
+    }
+    
+    const batch = this.logBatches.get(sessionId);
+    this.logBatches.set(sessionId, []); // Reset batch while we process
+    
     try {
+      const timestamp = new Date().toISOString();
+      const fileName = `task_queue_batch_${timestamp.replace(/:/g, '-')}.json`;
+      const key = `${sessionId}/logs/${fileName}`;
+      
+      const logString = JSON.stringify({
+        timestamp,
+        service: 'appraisers-task-queue',
+        entries: batch
+      }, null, 2);
+      
       const bucket = this.storage.bucket(this.bucketName);
       const file = bucket.file(key);
+      
       await file.save(logString, {
         contentType: 'application/json',
         metadata: {
@@ -46,11 +102,22 @@ class GCSLogger {
         }
       });
       
-      console.log(`[GCSLogger] Log saved to gs://${this.bucketName}/${key}`);
-      return key;
+      console.log(`[GCSLogger] Batch of ${batch.length} logs saved to gs://${this.bucketName}/${key}`);
     } catch (error) {
-      console.error('[GCSLogger] Error saving log to GCS:', error.message);
-      // Continue execution even if logging fails
+      console.error('[GCSLogger] Error saving log batch to GCS:', error.message);
+      // Don't attempt to retry - this could cause infinite loops
+    }
+  }
+
+  /**
+   * Manually flush all pending log batches
+   * Useful for shutdown or process completion
+   */
+  async flushAll() {
+    const sessionIds = Array.from(this.logBatches.keys());
+    
+    for (const sessionId of sessionIds) {
+      await this.flushBatch(sessionId);
     }
   }
 

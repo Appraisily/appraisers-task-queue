@@ -1,4 +1,5 @@
 const { createLogger } = require('../utils/logger');
+const gcsLogger = require('../utils/gcsLogger');
 
 class AppraisalService {
   constructor(sheetsService, wordpressService, openaiService, emailService, pdfService) {
@@ -39,6 +40,10 @@ class AppraisalService {
       if (!updateResult.success) {
         this.logger.error(`Failed to update WordPress for appraisal ${id}:`, updateResult.error, { sessionId });
         await this.updateStatus(id, 'Error: WordPress Update Failed', { sessionId });
+        
+        // Flush logs before throwing error
+        await gcsLogger.flushBatch(sessionId);
+        
         throw new Error(`WordPress update failed: ${updateResult.error.message}`);
       }
       
@@ -53,6 +58,10 @@ class AppraisalService {
       await this.complete(id, { sessionId });
       
       this.logger.info(`Appraisal ${id} processed successfully`, { sessionId });
+      
+      // Flush logs after successful completion
+      await gcsLogger.flushBatch(sessionId);
+      
       return { success: true, id, postId };
     } catch (error) {
       const sessionId = this.sessionIds.get(id);
@@ -63,6 +72,11 @@ class AppraisalService {
         await this.updateStatus(id, `Error: ${error.message?.substring(0, 100) || 'Unknown Error'}`, { sessionId });
       } catch (statusError) {
         this.logger.error(`Failed to update error status for appraisal ${id}:`, statusError, { sessionId });
+      }
+      
+      // Flush logs on error
+      if (sessionId) {
+        await gcsLogger.flushBatch(sessionId);
       }
       
       return { success: false, id, error };
