@@ -106,21 +106,63 @@ app.post('/test-gcs-log', async (req, res) => {
   }
 });
 
-// Health check route
+// Health check routes
 app.get('/', (req, res) => {
   res.status(200).send('Appraisers Task Queue Service is running');
+});
+
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    message: 'Appraisers Task Queue Service is healthy',
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Start server and initialize worker
 const server = app.listen(PORT, async () => {
   logger.info(`Server running on port ${PORT}`);
   
-  try {
-    // Initialize worker
-    await worker.initialize();
-    logger.info('Worker initialized successfully');
-  } catch (error) {
-    logger.error('Failed to initialize worker:', error);
+  // Initialize worker with retries
+  let retryCount = 0;
+  const maxRetries = 3;
+  let workerInitialized = false;
+
+  while (retryCount < maxRetries && !workerInitialized) {
+    try {
+      if (retryCount > 0) {
+        logger.info(`Retrying worker initialization (attempt ${retryCount + 1}/${maxRetries})...`);
+        // Wait before retry with exponential backoff
+        await new Promise(resolve => setTimeout(resolve, Math.min(5000 * Math.pow(2, retryCount), 30000)));
+      }
+      
+      await worker.initialize();
+      logger.info('Worker initialized successfully');
+      workerInitialized = true;
+    } catch (error) {
+      retryCount++;
+      logger.error('Failed to initialize worker:', error);
+      
+      if (retryCount >= maxRetries) {
+        logger.error(`Worker initialization failed after ${maxRetries} attempts. Service will run with limited functionality.`);
+        
+        // Set up a timer to retry initialization periodically
+        const retryIntervalMinutes = 5;
+        logger.info(`Will retry worker initialization every ${retryIntervalMinutes} minutes`);
+        
+        setInterval(async () => {
+          logger.info('Periodic retry of worker initialization...');
+          try {
+            await worker.initialize();
+            logger.info('Worker initialized successfully on periodic retry');
+            // Clear the interval once initialization succeeds
+            clearInterval(this);
+          } catch (error) {
+            logger.error('Periodic worker initialization failed:', error);
+          }
+        }, retryIntervalMinutes * 60 * 1000);
+      }
+    }
   }
 });
 

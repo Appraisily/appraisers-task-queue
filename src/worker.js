@@ -23,29 +23,84 @@ class PubSubWorker {
       this.logger.info('Initializing PubSub worker...');
 
       // Initialize Secret Manager first
-      await secretManager.initialize();
+      try {
+        await secretManager.initialize();
+      } catch (error) {
+        this.logger.warn('Secret Manager initialization failed, will try to continue with fallbacks:', error.message);
+      }
 
-      // Get spreadsheet ID from Secret Manager
-      const spreadsheetId = await secretManager.getSecret('PENDING_APPRAISALS_SPREADSHEET_ID');
+      // Get spreadsheet ID from Secret Manager with fallback
+      let spreadsheetId;
+      try {
+        spreadsheetId = await secretManager.getSecret('PENDING_APPRAISALS_SPREADSHEET_ID', true);
+      } catch (error) {
+        this.logger.error('Failed to get spreadsheet ID from Secret Manager:', error.message);
+        
+        // Try getting from environment variables as last resort
+        spreadsheetId = process.env.PENDING_APPRAISALS_SPREADSHEET_ID;
+        if (spreadsheetId) {
+          this.logger.info('Using spreadsheet ID from environment variable');
+        } else {
+          throw new Error('Could not get spreadsheet ID from any source');
+        }
+      }
+
       if (!spreadsheetId) {
-        throw new Error('Failed to get spreadsheet ID from Secret Manager');
+        throw new Error('Failed to get spreadsheet ID');
       }
 
       this.logger.info(`Using spreadsheet ID: ${spreadsheetId}`);
       
-      // Initialize all services
-      await this.sheetsService.initialize({ PENDING_APPRAISALS_SPREADSHEET_ID: spreadsheetId });
+      // Initialize services with proper error handling
+      try {
+        await this.sheetsService.initialize({ PENDING_APPRAISALS_SPREADSHEET_ID: spreadsheetId });
+      } catch (error) {
+        this.logger.error('Failed to initialize Sheets service:', error);
+        throw new Error('Sheets service initialization failed');
+      }
+      
+      // Create service instances
       const wordpressService = new WordPressService();
       const openaiService = new OpenAIService();
       const emailService = new EmailService();
       const pdfService = new PDFService();
       
-      await Promise.all([
-        wordpressService.initialize(),
-        openaiService.initialize(),
-        emailService.initialize(),
-        pdfService.initialize()
+      // Initialize services with resilient error handling
+      const serviceResults = await Promise.allSettled([
+        wordpressService.initialize().catch(err => {
+          this.logger.error('WordPress service initialization failed:', err);
+          throw err;
+        }),
+        openaiService.initialize().catch(err => {
+          this.logger.error('OpenAI service initialization failed:', err);
+          throw err;
+        }),
+        emailService.initialize().catch(err => {
+          this.logger.error('Email service initialization failed:', err);
+          throw err;
+        }),
+        pdfService.initialize().catch(err => {
+          this.logger.error('PDF service initialization failed:', err);
+          throw err;
+        })
       ]);
+      
+      // Check for critical service failures
+      const failedServices = serviceResults
+        .filter(result => result.status === 'rejected')
+        .map((result, index) => {
+          const services = ['WordPress', 'OpenAI', 'Email', 'PDF'];
+          return services[index];
+        });
+      
+      if (failedServices.length > 0) {
+        this.logger.warn(`The following services failed to initialize: ${failedServices.join(', ')}`);
+        
+        // Determine if we can continue
+        if (failedServices.includes('WordPress') || failedServices.includes('OpenAI')) {
+          throw new Error(`Critical services failed to initialize: ${failedServices.join(', ')}`);
+        }
+      }
       
       // Initialize AppraisalService with all dependencies
       this.appraisalService = new AppraisalService(
@@ -56,26 +111,31 @@ class PubSubWorker {
         pdfService
       );
 
-      // Initialize PubSub
-      const pubsub = new PubSub();
-      const topicName = 'appraisal-tasks';
-      const subscriptionName = 'appraisal-tasks-subscription';
+      // Initialize PubSub with proper error handling
+      try {
+        const pubsub = new PubSub();
+        const topicName = 'appraisal-tasks';
+        const subscriptionName = 'appraisal-tasks-subscription';
 
-      // Get or create topic
-      const [topic] = await pubsub.topic(topicName).get({ autoCreate: true });
-      this.logger.info(`Connected to topic: ${topicName}`);
+        // Get or create topic
+        const [topic] = await pubsub.topic(topicName).get({ autoCreate: true });
+        this.logger.info(`Connected to topic: ${topicName}`);
 
-      // Get or create subscription
-      [this.subscription] = await topic.subscription(subscriptionName).get({
-        autoCreate: true,
-        enableMessageOrdering: true
-      });
+        // Get or create subscription
+        [this.subscription] = await topic.subscription(subscriptionName).get({
+          autoCreate: true,
+          enableMessageOrdering: true
+        });
 
-      this.logger.info(`Connected to subscription: ${subscriptionName}`);
+        this.logger.info(`Connected to subscription: ${subscriptionName}`);
 
-      // Configure message handler
-      this.subscription.on('message', this.handleMessage.bind(this));
-      this.subscription.on('error', this.handleError.bind(this));
+        // Configure message handler
+        this.subscription.on('message', this.handleMessage.bind(this));
+        this.subscription.on('error', this.handleError.bind(this));
+      } catch (error) {
+        this.logger.error('Failed to initialize PubSub:', error);
+        throw new Error('PubSub initialization failed');
+      }
 
       this.logger.info('PubSub worker initialized successfully');
     } catch (error) {
