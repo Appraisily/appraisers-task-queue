@@ -53,9 +53,43 @@ process.on('SIGINT', () => {
   shutdown('SIGINT').finally(() => clearTimeout(shutdownTimer));
 });
 
+// Test route for S3 logging
+app.post('/test-s3-log', async (req, res) => {
+  const { sessionId, message } = req.body;
+  
+  if (!sessionId) {
+    return res.status(400).json({
+      success: false,
+      message: 'sessionId is required'
+    });
+  }
+  
+  try {
+    logger.info(`Test message: ${message || 'Hello S3 logging!'}`, { sessionId });
+    logger.s3Log(sessionId, 'info', 'Explicit S3 log test', { timestamp: new Date().toISOString() });
+    
+    return res.json({
+      success: true,
+      message: 'S3 logging test executed successfully'
+    });
+  } catch (error) {
+    logger.error('Error in S3 logging test', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error in S3 logging test',
+      error: error.message
+    });
+  }
+});
+
+// Health check route
+app.get('/', (req, res) => {
+  res.status(200).send('Appraisers Task Queue Service is running');
+});
+
 // Start server and initialize worker
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
   logger.info(`Server running on port ${PORT}`);
   
   try {
@@ -66,3 +100,5 @@ app.listen(PORT, async () => {
     process.exit(1);
   }
 });
+
+module.exports = { app, server };
