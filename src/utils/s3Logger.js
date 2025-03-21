@@ -2,7 +2,13 @@ const AWS = require('aws-sdk');
 
 class S3Logger {
   constructor(bucketName) {
-    this.s3 = new AWS.S3();
+    // Configure AWS SDK to use Google Cloud Storage
+    // GCS has an S3-compatible API endpoint
+    this.s3 = new AWS.S3({
+      endpoint: 'https://storage.googleapis.com',
+      region: 'us-central1',
+      signatureVersion: 'v4'
+    });
     this.bucketName = bucketName || 'appraisily-image-backups';
   }
 
@@ -25,11 +31,12 @@ class S3Logger {
       timestamp,
       type: logType,
       message,
+      service: 'appraisers-task-queue',
       data
     };
 
     const logString = JSON.stringify(logData, null, 2);
-    const key = `${sessionId}/logs/${logType}_${timestamp.replace(/:/g, '-')}.json`;
+    const key = `${sessionId}/logs/task_queue_${logType}_${timestamp.replace(/:/g, '-')}.json`;
 
     try {
       await this.s3.putObject({
@@ -39,10 +46,10 @@ class S3Logger {
         ContentType: 'application/json'
       }).promise();
       
-      console.log(`[S3Logger] Log saved to s3://${this.bucketName}/${key}`);
+      console.log(`[S3Logger] Log saved to gs://${this.bucketName}/${key}`);
       return key;
     } catch (error) {
-      console.error('[S3Logger] Error saving log to S3:', error.message);
+      console.error('[S3Logger] Error saving log to GCS:', error.message);
       // Continue execution even if logging fails
     }
   }
@@ -76,4 +83,4 @@ class S3Logger {
   }
 }
 
-module.exports = S3Logger; 
+module.exports = new S3Logger(); 

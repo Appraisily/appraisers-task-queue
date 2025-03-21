@@ -197,21 +197,76 @@ class AppraisalService {
 
   async getWordPressPostId(id, { sessionId } = {}) {
     try {
-      const values = await this.sheetsService.getValues(`O${id}`);
+      // First, try to get the post ID from column O (where it's expected)
+      const valuesO = await this.sheetsService.getValues(`O${id}`);
       
-      if (!values || !values[0] || !values[0][0]) {
-        this.logger.warn(`No WordPress post ID found for appraisal ${id}`, { sessionId });
-        return null;
+      if (valuesO && valuesO[0] && valuesO[0][0]) {
+        const postId = valuesO[0][0].toString().trim();
+        
+        if (postId && !isNaN(parseInt(postId))) {
+          this.logger.info(`Found WordPress post ID in column O: ${postId}`, { sessionId });
+          return postId;
+        }
       }
       
-      const postId = values[0][0].toString().trim();
+      // If not found in column O, try column G (which might contain a WordPress URL)
+      this.logger.info(`WordPress post ID not found in column O for appraisal ${id}, checking column G`, { sessionId });
+      const valuesG = await this.sheetsService.getValues(`G${id}`);
       
-      if (!postId || isNaN(parseInt(postId))) {
-        this.logger.warn(`Invalid WordPress post ID for appraisal ${id}: ${postId}`, { sessionId });
-        return null;
+      if (valuesG && valuesG[0] && valuesG[0][0]) {
+        const wpUrlStr = valuesG[0][0].toString().trim();
+        
+        if (wpUrlStr) {
+          this.logger.info(`Found value in column G: ${wpUrlStr}`, { sessionId });
+          
+          // Check if it's a URL containing post ID
+          try {
+            // The URL might be in format https://domain.com/wp-admin/post.php?post=123&action=edit
+            // or https://domain.com/appraisals/123
+            let postIdFromUrl = null;
+            
+            if (wpUrlStr.includes('post.php?post=')) {
+              // Extract from admin URL
+              const url = new URL(wpUrlStr);
+              postIdFromUrl = url.searchParams.get('post');
+            } else if (wpUrlStr.includes('/appraisals/')) {
+              // Extract from frontend URL
+              const urlPath = new URL(wpUrlStr).pathname;
+              const matches = urlPath.match(/\/appraisals\/(\d+)/);
+              if (matches && matches[1]) {
+                postIdFromUrl = matches[1];
+              }
+            } else if (!isNaN(parseInt(wpUrlStr))) {
+              // If it's just a number, use it directly
+              postIdFromUrl = wpUrlStr;
+            }
+            
+            if (postIdFromUrl && !isNaN(parseInt(postIdFromUrl))) {
+              this.logger.info(`Extracted WordPress post ID from column G: ${postIdFromUrl}`, { sessionId });
+              return postIdFromUrl;
+            }
+          } catch (urlError) {
+            this.logger.warn(`Error parsing WordPress URL from column G: ${urlError.message}`, { sessionId });
+          }
+        }
       }
       
-      return postId;
+      // Finally, try column N as a fallback (some systems might use this column)
+      this.logger.info(`WordPress post ID not found in columns O or G for appraisal ${id}, checking column N`, { sessionId });
+      const valuesN = await this.sheetsService.getValues(`N${id}`);
+      
+      if (valuesN && valuesN[0] && valuesN[0][0]) {
+        const potentialId = valuesN[0][0].toString().trim();
+        
+        if (potentialId && !isNaN(parseInt(potentialId))) {
+          this.logger.info(`Found WordPress post ID in column N: ${potentialId}`, { sessionId });
+          return potentialId;
+        }
+      }
+      
+      // No WordPress post ID found in any column
+      this.logger.warn(`No WordPress post ID found for appraisal ${id} in columns O, G, or N`, { sessionId });
+      return null;
     } catch (error) {
       this.logger.error(`Error retrieving WordPress post ID for appraisal ${id}:`, error, { sessionId });
       return null;

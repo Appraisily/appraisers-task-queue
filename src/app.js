@@ -1,24 +1,22 @@
 const express = require('express');
 const cors = require('cors');
 const { createLogger } = require('./utils/logger');
-const worker = require('./worker');
 
 const logger = createLogger('App');
-const app = express();
+const PubSubWorker = require('./worker');
 
-app.use(cors());
+// Initialize server
+const app = express();
+const PORT = process.env.PORT || 8080;
+
+// Enable JSON body parsing
 app.use(express.json());
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'ok',
-    timestamp: new Date().toISOString()
-  });
-});
+// Enable CORS for all routes
+app.use(cors());
 
-// Graceful shutdown
-async function shutdown(signal) {
+// Handle shutdown gracefully
+const handleShutdown = async (signal) => {
   logger.info(`Received ${signal} signal. Starting graceful shutdown...`);
   
   try {
@@ -29,32 +27,29 @@ async function shutdown(signal) {
     logger.error('Error during shutdown:', error);
     process.exit(1);
   }
-}
+};
 
-// Register shutdown handlers with longer timeout
-const SHUTDOWN_TIMEOUT = 60000; // 60 seconds
-process.on('SIGTERM', () => {
-  const shutdownTimer = setTimeout(() => {
-    logger.error('Forced shutdown after timeout');
-    process.exit(1);
-  }, SHUTDOWN_TIMEOUT);
-  
-  // Clear the timeout if shutdown completes normally
-  shutdown('SIGTERM').finally(() => clearTimeout(shutdownTimer));
-});
+// Forced shutdown after timeout
+const forceShutdown = () => {
+  logger.error('Forced shutdown after timeout');
+  process.exit(1);
+};
 
+// Set up signal handlers
 process.on('SIGINT', () => {
-  const shutdownTimer = setTimeout(() => {
-    logger.error('Forced shutdown after timeout');
-    process.exit(1);
-  }, SHUTDOWN_TIMEOUT);
-  
-  // Clear the timeout if shutdown completes normally
-  shutdown('SIGINT').finally(() => clearTimeout(shutdownTimer));
+  handleShutdown('SIGINT');
+  // Force shutdown after 30 seconds if graceful shutdown fails
+  setTimeout(forceShutdown, 30000);
 });
 
-// Test route for S3 logging
-app.post('/test-s3-log', async (req, res) => {
+process.on('SIGTERM', () => {
+  handleShutdown('SIGTERM');
+  // Force shutdown after 30 seconds if graceful shutdown fails
+  setTimeout(forceShutdown, 30000);
+});
+
+// Test route for logging
+app.post('/test-log', async (req, res) => {
   const { sessionId, message } = req.body;
   
   if (!sessionId) {
@@ -65,18 +60,18 @@ app.post('/test-s3-log', async (req, res) => {
   }
   
   try {
-    logger.info(`Test message: ${message || 'Hello S3 logging!'}`, { sessionId });
-    logger.s3Log(sessionId, 'info', 'Explicit S3 log test', { timestamp: new Date().toISOString() });
+    logger.info(`Test message: ${message || 'Hello logging!'}`, { sessionId });
+    logger.s3Log(sessionId, 'info', 'Explicit log test', { timestamp: new Date().toISOString() });
     
     return res.json({
       success: true,
-      message: 'S3 logging test executed successfully'
+      message: 'Logging test executed successfully'
     });
   } catch (error) {
-    logger.error('Error in S3 logging test', error);
+    logger.error('Error in logging test', error);
     return res.status(500).json({
       success: false,
-      message: 'Error in S3 logging test',
+      message: 'Error in logging test',
       error: error.message
     });
   }
@@ -87,17 +82,19 @@ app.get('/', (req, res) => {
   res.status(200).send('Appraisers Task Queue Service is running');
 });
 
+// Create worker instance
+const worker = new PubSubWorker();
+
 // Start server and initialize worker
-const PORT = process.env.PORT || 8080;
 const server = app.listen(PORT, async () => {
   logger.info(`Server running on port ${PORT}`);
   
   try {
+    // Initialize worker
     await worker.initialize();
     logger.info('Worker initialized successfully');
   } catch (error) {
     logger.error('Failed to initialize worker:', error);
-    process.exit(1);
   }
 });
 

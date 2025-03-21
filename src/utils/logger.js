@@ -1,51 +1,61 @@
-const S3Logger = require('./s3-logger');
-
-// Initialize the S3 logger
-const s3Logger = new S3Logger();
+/**
+ * Simple logger utility that outputs formatted logs
+ * When running in Cloud Run, logs will be automatically captured by Cloud Logging
+ */
+const s3Logger = require('./s3Logger');
 
 function createLogger(name) {
   return {
     info: (message, ...args) => {
       console.log(`[${name}]`, message, ...args);
-      // Extract sessionId if available in args
+      // Try to extract sessionId from args and log to S3
       const sessionId = extractSessionId(args);
       if (sessionId) {
-        s3Logger.info(sessionId, message, formatArgsForLogging(args));
+        s3Logger.info(sessionId, message, formatArgs(args));
       }
     },
     error: (message, ...args) => {
       console.error(`[${name}]`, message, ...args);
+      // Try to extract sessionId from args and log to S3
       const sessionId = extractSessionId(args);
       if (sessionId) {
-        s3Logger.error(sessionId, message, formatArgsForLogging(args));
+        s3Logger.error(sessionId, message, formatArgs(args));
       }
     },
     warn: (message, ...args) => {
       console.warn(`[${name}]`, message, ...args);
+      // Try to extract sessionId from args and log to S3
       const sessionId = extractSessionId(args);
       if (sessionId) {
-        s3Logger.warn(sessionId, message, formatArgsForLogging(args));
+        s3Logger.warn(sessionId, message, formatArgs(args));
       }
     },
     debug: (message, ...args) => {
       console.debug(`[${name}]`, message, ...args);
+      // Try to extract sessionId from args and log to S3
       const sessionId = extractSessionId(args);
       if (sessionId) {
-        s3Logger.debug(sessionId, message, formatArgsForLogging(args));
+        s3Logger.debug(sessionId, message, formatArgs(args));
       }
     },
-    // New method to explicitly log to S3 with sessionId
+    // Direct S3 logging method with explicit sessionId
     s3Log: (sessionId, level, message, data = {}) => {
-      console.log(`[${name}] [${level}]`, message, data);
-      return s3Logger[level](sessionId, message, data);
+      if (level === 'error') {
+        console.error(`[${name}] [${level}] [SessionID: ${sessionId}]`, message, data);
+        s3Logger.error(sessionId, message, data);
+      } else if (level === 'warn') {
+        console.warn(`[${name}] [${level}] [SessionID: ${sessionId}]`, message, data);
+        s3Logger.warn(sessionId, message, data);
+      } else {
+        console.log(`[${name}] [${level}] [SessionID: ${sessionId}]`, message, data);
+        s3Logger.info(sessionId, message, data);
+      }
     }
   };
 }
 
 /**
- * Try to extract session ID from arguments
- * @param {Array} args - Arguments to check for session ID
- * @returns {string|null} - The session ID if found, null otherwise
+ * Extract session ID from arguments if available
  */
 function extractSessionId(args) {
   // Look for an object with id or sessionId property
@@ -68,48 +78,22 @@ function extractSessionId(args) {
 
 /**
  * Format arguments for logging to S3
- * @param {Array} args - Arguments to format
- * @returns {Object} - Formatted arguments
  */
-function formatArgsForLogging(args) {
-  if (args.length === 0) return {};
+function formatArgs(args) {
+  const result = {};
   
-  // If there's only one argument and it's an object, use that
-  if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null) {
-    return sanitizeForLogging(args[0]);
-  }
-  
-  // Otherwise format as array
-  return { args: args.map(arg => sanitizeForLogging(arg)) };
-}
-
-/**
- * Sanitize values for safe JSON logging
- * @param {*} value - Value to sanitize
- * @returns {*} - Sanitized value
- */
-function sanitizeForLogging(value) {
-  if (value === null || value === undefined) return value;
-  
-  if (value instanceof Error) {
-    return {
-      name: value.name,
-      message: value.message,
-      stack: value.stack
-    };
-  }
-  
-  if (typeof value === 'object') {
-    // Handle circular references
-    try {
-      JSON.stringify(value);
-      return value;
-    } catch (e) {
-      return { error: 'Circular object reference detected' };
+  for (const arg of args) {
+    if (arg && typeof arg === 'object') {
+      Object.assign(result, arg);
     }
   }
   
-  return value;
+  // Remove sessionId from the data to avoid duplication
+  if (result.sessionId) {
+    delete result.sessionId;
+  }
+  
+  return result;
 }
 
 module.exports = { createLogger };
