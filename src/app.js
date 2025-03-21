@@ -3,7 +3,7 @@ const cors = require('cors');
 const { createLogger } = require('./utils/logger');
 
 const logger = createLogger('App');
-const PubSubWorker = require('./worker');
+const worker = require('./worker');  // Import the singleton instance
 
 // Initialize server
 const app = express();
@@ -81,9 +81,6 @@ app.post('/test-log', async (req, res) => {
 app.get('/', (req, res) => {
   res.status(200).send('Appraisers Task Queue Service is running');
 });
-
-// Create worker instance
-const worker = new PubSubWorker();
 
 // Start server and initialize worker
 const server = app.listen(PORT, async () => {
