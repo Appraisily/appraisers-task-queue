@@ -3,7 +3,8 @@ const { createLogger } = require('./logger');
 
 // Fallback values for critical secrets - only used if Secret Manager fails
 const FALLBACK_SECRETS = {
-  'PENDING_APPRAISALS_SPREADSHEET_ID': process.env.PENDING_APPRAISALS_SPREADSHEET_ID || '1PuGYaHJYo5yQPg-QWdFv-AfnPb4-LG8LuRSE7cDV2zs'
+  'PENDING_APPRAISALS_SPREADSHEET_ID': process.env.PENDING_APPRAISALS_SPREADSHEET_ID || '1PuGYaHJYo5yQPg-QWdFv-AfnPb4-LG8LuRSE7cDV2zs',
+  'APPRAISALS_BACKEND_URL': process.env.APPRAISALS_BACKEND_URL || 'https://appraisals-backend-856401495068.us-central1.run.app'
 };
 
 class SecretManager {

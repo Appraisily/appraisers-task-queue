@@ -137,10 +137,25 @@ class WordPressService {
       
       // This typically makes a request to the main appraisals backend
       // to trigger the report generation process
-      const appraisalsBackendUrl = await secretManager.getSecret('APPRAISALS_BACKEND_URL');
+      let appraisalsBackendUrl;
+      
+      try {
+        appraisalsBackendUrl = await secretManager.getSecret('APPRAISALS_BACKEND_URL', true);
+      } catch (error) {
+        // If we can't get from secret manager, try environment variable
+        appraisalsBackendUrl = process.env.APPRAISALS_BACKEND_URL;
+        
+        if (appraisalsBackendUrl) {
+          this.logger.info('Using APPRAISALS_BACKEND_URL from environment variable');
+        } else {
+          // Default fallback as last resort
+          appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
+          this.logger.warn(`Using default fallback URL for appraisals backend: ${appraisalsBackendUrl}`);
+        }
+      }
       
       if (!appraisalsBackendUrl) {
-        throw new Error('Missing APPRAISALS_BACKEND_URL in Secret Manager');
+        throw new Error('Could not determine APPRAISALS_BACKEND_URL from any source');
       }
       
       const response = await fetch(`${appraisalsBackendUrl}/appraisal/generate-report/${postId}`, {
@@ -159,7 +174,12 @@ class WordPressService {
       this.logger.info(`Successfully triggered report generation for post ${postId}`);
     } catch (error) {
       this.logger.error(`Error completing appraisal report for post ${postId}:`, error);
-      throw error;
+      // Treat this as a non-fatal error - log it but don't throw
+      // We've already updated WordPress with the content at this point
+      this.logger.warn(
+        `Appraisal report generation failed for post ${postId}, but the post was updated successfully. ` +
+        `You may need to manually trigger report generation.`
+      );
     }
   }
 }

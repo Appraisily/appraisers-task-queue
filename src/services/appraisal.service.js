@@ -188,8 +188,13 @@ class AppraisalService {
       }
       
       // Complete the appraisal report
-      this.logger.info(`Completing appraisal report for post ${postId}`, { sessionId });
-      await this.wordpressService.completeAppraisalReport(postId);
+      try {
+        this.logger.info(`Completing appraisal report for post ${postId}`, { sessionId });
+        await this.wordpressService.completeAppraisalReport(postId);
+      } catch (error) {
+        // This is non-critical; the content was already saved
+        this.logger.warn(`Failed to generate PDF report for appraisal ${id}, but content was saved: ${error.message}`, { sessionId });
+      }
       
       return { 
         success: true,
