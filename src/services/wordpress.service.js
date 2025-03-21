@@ -135,27 +135,15 @@ class WordPressService {
     try {
       this.logger.info(`Triggering appraisal report generation for post ${postId}`);
       
-      // This typically makes a request to the main appraisals backend
-      // to trigger the report generation process
-      let appraisalsBackendUrl;
+      // Get backend URL directly from environment variable
+      let appraisalsBackendUrl = process.env.APPRAISALS_BACKEND_URL;
       
-      try {
-        appraisalsBackendUrl = await secretManager.getSecret('APPRAISALS_BACKEND_URL', true);
-      } catch (error) {
-        // If we can't get from secret manager, try environment variable
-        appraisalsBackendUrl = process.env.APPRAISALS_BACKEND_URL;
-        
-        if (appraisalsBackendUrl) {
-          this.logger.info('Using APPRAISALS_BACKEND_URL from environment variable');
-        } else {
-          // Default fallback as last resort
-          appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
-          this.logger.warn(`Using default fallback URL for appraisals backend: ${appraisalsBackendUrl}`);
-        }
-      }
-      
+      // Use default fallback if not set in environment
       if (!appraisalsBackendUrl) {
-        throw new Error('Could not determine APPRAISALS_BACKEND_URL from any source');
+        appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
+        this.logger.warn(`Using default fallback URL for appraisals backend: ${appraisalsBackendUrl}`);
+      } else {
+        this.logger.info(`Using APPRAISALS_BACKEND_URL from environment variable: ${appraisalsBackendUrl}`);
       }
       
       const response = await fetch(`${appraisalsBackendUrl}/appraisal/generate-report/${postId}`, {
