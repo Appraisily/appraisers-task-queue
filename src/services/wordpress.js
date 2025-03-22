@@ -25,10 +25,18 @@ class WordPressService {
     this.logger.info(`WordPress API initialized with base URL: ${this.baseUrl}`);
   }
 
-  async updateAppraisalPost(postId, { title, content, value, appraisalType }) {
+  async updateAppraisalPost(postId, { 
+    title, 
+    content, 
+    value, 
+    appraisalType,
+    status_progress,
+    status_details,
+    status_timestamp
+  }) {
     this.logger.info(`Updating appraisal post ${postId}`);
-    this.logger.info(`Received appraisal type: ${appraisalType}`);
-    this.logger.info(`Updating post metadata for type: ${appraisalType}`);
+    if (appraisalType) this.logger.info(`Received appraisal type: ${appraisalType}`);
+    if (status_progress) this.logger.info(`Updating status: ${status_progress}`);
     
     const post = await this.getPost(postId);
     const shortcodesInserted = post.acf?.shortcodes_inserted || false;
@@ -36,10 +44,9 @@ class WordPressService {
     
     let updatedContent = content;
 
-    // Only add shortcodes if they haven't been added before
-    if (!shortcodesInserted) {
+    // Only add shortcodes if they haven't been added before and content is provided
+    if (!shortcodesInserted && content) {
       this.logger.info(`Adding shortcodes to post ${postId}`);
-      
       
       // Add shortcodes in Gutenberg block format if not present
       if (!updatedContent.includes('<!-- wp:shortcode -->')) {
@@ -63,7 +70,7 @@ class WordPressService {
     const url = `${this.baseUrl}/appraisals/${numericPostId}`;
     this.logger.info(`Making POST request to: ${url}`);
 
-    // Build ACF fields object, excluding null values
+    // Build ACF fields object, excluding null/undefined values
     const acfFields = {};
     
     // Only add non-null ACF fields
@@ -75,15 +82,38 @@ class WordPressService {
       acfFields.appraisaltype = appraisalType || 'Regular';
     }
     
-    // shortcodes_inserted is a boolean, so we can safely set it
-    acfFields.shortcodes_inserted = true;
+    // Add status tracking fields if provided
+    if (status_progress) {
+      acfFields.status_progress = status_progress;
+    }
+    
+    if (status_details) {
+      acfFields.status_details = status_details;
+    }
+    
+    if (status_timestamp) {
+      acfFields.status_timestamp = status_timestamp;
+    }
+    
+    // Only set shortcodes_inserted if we're actually inserting them
+    if (!shortcodesInserted && content) {
+      acfFields.shortcodes_inserted = true;
+    }
 
     // Build the complete request body
     const requestBody = {
-      title,
-      content: updatedContent,
       status: 'publish'
     };
+    
+    // Only add title if provided
+    if (title) {
+      requestBody.title = title;
+    }
+    
+    // Only add content if provided
+    if (updatedContent) {
+      requestBody.content = updatedContent;
+    }
 
     // Only include ACF if we have fields to update
     if (Object.keys(acfFields).length > 0) {

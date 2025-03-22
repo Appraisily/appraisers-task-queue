@@ -13,52 +13,113 @@ class AppraisalService {
   async processAppraisal(id, value, description, userProvidedType = null) {
     try {
       // Update initial status
-      await this.updateStatus(id, 'Processing');
+      await this.updateStatus(id, 'Processing', 'Starting appraisal workflow');
 
       // Step 1: Set Value
+      await this.updateStatus(id, 'Processing', 'Setting appraisal value');
       await this.setAppraisalValue(id, value, description);
       
       // Step 2: Merge Descriptions
-      await this.updateStatus(id, 'Merging Descriptions');
+      await this.updateStatus(id, 'Analyzing', 'Merging customer and AI descriptions');
       const mergedDescription = await this.mergeDescriptions(id, description);
       
       // Step 3: Get appraisal type from Column B
+      await this.updateStatus(id, 'Analyzing', 'Determining appraisal type');
       const spreadsheetType = await this.getAppraisalType(id);
       // Use user provided type if available, otherwise use spreadsheet type
       const appraisalType = userProvidedType || spreadsheetType;
       this.logger.info(`Using appraisal type: ${appraisalType} (${userProvidedType ? 'from message' : 'from spreadsheet'})`);
       
       // Step 4: Update WordPress with type
-      await this.updateStatus(id, 'Updating WordPress');
+      await this.updateStatus(id, 'Updating', 'Setting title and metadata in WordPress');
       const { postId, publicUrl } = await this.updateWordPress(id, value, mergedDescription, appraisalType);
       
       // Save public URL to spreadsheet
       await this.sheetsService.updateValues(`P${id}`, [[publicUrl]]);
       
       // Step 5: Complete Appraisal Report
-      await this.updateStatus(id, 'Generating Report');
+      await this.updateStatus(id, 'Generating', 'Building full appraisal report');
       await this.wordpressService.completeAppraisalReport(postId);
       
       // Step 6: Generate PDF and Send Email
-      await this.updateStatus(id, 'Generating PDF');
-      await this.finalize(id, postId, publicUrl);
+      await this.updateStatus(id, 'Finalizing', 'Creating PDF document');
+      const pdfResult = await this.finalize(id, postId, publicUrl);
+      await this.updateStatus(id, 'Finalizing', `PDF created: ${pdfResult.pdfLink}`);
       
       // Step 7: Mark as Complete
-      await this.updateStatus(id, 'Completed');
+      await this.updateStatus(id, 'Completed', 'Appraisal process completed successfully');
       await this.complete(id);
       
       this.logger.info(`Successfully processed appraisal ${id}`);
     } catch (error) {
       this.logger.error(`Error processing appraisal ${id}:`, error);
-      await this.updateStatus(id, 'Failed');
+      await this.updateStatus(id, 'Failed', `Error: ${error.message}`);
       throw error;
     }
   }
 
-  async updateStatus(id, status) {
+  async updateStatus(id, status, details = null) {
     try {
-      this.logger.info(`Updating status for appraisal ${id} to: ${status}`);
+      this.logger.info(`Updating status for appraisal ${id} to: ${status}${details ? ` (${details})` : ''}`);
+      
+      // Update status in column F
       await this.sheetsService.updateValues(`F${id}`, [[status]]);
+      
+      // If details are provided, add more context in column R (detailed status column)
+      if (details) {
+        const timestamp = new Date().toISOString();
+        const statusDetails = `[${timestamp}] ${status}: ${details}`;
+        
+        try {
+          // Get the existing detailed status log if any
+          const existingDetails = await this.sheetsService.getValues(`R${id}`);
+          let updatedDetails = statusDetails;
+          
+          if (existingDetails && existingDetails[0] && existingDetails[0][0]) {
+            // Prepend new status to existing log (limited to last 5 status updates to avoid overflow)
+            const detailsLog = existingDetails[0][0].split('\n');
+            const recentDetails = [statusDetails, ...detailsLog.slice(0, 4)];
+            updatedDetails = recentDetails.join('\n');
+          }
+          
+          // Update the detailed status column
+          await this.sheetsService.updateValues(`R${id}`, [[updatedDetails]]);
+        } catch (detailsError) {
+          this.logger.error(`Error updating status details for appraisal ${id}:`, detailsError);
+        }
+      }
+      
+      // Broadcast status update to WordPress
+      try {
+        // Get appraisal data for broadcasting
+        const appraisalData = await this.sheetsService.getValues(`A${id}:G${id}`);
+        
+        if (appraisalData && appraisalData[0]) {
+          const row = appraisalData[0];
+          const metadata = { status_details: details || '' };
+          
+          // Update WordPress with detailed status
+          const postUrl = row[6] || '';
+          if (postUrl) {
+            const url = new URL(postUrl);
+            const postId = url.searchParams.get('post');
+            
+            if (postId) {
+              try {
+                await this.wordpressService.updateAppraisalPost(postId, {
+                  status_progress: status,
+                  status_details: details || '',
+                  status_timestamp: new Date().toISOString()
+                });
+              } catch (wpError) {
+                this.logger.error(`Error updating WordPress status for post ${postId}:`, wpError);
+              }
+            }
+          }
+        }
+      } catch (broadcastError) {
+        this.logger.error(`Error broadcasting status update for appraisal ${id}:`, broadcastError);
+      }
     } catch (error) {
       this.logger.error(`Error updating status for appraisal ${id}:`, error);
       // Don't throw here to prevent status updates from breaking the main flow
@@ -140,14 +201,19 @@ class AppraisalService {
 
   async finalize(id, postId, publicUrl) {
     // Generate PDF
+    this.logger.info(`Generating PDF for appraisal ${id} (postId: ${postId})`);
     const { pdfLink, docLink } = await this.pdfService.generatePDF(postId);
     await this.sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]]);
+    this.logger.info(`PDF generated successfully: ${pdfLink}`);
     
     // Get customer data
+    this.logger.info(`Retrieving customer data for appraisal ${id}`);
     const customerData = await this.getCustomerData(id);
     
     // Send email notification and track delivery
     this.logger.info(`Sending completion email to ${customerData.email}`);
+    await this.updateStatus(id, 'Finalizing', `Sending email notification to ${customerData.email}`);
+    
     const emailResult = await this.emailService.sendAppraisalCompletedEmail(
       customerData.email,
       customerData.name,
@@ -162,6 +228,8 @@ class AppraisalService {
     await this.sheetsService.updateValues(`Q${id}`, [[emailStatus]]);
     
     this.logger.info(`Email delivery status saved for appraisal ${id}`);
+    
+    return { pdfLink, docLink, emailResult };
   }
 
   async getCustomerData(id) {
