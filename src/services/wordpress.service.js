@@ -128,80 +128,38 @@ class WordPressService {
   
   /**
    * Trigger the appraisal report generation process
-   * This is a two-step process:
-   * 1. Complete the appraisal processing 
-   * 2. Generate the PDF document
    * @param {string} postId - The WordPress post ID
    * @returns {Promise<void>}
    */
   async completeAppraisalReport(postId) {
     try {
-      this.logger.info(`Starting appraisal completion process for post ${postId}`);
+      this.logger.info(`Triggering appraisal report generation for post ${postId}`);
       
-      // Get backend URL directly from environment variable
-      let appraisalsBackendUrl = process.env.APPRAISALS_BACKEND_URL;
+      // This typically makes a request to the main appraisals backend
+      // to trigger the report generation process
+      const appraisalsBackendUrl = await secretManager.getSecret('APPRAISALS_BACKEND_URL');
       
-      // Use default fallback if not set in environment
       if (!appraisalsBackendUrl) {
-        appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
-        this.logger.warn(`Using default fallback URL for appraisals backend: ${appraisalsBackendUrl}`);
-      } else {
-        this.logger.info(`Using APPRAISALS_BACKEND_URL from environment variable: ${appraisalsBackendUrl}`);
+        throw new Error('Missing APPRAISALS_BACKEND_URL in Secret Manager');
       }
       
-      // STEP 1: Complete the appraisal processing
-      this.logger.info(`STEP 1: Completing appraisal processing for post ${postId}`);
-      try {
-        const completeResponse = await fetch(`${appraisalsBackendUrl}/complete-appraisal-report`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': this.authHeader
-          },
-          body: JSON.stringify({ postId: postId.toString() })
-        });
-        
-        if (!completeResponse.ok) {
-          const errorText = await completeResponse.text();
-          this.logger.warn(`Appraisal completion step failed: ${completeResponse.status} ${completeResponse.statusText} - ${errorText}`);
-        } else {
-          this.logger.info(`Successfully completed appraisal for post ${postId}`);
+      const response = await fetch(`${appraisalsBackendUrl}/appraisal/generate-report/${postId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': this.authHeader
         }
-      } catch (firstError) {
-        this.logger.warn(`Error completing appraisal: ${firstError.message}`);
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Report generation failed: ${response.status} ${response.statusText} - ${errorText}`);
       }
       
-      // STEP 2: Generate the PDF document
-      this.logger.info(`STEP 2: Generating PDF for post ${postId}`);
-      try {
-        const pdfResponse = await fetch(`${appraisalsBackendUrl}/generate-pdf`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': this.authHeader
-          },
-          body: JSON.stringify({ postId: postId.toString() })
-        });
-        
-        if (!pdfResponse.ok) {
-          const errorText = await pdfResponse.text();
-          this.logger.warn(`PDF generation step failed: ${pdfResponse.status} ${pdfResponse.statusText} - ${errorText}`);
-        } else {
-          this.logger.info(`Successfully generated PDF for post ${postId}`);
-        }
-      } catch (secondError) {
-        this.logger.warn(`Error generating PDF: ${secondError.message}`);
-      }
-      
-      this.logger.info(`Appraisal report processing completed for post ${postId}`);
+      this.logger.info(`Successfully triggered report generation for post ${postId}`);
     } catch (error) {
-      this.logger.error(`Error during appraisal report workflow for post ${postId}:`, error);
-      // Treat this as a non-fatal error - log it but don't throw
-      // We've already updated WordPress with the content at this point
-      this.logger.warn(
-        `Some appraisal report steps failed for post ${postId}, but the post was updated successfully. ` +
-        `You may need to manually complete the process.`
-      );
+      this.logger.error(`Error completing appraisal report for post ${postId}:`, error);
+      throw error;
     }
   }
 }

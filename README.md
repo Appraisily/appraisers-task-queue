@@ -1,179 +1,485 @@
 # Appraisers Task Queue Service
 
-A microservice that processes appraisal tasks from Google Cloud Pub/Sub, updates Google Sheets, and integrates with WordPress and the Appraisals Backend service.
-
-## Project Overview
-
-The Appraisers Task Queue Service is a critical component in the appraisal workflow that:
-- Consumes messages from Google Cloud Pub/Sub
-- Updates appraisal data in Google Sheets
-- Merges descriptions using OpenAI
-- Updates WordPress posts with appraisal information
-- Triggers PDF generation through the Appraisals Backend service
-- Tracks the process with detailed logging in Google Cloud Storage
-
-## Architecture
-
-```
-┌───────────────────┐     ┌────────────────────┐     ┌────────────────────┐
-│                   │     │                    │     │                    │
-│  PubSub Message   │────▶│  Appraisers Task   │────▶│  Google Sheets     │
-│                   │     │  Queue Service     │     │                    │
-└───────────────────┘     └─────────┬──────────┘     └────────────────────┘
-                                    │
-                                    ▼
-┌───────────────────┐     ┌────────────────────┐     ┌────────────────────┐
-│                   │     │                    │     │                    │
-│  OpenAI Service   │◀───▶│  WordPress API     │────▶│  Appraisals Backend│
-│                   │     │                    │     │                    │
-└───────────────────┘     └────────────────────┘     └────────────────────┘
-                                    │
-                                    ▼
-                          ┌────────────────────┐
-                          │                    │
-                          │  GCS Logging       │
-                          │                    │
-                          └────────────────────┘
-```
+A microservice that processes appraisal tasks from Google Cloud Pub/Sub and updates Google Sheets.
 
 ## Project Structure
 
 ```
 src/
-  ├─ app.js                   # Express server and service initialization
-  ├─ worker.js                # PubSub worker and task processing
-  ├─ services/                # Business logic services
-  │   ├─ appraisal.service.js # Core appraisal processing logic
-  │   ├─ sheets.service.js    # Google Sheets operations
-  │   ├─ wordpress.service.js # WordPress integration for content
-  │   ├─ openai.js            # AI text processing with OpenAI
-  │   ├─ email.js             # Email notifications via SendGrid
-  │   └─ pdf.js               # PDF generation service
+  ├─ app.js              # Express server and service initialization
+  ├─ worker.js           # PubSub worker and task processing
+  ├─ services/           # Business logic services
+  │   ├─ appraisal.js   # Core appraisal processing logic
+  │   ├─ sheets.js      # Google Sheets operations
+  │   ├─ wordpress.js   # WordPress integration
+  │   ├─ openai.js      # AI text processing
+  │   ├─ email.js       # Email notifications
+  │   └─ pdf.js         # PDF generation
   └─ utils/
-      ├─ logger.js            # Logging utility with console output
-      ├─ gcsLogger.js         # Google Cloud Storage logging with batching
-      └─ secrets.js           # Secret Manager with fallbacks and caching
+      ├─ logger.js      # Logging utility
+      └─ secrets.js     # Secret Manager integration
 ```
 
 ## Features
 
-- **Reliable Message Processing**: Listens for appraisal completion messages from Pub/Sub with robust error handling
-- **Google Sheets Integration**: Updates appraisal status and data in real-time
-- **AI-Powered Descriptions**: Uses OpenAI to merge appraiser and IA descriptions for consistent output
-- **WordPress Content Management**: Updates WordPress posts with appraisal details and ACF fields
-- **PDF Generation**: Triggers the Appraisals Backend service to generate PDF reports
-- **Batched GCS Logging**: Logs all operations with session-specific organization in Google Cloud Storage
-- **Resilient Error Handling**: Handles failures gracefully with detailed logging
-- **Health Monitoring**: Provides health check endpoints for Cloud Run monitoring
-- **Graceful Shutdown**: Properly handles service shutdowns to prevent data loss
-- **Secret Management**: Secure secret handling with fallbacks and environment variable support
+- Listens for appraisal completion messages from Pub/Sub
+- Updates appraisal status in Google Sheets
+- Handles failed messages with Dead Letter Queue
+- Health check endpoint
+- Graceful shutdown
+- Secure secret management using Google Cloud Secret Manager
 
 ## Detailed Process Flow
 
 ### Appraisal Processing Workflow
 
-1. **Receive Pub/Sub Message**
-   - Message validation and extraction of appraisal details
-   - Identification of the row in Google Sheets using the ID
-
-2. **Initial Status Update**
-   - Update status column to "Processing"
-   - Set the appraisal value and initial description
-
-3. **Description Merging**
-   - Retrieve existing IA description from Google Sheets
-   - Use OpenAI to merge appraiser and IA descriptions
-   - Save the merged description back to Google Sheets
-
-4. **Appraisal Type Determination**
-   - Get appraisal type from message or Google Sheets (column B)
-   - Validate and normalize type (Regular, IRS, Insurance)
-
-5. **WordPress Post Update**
-   - Get the WordPress post ID from Google Sheets
-   - Update the post with merged description, appraisal value, and type
-   - Update custom fields (ACF) and ensure shortcodes are inserted
-   - Save the public URL back to Google Sheets
-
-6. **Report Generation Process**
-   - **Step 1: Complete Appraisal Report**
-     - Call Appraisals Backend `/complete-appraisal-report` endpoint
-     - Process appraisal data for reporting
-   
-   - **Step 2: Generate PDF Document**
-     - Call Appraisals Backend `/generate-pdf` endpoint
-     - Create downloadable PDF document
-   
-   - Both steps proceed independently and failures are handled gracefully
-
-7. **Finalization**
-   - Update status to "Complete"
-   - Ensure all logs are flushed to GCS for the session
-
-### Logging System
-
-The service implements a sophisticated logging system with several components:
-
-1. **Console Logging**: All operations are logged to stdout/stderr for Cloud Run monitoring
-2. **Google Cloud Storage Logging**: Logs are also saved to GCS with session-specific organization
-3. **Batched Logging**: Logs are collected in memory and flushed to GCS in batches:
-   - When a batch reaches 100 entries
-   - On error events
-   - At process completion
-   - On service shutdown
-   - After a 60-second timeout
-
-Logs are stored in the GCS bucket `appraisily-image-backups` with the following structure:
+```mermaid
+graph TD
+    %% Main components and entry points
+    subgraph "PubSub Integration"
+        A[Receive Pub/Sub Message] --> B{Validate Message}
+        B -->|Valid| C[Process Message]
+        B -->|Invalid| D[Reject & Log Error]
+        
+        %% Link to source file
+        A -.-> AFile["src/worker.js: PubSub subscription"]
+        B -.-> BFile["src/worker.js: Message validation"]
+        D -.-> DFile["src/utils/logger.js: Error logging"]
+    end
+    
+    subgraph "Processing Sequence"
+        C --> E[Update Status: 'Processing']
+        E --> F["Set Initial Values (J-K columns)"]
+        F --> G["Get AI Description (Column H)"]
+        G --> H["Merge Descriptions using OpenAI"]
+        H --> I["Save Merged Description (Column L)"]
+        I --> J["Get Template Type (message or Column B)"]
+        J --> K["Update WordPress Post"]
+        K --> L["Update Status: 'Generating Report'"]
+        L --> M["Call Appraisals Backend API"]
+        M --> N["Update Status: 'Generating PDF'"]
+        N --> O["Generate PDF Document"]
+        O --> P["Update PDF Links (Columns M-N)"]
+        P --> Q["Get Customer Data (Columns D-E)"]
+        Q --> R["Send Email Notification"]
+        R --> S["Update Status: 'Completed'"]
+        S --> T["Move Row to Completed Sheet"]
+        
+        %% Link processes to source files
+        E -.-> EFile["src/services/sheets.service.js: updateValues"]
+        F -.-> FFile["src/services/sheets.service.js: updateValues"]
+        G -.-> GFile["src/services/sheets.service.js: getValues"]
+        H -.-> HFile["src/services/openai.service.js: mergeDescriptions"]
+        J -.-> JFile["src/services/appraisal.service.js: getTemplateType"]
+        K -.-> KFile["src/services/wordpress.service.js: updateAppraisalPost"]
+        M -.-> MFile["src/services/appraisal.service.js: completeAppraisalReport"]
+        O -.-> OFile["src/services/pdf.service.js: generatePDF"]
+        R -.-> RFile["src/services/email.service.js: sendAppraisalCompletedEmail"]
+        T -.-> TFile["src/services/sheets.service.js: moveToCompleted"]
+    end
+    
+    subgraph "Error Handling"
+        C -->|Error| Z["Log Error Details"]
+        Z --> Y["Update Status: 'Failed'"]
+        Y --> X["Publish to DLQ (appraisals-failed)"]
+        X --> W["Acknowledge Original Message"]
+        
+        F -->|Error| Z
+        H -->|Error| Z
+        K -->|Error| Z
+        M -->|Error| Z
+        O -->|Error| Z
+        R -->|Error| Z
+        T -->|Error| Z
+        
+        %% Link error handling to source files
+        Z -.-> ZFile["src/utils/logger.js: Error logging"]
+        X -.-> XFile["src/worker.js: DLQ publishing"]
+    end
+    
+    %% Performance annotations
+    E:::fast
+    F:::fast
+    G:::fast
+    H:::medium
+    I:::fast
+    J:::fast
+    K:::medium
+    L:::fast
+    M:::slow
+    N:::fast
+    O:::slowest
+    P:::fast
+    Q:::fast
+    R:::medium
+    S:::fast
+    T:::fast
+    
+    %% Timing labels
+    TimeA["~1s: Message validation"] -.-> B
+    TimeB["~2-3s: Set initial values"] -.-> F
+    TimeC["~3-4s: Description merging"] -.-> H
+    TimeD["~5-6s: WordPress update"] -.-> K
+    TimeE["~30-35s: Report generation"] -.-> M
+    TimeF["~40s: PDF generation"] -.-> O
+    TimeG["~5s: Email notification"] -.-> R
+    TimeH["~2-3s: Status updates"] -.-> S
+    TimeI["~2-3s: Sheet movement"] -.-> T
+    
+    classDef fast fill:#d4f0d0,stroke:#333,stroke-width:1px
+    classDef medium fill:#ffd700,stroke:#333,stroke-width:1px
+    classDef slow fill:#ffb366,stroke:#333,stroke-width:1px
+    classDef slowest fill:#ff9999,stroke:#333,stroke-width:1px
+    
+    style AFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style BFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style DFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style EFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style FFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style GFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style HFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style JFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style KFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style MFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style OFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style RFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style TFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style ZFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    style XFile fill:#f9f9f9,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+    
+    style TimeA fill:none,stroke:none
+    style TimeB fill:none,stroke:none
+    style TimeC fill:none,stroke:none
+    style TimeD fill:none,stroke:none
+    style TimeE fill:none,stroke:none
+    style TimeF fill:none,stroke:none
+    style TimeG fill:none,stroke:none
+    style TimeH fill:none,stroke:none
+    style TimeI fill:none,stroke:none
 ```
-/sessionId/logs/task_queue_batch_timestamp.json
+
+### Process Steps in Detail
+
+When a new message is received from Pub/Sub, the following steps are executed in sequence:
+
+0. **Message Validation and Type Processing** (~1s)
+   - Validate message format and required fields
+   - Extract appraisal type if provided in message
+   - Validate appraisal type against allowed values: Regular, IRS, Insurance
+
+1. **Set Initial Values** (~2-3s)
+   ```javascript
+   // Updates value and original description in Columns J-K
+   await sheetsService.updateValues(`J${id}:K${id}`, [[value, description]]);
+   ```
+
+2. **Merge Descriptions** (~3-4s)
+   - Get IA description from Column H
+   - Merge with appraiser description using OpenAI
+   - Limited to 200 words for WordPress title compatibility
+   - Uses GPT-4 with specific prompt for concise merging
+   - Saves merged description to Column L
+
+3. **Get Template Type** (~1-2s)
+   - If message contains valid appraisal type (Regular, IRS, Insurance), use it
+   - Otherwise, retrieve type from Column B of spreadsheet
+   - Validate spreadsheet type against allowed values
+   - Default to "Regular" if type is invalid or missing
+   - Log source of appraisal type (message or spreadsheet)
+
+4. **Update WordPress Post** (~5-6s)
+   ```javascript
+   // Get existing post
+   const post = await wordpressService.getPost(postId);
+   
+   // Update with merged description as title
+   const { publicUrl } = await wordpressService.updateAppraisalPost(postId, {
+     title: mergedDescription,
+     content: post.content,
+     value: value.toString(),
+     appraisalType: appraisalType // Use validated type from step 3
+   });
+   // ACF fields are updated in a single request to minimize API calls
+   const acfFields = {
+     value: value.toString(),
+     appraisaltype: appraisalType,
+     shortcodes_inserted: true
+   };
+
+   // Update slug if session ID exists in ACF
+   if (post.acf?.session_id) {
+     updateData.slug = post.acf.session_id.toLowerCase();
+   }
+
+   // Add template shortcodes if not present
+   if (!post.acf?.shortcodes_inserted) {
+     content += '\n[pdf_download]';
+     content += '\n[AppraisalTemplates type="MasterTemplate"]'; // Template type is always MasterTemplate
+   }
+
+   // Save public URL to Column P
+   await sheetsService.updateValues(`P${id}`, [[publicUrl]]);
+   ```
+
+5. **Complete Appraisal Report** (~30-35s)
+   - Call appraisals backend to generate report
+   - Includes retry logic with 4-minute timeout
+   - Handles template processing and data merging
+
+6. **Generate PDF** (~40s)
+   ```javascript
+   // Generate PDF and get links
+   const { pdfLink, docLink } = await pdfService.generatePDF(postId);
+   
+   // Update PDF links in Columns M-N
+   await sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]]);
+   ```
+
+7. **Send Email Notification** (~5s)
+   ```javascript
+   // Get customer data
+   const customerData = await sheetsService.getValues(`D${id}:E${id}`);
+   
+   // Send using SendGrid template
+   await emailService.sendAppraisalCompletedEmail(
+     customerData.email,
+     customerData.name,
+     {
+       pdfLink,
+       appraisalUrl: publicUrl
+     }
+   );
+   ```
+
+8. **Mark Complete** (~2-3s)
+   ```javascript
+   // Update status in Column F
+   await sheetsService.updateValues(`F${id}`, [['Completed']]);
+   ```
+
+9. **Move to Completed Sheet** (~2-3s)
+   ```javascript
+   // Move row from Pending to Completed sheet
+   await sheetsService.moveToCompleted(id);
+   ```
+
+Total processing time: ~92-103 seconds per appraisal
+
+## Message Format
+
+Expected Pub/Sub message format:
+```json
+{
+  "type": "COMPLETE_APPRAISAL",
+  "data": {
+    "id": "123",
+    "appraisalValue": 1500,
+    "description": "A beautiful oil painting",
+    "appraisalType": "Regular"  // Optional, one of: Regular, IRS, Insurance
+  }
+}
 ```
+
+## Google Sheets Structure
+
+| Column | Content              | Notes                                    |
+|--------|---------------------|------------------------------------------|
+| B      | Appraisal Type      | Used for WordPress template selection    |
+| D      | Customer Email      | Used for notifications                   |
+| E      | Customer Name       | Used in email templates                  |
+| F      | Status              | Current processing status (see below)    |
+| G      | WordPress Post URL  | Edit URL of the post                    |
+| H      | IA Description      | Initial AI-generated description        |
+| J      | Appraisal Value    | Final appraised value                   |
+| K      | Original Description| Appraiser's description                 |
+| L      | Merged Description  | Combined AI + Appraiser description     |
+| M      | PDF Link           | Link to generated PDF report            |
+| N      | Doc Link           | Link to generated Doc version           |
+| P      | Public Post URL    | Public URL of the WordPress post        |
+
+## Status Tracking
+
+The service maintains detailed status tracking in Column F of the spreadsheet. Each appraisal goes through the following status progression:
+
+1. **Initial Status**
+   - `Pending` - Initial state when appraisal is created but not yet processed
+
+2. **Processing Stages**
+   - `Processing` - Initial processing has begun
+   - `Merging Descriptions` - Merging AI and appraiser descriptions using OpenAI
+   - `Updating WordPress` - Updating WordPress post with merged content
+   - `Generating Report` - Generating the appraisal report
+   - `Generating PDF` - Creating PDF version of the report
+
+3. **Final Statuses**
+   - `Completed` - Successfully processed and moved to completed sheet
+   - `Failed` - Error occurred during processing (message moved to DLQ)
+
+Status updates are:
+- Non-blocking (failures don't interrupt main process)
+- Real-time (updated immediately as stages progress)
+- Logged with timestamps for monitoring
+- Used for process tracking and debugging
+
+Typical progression time:
+- `Processing` → `Merging Descriptions`: ~2-3s
+- `Merging Descriptions` → `Updating WordPress`: ~3-4s
+- `Updating WordPress` → `Generating Report`: ~5-6s
+- `Generating Report` → `Generating PDF`: ~30-35s
+- `Generating PDF` → `Completed`: ~45-50s
+
+Total time from `Processing` to `Completed`: ~90-100s
+
+## Appraisal Types and Templates
+
+The system supports three specific types of appraisals:
+
+1. **Regular**
+   - Standard appraisal type
+   - Default when no specific type is provided
+
+2. **IRS**
+   - Specialized appraisal for IRS purposes
+   - Follows IRS documentation requirements
+
+3. **Insurance**
+   - Appraisal for insurance purposes
+   - Focuses on replacement value
+
+All types use the same master template with type-specific content handling.
+
+## WordPress Integration
+
+### API Configuration
+
+1. **Base URL Structure**
+   - WordPress API URL in secrets must be the base REST API URL
+   - Example: `https://resources.appraisily.com/wp-json/wp/v2`
+   - Service appends `/appraisals/` for custom post type endpoints
+   - CRITICAL: Must use `/appraisals/` endpoint, not `/posts/`
+
+2. **Authentication**
+   - Uses WordPress application passwords
+   - Basic Auth header with base64 encoded credentials
+   - Format: `Authorization: Basic ${base64(username:app_password)}`
+
+3. **Post Updates**
+   - Title: Uses full merged description (max 200 words)
+   - Slug: Uses session ID from ACF field if available
+   - Content: Preserves existing content and adds required shortcodes
+   - ACF Fields:
+     - `value`: Appraisal value
+    - `appraisaltype`: One of: "Regular", "IRS", or "Insurance"
+     - `shortcodes_inserted`: Boolean flag for template insertion
+     - `session_id`: Used for slug generation
+
+4. **URL Management**
+   - Edit URL stored in Column G (for internal use)
+   - Public URL stored in Column P (for customer access)
+   - Slug generated from session ID when available
+
+5. **Template and Metadata Management**
+   - All appraisals use the same master template structure
+   - Single master template used for all appraisals
+   - Simplified metadata management
+   - Consistent presentation across all reports
+
+### Template System
+
+1. **Required Shortcodes**
+   Every appraisal post must contain two essential shortcodes in Gutenberg block format:
+   ```
+   <!-- wp:shortcode -->
+   [pdf_download]
+   <!-- /wp:shortcode -->
+
+   <!-- wp:shortcode -->
+   [AppraisalTemplates type="MasterTemplate"]
+   <!-- /wp:shortcode -->
+   ```
+
+2. **Template Structure**
+   - All appraisals use a single master template structure
+   - The template shortcode always uses "MasterTemplate" regardless of type
+
+3. **Shortcode Management**
+   - Controlled by `shortcodes_inserted` ACF field
+   - Only inserted if field is false
+   - Order: PDF download block first, then template block
+   - Shortcodes are wrapped in Gutenberg block format for proper editor integration
+   - Example complete content:
+     ```
+     Original content here...
+
+     <!-- wp:shortcode -->
+     [pdf_download]
+     <!-- /wp:shortcode -->
+
+     <!-- wp:shortcode -->
+     [AppraisalTemplates type="MasterTemplate"]
+     <!-- /wp:shortcode -->
+     ```
+
+4. **Gutenberg Integration**
+   - Shortcodes are wrapped in Gutenberg block format for compatibility
+   - Each shortcode is contained in its own block
+   - Blocks are properly spaced for readability
+   - Format ensures proper rendering in both classic and block editors
+   - Prevents shortcode corruption during content editing
+
+## Configuration
+
+### Environment Variables
+
+Required in `.env`:
+```
+GOOGLE_CLOUD_PROJECT_ID=your-project-id
+```
+
+### Google Cloud Secret Manager
+
+Required secrets:
+
+| Secret Name | Description | Example Value |
+|------------|-------------|---------------|
+| `PENDING_APPRAISALS_SPREADSHEET_ID` | Google Sheets ID | `1abc...xyz` |
+| `WORDPRESS_API_URL` | WordPress API URL | `https://resources.appraisily.com/wp-json/wp/v2` |
+| `wp_username` | WordPress username | `admin` |
+| `wp_app_password` | WordPress app password | `xxxx xxxx xxxx` |
+| `SENDGRID_API_KEY` | SendGrid API key | `SG.xxx...` |
+| `SENDGRID_EMAIL` | SendGrid sender email | `noreply@appraisily.com` |
+| `SEND_GRID_TEMPLATE_NOTIFY_APPRAISAL_COMPLETED` | SendGrid template ID | `d-xxx...` |
+| `OPENAI_API_KEY` | OpenAI API key | `sk-xxx...` |
+| `service-account-json` | Google Service Account | `{...}` |
 
 ## Error Handling
 
-The service implements comprehensive error handling:
+Failed messages are:
+1. Logged with detailed error information
+2. Published to Dead Letter Queue (`appraisals-failed`)
+3. Original message acknowledged to prevent retries
 
-1. **Non-Critical Failures**: Certain failures (e.g., PDF generation) are treated as non-critical and don't halt the overall process
-2. **Critical Failures**: Failures in core functions (e.g., WordPress update) are properly logged and reported
-3. **Dead Letter Queue**: Failed messages are sent to a Dead Letter Queue (DLQ) for later analysis
-4. **Fallback Mechanisms**: Critical configurations have fallbacks:
-   - Secret Manager with environment variable fallbacks
-   - Default values where appropriate
-   - Retry mechanisms for transient failures
+DLQ message includes:
+- Original message ID
+- Original message data
+- Error message
+- Timestamp of failure
 
-## Environment Configuration
+## Health Checks
 
-The service can be configured using the following environment variables:
+The service includes a health check endpoint at `/health` that returns:
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-11-25T11:20:01.564Z"
+}
+```
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT` | The port the service listens on | 8080 |
-| `GOOGLE_CLOUD_PROJECT_ID` | GCP project ID | civil-forge-403609 |
-| `PENDING_APPRAISALS_SPREADSHEET_ID` | Google Sheets spreadsheet ID | (from Secret Manager with fallback) |
-| `APPRAISALS_BACKEND_URL` | URL for the Appraisals Backend service | https://appraisals-backend-856401495068.us-central1.run.app |
+## Monitoring
 
-## Deployment
-
-The service is deployed on Google Cloud Run and configured to:
-- Auto-scale based on traffic
-- Authenticate with Google services using service account credentials
-- Integrate with Cloud Monitoring for observability
-- Connect to Pub/Sub for message processing
-- Access Secret Manager for secure configuration
-- Write logs to Google Cloud Storage
-
-## API Endpoints
-
-- **GET /** - Basic health check
-- **GET /health** - Detailed health check with service status
-- **POST /test-log** - Test endpoint for logging (legacy)
-- **POST /test-gcs-log** - Test endpoint for GCS logging
-
-## Dependencies
-
-- **@google-cloud/pubsub**: Pub/Sub client for message processing
-- **@google-cloud/secret-manager**: Secret Manager for secure configuration
-- **@google-cloud/storage**: GCS client for log storage
-- **@sendgrid/mail**: SendGrid client for email notifications
-- **express**: Web server framework
-- **node-fetch**: HTTP client for API requests
-- **openai**: OpenAI client for AI text processing
+Key metrics to monitor:
+- Average processing time (~90-100s)
+- PDF generation time (~40s)
+- WordPress API response time
+- Email delivery success rate
+- DLQ message count
