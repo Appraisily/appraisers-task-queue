@@ -9,11 +9,74 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// API endpoints documentation
+const API_DOCUMENTATION = {
+  endpoints: {
+    '/health': {
+      methods: ['GET'],
+      description: 'Health check endpoint to verify service availability',
+      response: {
+        status: 'String indicating service status (ok)',
+        timestamp: 'ISO timestamp of the response'
+      }
+    },
+    '/api/pubsub': {
+      methods: ['POST'],
+      description: 'Endpoint for receiving PubSub messages (not directly accessible)',
+      requestFormat: {
+        type: 'COMPLETE_APPRAISAL',
+        data: {
+          id: 'String - Unique identifier for the appraisal',
+          appraisalValue: 'Number - Monetary value of the appraisal',
+          description: 'String - Detailed description of the appraisable item',
+          appraisalType: 'String - Type of appraisal (Regular, IRS, Insurance)'
+        }
+      }
+    }
+  }
+};
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'ok',
     timestamp: new Date().toISOString()
+  });
+});
+
+// Documentation endpoint
+app.get('/api/docs', (req, res) => {
+  res.status(200).json(API_DOCUMENTATION);
+});
+
+// 404 handler for undefined routes
+app.use((req, res, next) => {
+  logger.warn(`Not found: ${req.method} ${req.originalUrl}`);
+  res.status(404).json({
+    success: false,
+    message: 'Endpoint not found',
+    documentation: API_DOCUMENTATION
+  });
+});
+
+// Error handling middleware for malformed requests
+app.use((err, req, res, next) => {
+  logger.error('Request error:', err);
+  
+  // Handle JSON parsing errors
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({
+      success: false,
+      message: 'Malformed request: Invalid JSON',
+      documentation: API_DOCUMENTATION
+    });
+  }
+  
+  // Handle all other errors
+  res.status(500).json({
+    success: false,
+    message: 'Internal server error',
+    documentation: API_DOCUMENTATION
   });
 });
 

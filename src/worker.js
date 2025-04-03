@@ -99,17 +99,39 @@ class PubSubWorker {
       const messageData = message.data.toString();
       this.logger.info(`Raw message data: ${messageData}`);
 
-      const parsedMessage = JSON.parse(messageData);
+      // Parse the message data
+      let parsedMessage;
+      try {
+        parsedMessage = JSON.parse(messageData);
+      } catch (parseError) {
+        throw new Error(`Invalid JSON format: ${parseError.message}`);
+      }
       
-      if (parsedMessage.type !== 'COMPLETE_APPRAISAL' || !parsedMessage.data?.id || !parsedMessage.data?.appraisalValue || !parsedMessage.data?.description) {
-        throw new Error('Invalid message format');
+      // Validate message structure
+      if (parsedMessage.type !== 'COMPLETE_APPRAISAL') {
+        throw new Error(`Invalid message type: Expected 'COMPLETE_APPRAISAL', got '${parsedMessage.type}'`);
+      }
+      
+      if (!parsedMessage.data) {
+        throw new Error('Missing data field in message');
+      }
+      
+      // Validate required fields
+      const missingFields = [];
+      if (!parsedMessage.data.id) missingFields.push('id');
+      if (!parsedMessage.data.appraisalValue) missingFields.push('appraisalValue');
+      if (!parsedMessage.data.description) missingFields.push('description');
+      
+      if (missingFields.length > 0) {
+        throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
       }
 
       const { id, appraisalValue, description, appraisalType } = parsedMessage.data;
       
       // Validate appraisal type if provided
-      if (appraisalType && !['Regular', 'IRS', 'Insurance'].includes(appraisalType)) {
-        this.logger.warn(`Invalid appraisal type "${appraisalType}" in message, will use type from spreadsheet`);
+      const validTypes = ['Regular', 'IRS', 'Insurance'];
+      if (appraisalType && !validTypes.includes(appraisalType)) {
+        this.logger.warn(`Invalid appraisal type "${appraisalType}" in message, will use type from spreadsheet. Valid types: ${validTypes.join(', ')}`);
         await this.appraisalService.processAppraisal(id, appraisalValue, description, null);
       } else {
         await this.appraisalService.processAppraisal(id, appraisalValue, description, appraisalType);
@@ -137,14 +159,27 @@ class PubSubWorker {
       const pubsub = new PubSub();
       const dlqTopic = pubsub.topic('appraisals-failed');
       
+      // Standard message format documentation
+      const correctMessageFormat = {
+        type: 'COMPLETE_APPRAISAL',
+        data: {
+          id: 'String - Unique identifier for the appraisal',
+          appraisalValue: 'Number - Monetary value of the appraisal',
+          description: 'String - Detailed description of the appraisable item',
+          appraisalType: 'String (optional) - Must be one of: Regular, IRS, Insurance'
+        }
+      };
+      
       await dlqTopic.publish(Buffer.from(JSON.stringify({
         originalMessageId: messageId,
         data: data,
         error: errorMessage,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        correctFormat: correctMessageFormat,
+        documentation: 'For more details, visit the /api/docs endpoint'
       })));
       
-      this.logger.info(`Message ${messageId} published to DLQ`);
+      this.logger.info(`Message ${messageId} published to DLQ with documentation`);
     } catch (error) {
       this.logger.error('Failed to publish to DLQ:', error);
     }
