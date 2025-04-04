@@ -21,20 +21,21 @@ src/
       └─ secrets.js        # Secret Manager integration
 ```
 
-## Features
+## Key Features
 
-- Listens for appraisal completion messages from Pub/Sub
-- Updates appraisal status in Google Sheets with detailed tracking
+- Subscribes to Pub/Sub topics for appraisal processing tasks
+- Orchestrates the end-to-end appraisal completion workflow
+- Updates Google Sheets with detailed status tracking
 - Integrates with OpenAI for description enhancement
 - Manages WordPress content generation and updates
-- Handles PDF generation for appraisal reports
-- Sends email notifications to customers
-- Provides detailed status tracking with timestamps
-- Includes health check endpoint and graceful shutdown
+- Handles PDF generation via appraisals-backend service
+- Sends email notifications to customers with completed reports
+- Provides detailed status tracking with timestamps for each processing step
 - Uses Google Cloud Secret Manager for secure credential management
-- Implements error handling with Dead Letter Queue
+- Implements comprehensive error handling with Dead Letter Queue
+- Includes health check endpoints and graceful shutdown mechanisms
 
-## Getting Started
+## Quick Start
 
 ### Prerequisites
 
@@ -56,25 +57,62 @@ src/
 
 ### Running the Service
 
-```
+```bash
+# Start production service
 npm start
+
+# Run tests
+npm test
+
+# Run linting
+npm run lint
 ```
 
-## Detailed Process Flow
+## Appraisal Processing Workflow
 
-### Appraisal Processing Workflow
-
-The service follows this processing sequence:
+The service follows this sequential processing pipeline:
 
 1. **Receive Message**: Accept Pub/Sub message with appraisal data
+   - Validates message format and required fields
+   - Extracts appraisal ID, value, description, and type
+
 2. **Initial Processing**: Set value and description in Google Sheets
+   - Updates appraisal value and status in the spreadsheet
+   - Writes initial status log entry with timestamp
+
 3. **Enhance Description**: Merge customer and AI descriptions using OpenAI
+   - Combines appraiser's description with AI-generated content
+   - Creates cohesive narrative with professional terminology
+   - Updates merged description in Google Sheets
+
 4. **Determine Type**: Set appraisal type (Regular, IRS, or Insurance)
+   - Determines appropriate document template
+   - Sets additional fields based on appraisal type
+
 5. **Update WordPress**: Update post with merged description and metadata
+   - Updates WordPress post content
+   - Sets ACF fields with appraisal metadata
+   - Triggers content processing on WordPress
+
 6. **Generate Report**: Call backend API to build the complete appraisal report
+   - Requests HTML content generation
+   - Processes statistics and visualizations
+   - Prepares professional report layout
+
 7. **Create PDF**: Generate PDF version of the report
+   - Calls appraisals-backend service to create PDF
+   - Stores the generated file on Google Drive
+   - Updates Sheets with document links
+
 8. **Notify Customer**: Send email with links to the completed appraisal
+   - Uses SendGrid templates for email formatting
+   - Includes PDF download links
+   - Records email delivery status
+
 9. **Finalize**: Mark as complete and move to the completed sheet
+   - Updates final status in Google Sheets
+   - Copies record to completed spreadsheet
+   - Removes from pending list
 
 Each step includes detailed status tracking in both Google Sheets and WordPress.
 
@@ -166,11 +204,49 @@ The service exposes a health check endpoint at `/health` that returns:
 ```json
 {
   "status": "ok",
-  "timestamp": "2024-11-25T11:20:01.564Z"
+  "timestamp": "2024-11-25T11:20:01.564Z",
+  "uptime": "1d 2h 15m",
+  "memory": {
+    "rss": "75MB",
+    "heapTotal": "50MB",
+    "heapUsed": "45MB"
+  }
 }
 ```
 
 ## Development
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for architecture guidelines and service patterns.
-See [CLAUDE.md](CLAUDE.md) for code style guidelines and development commands.
+See [CLAUDE.md](../CLAUDE.md) for code style guidelines and development commands.
+
+## Deployment
+
+The service is deployed to Google Cloud Run:
+
+```bash
+# Build Docker image
+docker build -t gcr.io/[PROJECT_ID]/appraisers-task-queue .
+
+# Push to Google Container Registry
+docker push gcr.io/[PROJECT_ID]/appraisers-task-queue
+
+# Deploy to Cloud Run
+gcloud run deploy appraisers-task-queue \
+  --image gcr.io/[PROJECT_ID]/appraisers-task-queue \
+  --platform managed \
+  --region [REGION] \
+  --memory 512Mi \
+  --concurrency 50 \
+  --min-instances 1
+```
+
+## Monitoring and Logging
+
+- Uses structured JSON logging
+- Integrates with Google Cloud Logging
+- Exports metrics to Google Cloud Monitoring
+- Tracks processing times for performance analysis
+
+## License
+
+MIT License - See LICENSE file for details
