@@ -236,11 +236,11 @@ class AppraisalService {
       
       // Extract potential metadata using regex patterns
       metadata = {
-        object_type: extractMetadata(allText, /(?:object type|artwork type|item type)[:\s]+([^,.;]+)/i),
-        creator: extractMetadata(allText, /(?:by|artist|creator)[:\s]+([^,.;]+)/i),
-        estimated_age: extractMetadata(allText, /(?:created|circa|dates from|period|age)[:\s]+([^,.;]+)/i),
-        medium: extractMetadata(allText, /(?:medium|materials|created with|made of)[:\s]+([^,.;]+)/i),
-        condition_summary: extractMetadata(allText, /(?:condition|state)[:\s]+([^,.;]+)/i)
+        object_type: this.extractMetadata(allText, /(?:object type|artwork type|item type)[:\s]+([^,.;]+)/i),
+        creator: this.extractMetadata(allText, /(?:by|artist|creator)[:\s]+([^,.;]+)/i),
+        estimated_age: this.extractMetadata(allText, /(?:created|circa|dates from|period|age)[:\s]+([^,.;]+)/i),
+        medium: this.extractMetadata(allText, /(?:medium|materials|created with|made of)[:\s]+([^,.;]+)/i),
+        condition_summary: this.extractMetadata(allText, /(?:condition|state)[:\s]+([^,.;]+)/i)
       };
       
       // Log extracted metadata
@@ -274,7 +274,7 @@ class AppraisalService {
   }
 
   // Helper function to extract metadata using regex
-  function extractMetadata(text, pattern) {
+  extractMetadata(text, pattern) {
     const match = text.match(pattern);
     if (match && match[1]) {
       return match[1].trim();
