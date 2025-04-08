@@ -35,7 +35,7 @@ class OpenAIService {
    * Merge two descriptions using OpenAI
    * @param {string} appraisalDescription - Appraiser's description
    * @param {string} iaDescription - AI-generated description
-   * @returns {Promise<string>} - Merged description
+   * @returns {Promise<Object>} - Object containing mergedDescription, briefTitle, and detailedTitle
    */
   async mergeDescriptions(appraisalDescription, iaDescription) {
     try {
@@ -54,14 +54,14 @@ class OpenAIService {
           messages: [
             {
               role: 'system',
-              content: 'You are a professional art appraiser. Your task is to combine two descriptions of an art piece into a single, cohesive description that is concise yet informative. The combined description should be no more than 200 words.'
+              content: 'You are a professional art appraiser. Your task is to combine two descriptions of an art piece into a cohesive description and generate two title versions: 1) A brief title (maximum 60 characters) suitable for display in a WordPress post title, and 2) A detailed title/description (1-2 paragraphs) that contains comprehensive metadata about the artwork for AI processing.'
             },
             {
               role: 'user',
-              content: `Please merge these two descriptions into a single cohesive description of no more than 200 words:\n\nAppraiser's Description: ${appraisalDescription}\n\nAI-Generated Description: ${iaDescription}`
+              content: `Please analyze these two descriptions of an artwork:\n\nAppraiser's Description: ${appraisalDescription}\n\nAI-Generated Description: ${iaDescription}\n\nAnd provide three outputs in this format:\n1. BRIEF_TITLE: A concise title for the WordPress post (max 60 characters)\n2. DETAILED_TITLE: A comprehensive 1-2 paragraph description with rich metadata\n3. MERGED_DESCRIPTION: A cohesive summary description of about 200 words that combines both descriptions`
             }
           ],
-          max_tokens: 500,
+          max_tokens: 1000,
           temperature: 0.5
         })
       });
@@ -72,13 +72,26 @@ class OpenAIService {
       }
 
       const result = await response.json();
-      const mergedDescription = result.choices[0].message.content.trim();
+      const content = result.choices[0].message.content.trim();
       
-      this.logger.info('Successfully merged descriptions');
+      // Parse the response to extract the three components
+      const briefTitleMatch = content.match(/BRIEF_TITLE:(.*?)(?=DETAILED_TITLE:|$)/s);
+      const detailedTitleMatch = content.match(/DETAILED_TITLE:(.*?)(?=MERGED_DESCRIPTION:|$)/s);
+      const mergedDescriptionMatch = content.match(/MERGED_DESCRIPTION:(.*?)$/s);
       
-      return mergedDescription;
+      const briefTitle = briefTitleMatch ? briefTitleMatch[1].trim() : 'Untitled Artwork';
+      const detailedTitle = detailedTitleMatch ? detailedTitleMatch[1].trim() : '';
+      const mergedDescription = mergedDescriptionMatch ? mergedDescriptionMatch[1].trim() : content;
+      
+      this.logger.info('Successfully generated brief title, detailed title, and merged description');
+      
+      return {
+        mergedDescription,
+        briefTitle,
+        detailedTitle
+      };
     } catch (error) {
-      this.logger.error('Error merging descriptions:', error);
+      this.logger.error('Error generating titles and merged description:', error);
       throw error;
     }
   }

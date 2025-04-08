@@ -78,7 +78,7 @@ class WordPressService {
    */
   async updateAppraisalPost(postId, updateData) {
     try {
-      const { title, content, value, appraisalType } = updateData;
+      const { title, content, value, appraisalType, detailedTitle, status_progress, status_details, status_timestamp } = updateData;
       
       // Prepare the update payload
       const payload = {
@@ -92,6 +92,17 @@ class WordPressService {
         appraisaltype: appraisalType || 'Regular',
         shortcodes_inserted: true
       };
+
+      // Add detailed title to ACF if provided
+      if (detailedTitle) {
+        acfData.detailed_title = detailedTitle;
+        this.logger.info(`Adding detailed title to post ${postId}`);
+      }
+
+      // Add status updates if provided
+      if (status_progress) acfData.status_progress = status_progress;
+      if (status_details) acfData.status_details = status_details;
+      if (status_timestamp) acfData.status_timestamp = status_timestamp;
 
       // Update the post
       const response = await fetch(`${this.apiUrl}/appraisals/${postId}`, {

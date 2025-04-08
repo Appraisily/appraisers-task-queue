@@ -19,9 +19,9 @@ class AppraisalService {
       await this.updateStatus(id, 'Processing', 'Setting appraisal value');
       await this.setAppraisalValue(id, value, description);
       
-      // Step 2: Merge Descriptions
-      await this.updateStatus(id, 'Analyzing', 'Merging customer and AI descriptions');
-      const mergedDescription = await this.mergeDescriptions(id, description);
+      // Step 2: Merge Descriptions and Generate Titles
+      await this.updateStatus(id, 'Analyzing', 'Merging descriptions and generating titles');
+      const titleAndDescription = await this.mergeDescriptions(id, description);
       
       // Step 3: Get appraisal type from Column B
       await this.updateStatus(id, 'Analyzing', 'Determining appraisal type');
@@ -31,8 +31,8 @@ class AppraisalService {
       this.logger.info(`Using appraisal type: ${appraisalType} (${userProvidedType ? 'from message' : 'from spreadsheet'})`);
       
       // Step 4: Update WordPress with type
-      await this.updateStatus(id, 'Updating', 'Setting title and metadata in WordPress');
-      const { postId, publicUrl } = await this.updateWordPress(id, value, mergedDescription, appraisalType);
+      await this.updateStatus(id, 'Updating', 'Setting titles and metadata in WordPress');
+      const { postId, publicUrl } = await this.updateWordPress(id, value, titleAndDescription, appraisalType);
       
       // Save public URL to spreadsheet
       await this.sheetsService.updateValues(`P${id}`, [[publicUrl]]);
@@ -133,12 +133,24 @@ class AppraisalService {
   async mergeDescriptions(id, description) {
     const values = await this.sheetsService.getValues(`H${id}`);
     const iaDescription = values[0][0];
-    const mergedDescription = await this.openaiService.mergeDescriptions(description, iaDescription);
+    const result = await this.openaiService.mergeDescriptions(description, iaDescription);
+    
+    // Extract the components from the result
+    const { mergedDescription, briefTitle, detailedTitle } = result;
     
     // Save merged description to Column L
     await this.sheetsService.updateValues(`L${id}`, [[mergedDescription]]);
     
-    return mergedDescription;
+    // Log the titles for debugging
+    this.logger.info(`Generated brief title: ${briefTitle}`);
+    this.logger.info(`Generated detailed title length: ${detailedTitle.length} characters`);
+    
+    // Return all generated content
+    return { 
+      mergedDescription,
+      briefTitle,
+      detailedTitle
+    };
   }
 
   async getAppraisalType(id) {
@@ -167,11 +179,27 @@ class AppraisalService {
     
     const post = await this.wordpressService.getPost(postId);
     
+    // Check if mergedDescription is a string or an object with the new structure
+    let briefTitle, detailedTitle, description;
+    
+    if (typeof mergedDescription === 'object') {
+      // New structure with brief and detailed titles
+      briefTitle = mergedDescription.briefTitle;
+      detailedTitle = mergedDescription.detailedTitle;
+      description = mergedDescription.mergedDescription;
+    } else {
+      // Legacy format (just a string)
+      briefTitle = mergedDescription.substring(0, 60) + (mergedDescription.length > 60 ? '...' : '');
+      detailedTitle = mergedDescription;
+      description = mergedDescription;
+    }
+    
     const updatedPost = await this.wordpressService.updateAppraisalPost(postId, {
-      title: mergedDescription,
+      title: briefTitle,
       content: post.content?.rendered || '',
       value: value.toString(),
-      appraisalType: appraisalType // Use the provided appraisal type
+      appraisalType: appraisalType,
+      detailedTitle: detailedTitle
     });
 
     return {
