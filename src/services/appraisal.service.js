@@ -136,20 +136,22 @@ class AppraisalService {
     const result = await this.openaiService.mergeDescriptions(description, iaDescription);
     
     // Extract the components from the result
-    const { mergedDescription, briefTitle, detailedTitle } = result;
+    const { mergedDescription, briefTitle, detailedTitle, metadata } = result;
     
     // Save merged description to Column L
     await this.sheetsService.updateValues(`L${id}`, [[mergedDescription]]);
     
-    // Log the titles for debugging
+    // Log the titles and metadata for debugging
     this.logger.info(`Generated brief title: ${briefTitle}`);
     this.logger.info(`Generated detailed title length: ${detailedTitle.length} characters`);
+    this.logger.info(`Metadata keys: ${Object.keys(metadata || {}).join(', ')}`);
     
     // Return all generated content
     return { 
       mergedDescription,
       briefTitle,
-      detailedTitle
+      detailedTitle,
+      metadata
     };
   }
 
@@ -180,32 +182,104 @@ class AppraisalService {
     const post = await this.wordpressService.getPost(postId);
     
     // Check if mergedDescription is a string or an object with the new structure
-    let briefTitle, detailedTitle, description;
+    let briefTitle, detailedTitle, description, metadata;
     
     if (typeof mergedDescription === 'object') {
       // New structure with brief and detailed titles
       briefTitle = mergedDescription.briefTitle;
       detailedTitle = mergedDescription.detailedTitle;
       description = mergedDescription.mergedDescription;
+      metadata = mergedDescription.metadata || {};
     } else {
       // Legacy format (just a string)
-      briefTitle = mergedDescription.substring(0, 60) + (mergedDescription.length > 60 ? '...' : '');
+      // Don't truncate the title if it's the only one we have
+      briefTitle = mergedDescription;
       detailedTitle = mergedDescription;
       description = mergedDescription;
+      metadata = {};
     }
+    
+    // Ensure the brief title doesn't appear truncated in the UI
+    if (!briefTitle || briefTitle.endsWith('...')) {
+      // Extract a good title from the detailed title if possible
+      if (detailedTitle && detailedTitle.length > 3) {
+        // Take first sentence or a reasonable chunk
+        briefTitle = detailedTitle.split('.')[0];
+        if (briefTitle.length > 80) {
+          briefTitle = briefTitle.substring(0, 80).trim() + '...';
+        }
+      }
+    }
+    
+    // If brief title is still missing or too short, extract from description
+    if (!briefTitle || briefTitle.length < 10) {
+      briefTitle = description && description.length > 10 
+        ? description.substring(0, 80).trim() + (description.length > 80 ? '...' : '')
+        : 'Artwork Appraisal';
+      
+      this.logger.info(`Generated fallback title: ${briefTitle}`);
+    }
+    
+    // Extract additional metadata from appraisal data if metadata doesn't have all fields
+    // Only do this if we don't already have metadata from OpenAI
+    if (!metadata || Object.keys(metadata).length === 0) {
+      // Get the data from columns H (IA description) and L (merged description) to extract potential metadata
+      const [iaValues, mergedValues] = await Promise.all([
+        this.sheetsService.getValues(`H${id}`),
+        this.sheetsService.getValues(`L${id}`)
+      ]);
+      
+      // Extract metadata using regex patterns from descriptions
+      const iaDescription = iaValues?.[0]?.[0] || '';
+      const mergedDescriptionText = mergedValues?.[0]?.[0] || '';
+      const allText = iaDescription + ' ' + mergedDescriptionText + ' ' + detailedTitle;
+      
+      // Extract potential metadata using regex patterns
+      metadata = {
+        object_type: extractMetadata(allText, /(?:object type|artwork type|item type)[:\s]+([^,.;]+)/i),
+        creator: extractMetadata(allText, /(?:by|artist|creator)[:\s]+([^,.;]+)/i),
+        estimated_age: extractMetadata(allText, /(?:created|circa|dates from|period|age)[:\s]+([^,.;]+)/i),
+        medium: extractMetadata(allText, /(?:medium|materials|created with|made of)[:\s]+([^,.;]+)/i),
+        condition_summary: extractMetadata(allText, /(?:condition|state)[:\s]+([^,.;]+)/i)
+      };
+      
+      // Log extracted metadata
+      this.logger.info(`Extracted metadata from descriptions:`, metadata);
+    } else {
+      this.logger.info(`Using structured metadata from OpenAI:`, metadata);
+    }
+    
+    // Log final title selection
+    this.logger.info(`Using brief title: "${briefTitle}"`);
+    this.logger.info(`Using detailed title (first 50 chars): "${detailedTitle.substring(0, 50)}..."`);
     
     const updatedPost = await this.wordpressService.updateAppraisalPost(postId, {
       title: briefTitle,
       content: post.content?.rendered || '',
       value: value.toString(),
       appraisalType: appraisalType,
-      detailedTitle: detailedTitle
+      detailedTitle: detailedTitle,
+      // Add extracted metadata
+      object_type: metadata.object_type,
+      creator: metadata.creator,
+      estimated_age: metadata.estimated_age,
+      medium: metadata.medium,
+      condition_summary: metadata.condition_summary
     });
 
     return {
       postId,
       publicUrl: updatedPost.publicUrl
     };
+  }
+
+  // Helper function to extract metadata using regex
+  function extractMetadata(text, pattern) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+    return null;
   }
 
   async getWordPressPostId(id) {

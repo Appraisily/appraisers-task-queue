@@ -78,7 +78,23 @@ class WordPressService {
    */
   async updateAppraisalPost(postId, updateData) {
     try {
-      const { title, content, value, appraisalType, detailedTitle, status_progress, status_details, status_timestamp } = updateData;
+      const { 
+        title, 
+        content, 
+        value, 
+        appraisalType, 
+        detailedTitle, 
+        status_progress, 
+        status_details, 
+        status_timestamp,
+        object_type,
+        creator,
+        estimated_age,
+        medium,
+        condition_summary,
+        condition,
+        age_text
+      } = updateData;
       
       // Prepare the update payload
       const payload = {
@@ -99,10 +115,22 @@ class WordPressService {
         this.logger.info(`Adding detailed title to post ${postId}`);
       }
 
+      // Add metadata fields if provided
+      if (object_type) acfData.object_type = object_type;
+      if (creator) acfData.creator = creator;
+      if (estimated_age) acfData.estimated_age = estimated_age;
+      if (age_text) acfData.age_text = age_text;
+      if (medium) acfData.medium = medium;
+      if (condition_summary) acfData.condition_summary = condition_summary;
+      if (condition) acfData.condition = condition;
+
       // Add status updates if provided
       if (status_progress) acfData.status_progress = status_progress;
       if (status_details) acfData.status_details = status_details;
       if (status_timestamp) acfData.status_timestamp = status_timestamp;
+
+      // Log the ACF fields being updated
+      this.logger.info(`Updating WordPress post ${postId} with ACF fields: ${Object.keys(acfData).join(', ')}`);
 
       // Update the post
       const response = await fetch(`${this.apiUrl}/appraisals/${postId}`, {

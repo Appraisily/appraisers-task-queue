@@ -35,7 +35,7 @@ class OpenAIService {
    * Merge two descriptions using OpenAI
    * @param {string} appraisalDescription - Appraiser's description
    * @param {string} iaDescription - AI-generated description
-   * @returns {Promise<Object>} - Object containing mergedDescription, briefTitle, and detailedTitle
+   * @returns {Promise<Object>} - Object containing mergedDescription, briefTitle, detailedTitle, and metadata
    */
   async mergeDescriptions(appraisalDescription, iaDescription) {
     try {
@@ -54,14 +54,14 @@ class OpenAIService {
           messages: [
             {
               role: 'system',
-              content: 'You are a professional art appraiser. Your task is to combine two descriptions of an art piece into a cohesive description and generate two title versions: 1) A brief title (maximum 60 characters) suitable for display in a WordPress post title, and 2) A detailed title/description (1-2 paragraphs) that contains comprehensive metadata about the artwork for AI processing.'
+              content: 'You are a professional art appraiser. Your task is to analyze art descriptions and extract structured metadata, combining information into cohesive descriptions and generating two title versions: 1) A brief title (maximum 60 characters) suitable for display, and 2) A detailed title/description (1-2 paragraphs) with comprehensive metadata about the artwork.'
             },
             {
               role: 'user',
-              content: `Please analyze these two descriptions of an artwork:\n\nAppraiser's Description: ${appraisalDescription}\n\nAI-Generated Description: ${iaDescription}\n\nAnd provide three outputs in this format:\n1. BRIEF_TITLE: A concise title for the WordPress post (max 60 characters)\n2. DETAILED_TITLE: A comprehensive 1-2 paragraph description with rich metadata\n3. MERGED_DESCRIPTION: A cohesive summary description of about 200 words that combines both descriptions`
+              content: `Please analyze these two descriptions of an artwork:\n\nAppraiser's Description: ${appraisalDescription}\n\nAI-Generated Description: ${iaDescription}\n\nAnd provide the following structured outputs:\n1. BRIEF_TITLE: A concise title for the WordPress post (max 60 characters)\n2. DETAILED_TITLE: A comprehensive 1-2 paragraph description with rich metadata\n3. MERGED_DESCRIPTION: A cohesive summary description of about 200 words that combines both descriptions\n4. METADATA: Structured data about the artwork in this format:\n   - OBJECT_TYPE: (e.g., Painting, Sculpture, Print)\n   - CREATOR: The artist's name\n   - ESTIMATED_AGE: The period or approximate age\n   - MEDIUM: The materials used\n   - CONDITION_SUMMARY: Brief assessment of the condition`
             }
           ],
-          max_tokens: 1000,
+          max_tokens: 1200,
           temperature: 0.5
         })
       });
@@ -74,21 +74,42 @@ class OpenAIService {
       const result = await response.json();
       const content = result.choices[0].message.content.trim();
       
-      // Parse the response to extract the three components
+      // Parse the response to extract the components
       const briefTitleMatch = content.match(/BRIEF_TITLE:(.*?)(?=DETAILED_TITLE:|$)/s);
       const detailedTitleMatch = content.match(/DETAILED_TITLE:(.*?)(?=MERGED_DESCRIPTION:|$)/s);
-      const mergedDescriptionMatch = content.match(/MERGED_DESCRIPTION:(.*?)$/s);
+      const mergedDescriptionMatch = content.match(/MERGED_DESCRIPTION:(.*?)(?=METADATA:|$)/s);
+      const metadataMatch = content.match(/METADATA:(.*?)$/s);
       
       const briefTitle = briefTitleMatch ? briefTitleMatch[1].trim() : 'Untitled Artwork';
       const detailedTitle = detailedTitleMatch ? detailedTitleMatch[1].trim() : '';
       const mergedDescription = mergedDescriptionMatch ? mergedDescriptionMatch[1].trim() : content;
       
-      this.logger.info('Successfully generated brief title, detailed title, and merged description');
+      // Extract structured metadata
+      const metadata = {};
+      if (metadataMatch) {
+        const metadataText = metadataMatch[1];
+        
+        const objectTypeMatch = metadataText.match(/OBJECT_TYPE:(.*?)(?=-|$)/s);
+        const creatorMatch = metadataText.match(/CREATOR:(.*?)(?=-|$)/s);
+        const estimatedAgeMatch = metadataText.match(/ESTIMATED_AGE:(.*?)(?=-|$)/s);
+        const mediumMatch = metadataText.match(/MEDIUM:(.*?)(?=-|$)/s);
+        const conditionMatch = metadataText.match(/CONDITION_SUMMARY:(.*?)(?=-|$)/s);
+        
+        if (objectTypeMatch) metadata.object_type = objectTypeMatch[1].trim();
+        if (creatorMatch) metadata.creator = creatorMatch[1].trim();
+        if (estimatedAgeMatch) metadata.estimated_age = estimatedAgeMatch[1].trim();
+        if (mediumMatch) metadata.medium = mediumMatch[1].trim();
+        if (conditionMatch) metadata.condition_summary = conditionMatch[1].trim();
+      }
+      
+      this.logger.info('Successfully generated titles, merged description, and structured metadata');
+      this.logger.info(`Metadata extracted: ${JSON.stringify(metadata)}`);
       
       return {
         mergedDescription,
         briefTitle,
-        detailedTitle
+        detailedTitle,
+        metadata
       };
     } catch (error) {
       this.logger.error('Error generating titles and merged description:', error);
