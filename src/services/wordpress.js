@@ -2,6 +2,9 @@ const fetch = require('node-fetch');
 const { createLogger } = require('../utils/logger');
 const secretManager = require('../utils/secrets');
 
+// DEPRECATED: This file is deprecated. Please use wordpress.service.js instead.
+// This file is kept for reference only and will be removed in a future update.
+
 class WordPressService {
   constructor() {
     this.logger = createLogger('WordPress');

@@ -1,6 +1,9 @@
 const fetch = require('node-fetch');
 const { createLogger } = require('../utils/logger');
 
+// DEPRECATED: This file is deprecated. Please use pdf.service.js instead.
+// This file is kept for reference only and will be removed in a future update.
+
 class PDFService {
   constructor() {
     this.logger = createLogger('PDF');

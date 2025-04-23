@@ -2,6 +2,9 @@ const sendGridMail = require('@sendgrid/mail');
 const { createLogger } = require('../utils/logger');
 const secretManager = require('../utils/secrets');
 
+// DEPRECATED: This file is deprecated. Please use email.service.js instead.
+// This file is kept for reference only and will be removed in a future update.
+
 class EmailService {
   constructor() {
     this.logger = createLogger('Email');

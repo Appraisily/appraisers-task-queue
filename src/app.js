@@ -32,6 +32,15 @@ const API_DOCUMENTATION = {
           appraisalType: 'String - Type of appraisal (Regular, IRS, Insurance)'
         }
       }
+    },
+    '/api/process-step': {
+      methods: ['POST'],
+      description: 'Endpoint for processing an appraisal from a specific step',
+      requestFormat: {
+        id: 'String - Unique identifier for the appraisal',
+        startStep: 'String - The step to start processing from',
+        options: 'Object - Additional options for processing'
+      }
     }
   }
 };
@@ -47,6 +56,37 @@ app.get('/health', (req, res) => {
 // Documentation endpoint
 app.get('/api/docs', (req, res) => {
   res.status(200).json(API_DOCUMENTATION);
+});
+
+// Process a specific step
+app.post('/api/process-step', async (req, res) => {
+  const { id, startStep, options = {} } = req.body;
+  
+  if (!id || !startStep) {
+    return res.status(400).json({
+      success: false,
+      message: 'Missing required parameters: id and startStep are required'
+    });
+  }
+  
+  logger.info(`Received request to process appraisal ${id} from step ${startStep}`);
+  
+  try {
+    // Queue the task for processing by the worker
+    await worker.queueStepProcessing(id, startStep, options);
+    
+    res.status(200).json({
+      success: true,
+      message: `Appraisal ${id} has been queued for processing from step ${startStep}`,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error(`Error queueing step processing for appraisal ${id}:`, error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Internal server error'
+    });
+  }
 });
 
 // 404 handler for undefined routes
