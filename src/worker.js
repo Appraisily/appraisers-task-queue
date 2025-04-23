@@ -161,7 +161,7 @@ class PubSubWorker {
         this.logger.info(`Processing appraisal ${id} from step ${startStep}`);
         
         // Extract any additional data from options that might be needed
-        const { appraisalValue, description, appraisalType } = options;
+        const { appraisalValue, description, appraisalType, postId } = options;
         
         // Process based on step
         switch (startStep) {
@@ -192,13 +192,90 @@ class PubSubWorker {
             }
             
             await this.appraisalService.mergeDescriptions(id, descToUse);
-            // Continue processing from here
-            // TODO: Implement step-by-step processing logic
+            break;
+            
+          case 'STEP_UPDATE_WORDPRESS':
+            if (!this.appraisalService) {
+              throw new Error('Appraisal service not initialized');
+            }
+            // Get required data from spreadsheet
+            const [valueData, descData, appraisalTypeData] = await Promise.all([
+              this.sheetsService.getValues(`J${id}`),  // Value
+              this.sheetsService.getValues(`L${id}`),  // Merged description
+              this.sheetsService.getValues(`B${id}`)   // Appraisal type
+            ]);
+            
+            const valueToUse = appraisalValue || (valueData?.[0]?.[0] || 0);
+            const descriptionToUse = descData?.[0]?.[0] || '';
+            const typeToUse = appraisalType || appraisalTypeData?.[0]?.[0] || 'Regular';
+            
+            // Update WordPress
+            await this.appraisalService.updateStatus(id, 'Updating', 'Setting titles and metadata in WordPress');
+            await this.appraisalService.updateWordPress(id, valueToUse, descriptionToUse, typeToUse);
+            break;
+            
+          case 'STEP_GENERATE_VISUALIZATION':
+            if (!this.appraisalService) {
+              throw new Error('Appraisal service not initialized');
+            }
+            
+            // Get the PostID either from options or from spreadsheet
+            let postIdToUse = postId;
+            if (!postIdToUse) {
+              postIdToUse = await this.appraisalService.getWordPressPostId(id);
+            }
+            
+            if (!postIdToUse) {
+              throw new Error('Post ID is required for generating visualizations');
+            }
+            
+            // Update status
+            await this.appraisalService.updateStatus(id, 'Generating', 'Creating visualizations');
+            
+            // Complete the report (which includes visualizations)
+            await this.wordpressService.completeAppraisalReport(postIdToUse);
+            
+            // Update status when done
+            await this.appraisalService.updateStatus(id, 'Generating', 'Visualizations created successfully');
+            break;
+            
+          case 'STEP_GENERATE_PDF':
+            if (!this.appraisalService) {
+              throw new Error('Appraisal service not initialized');
+            }
+            
+            // Get PostID
+            let pdfPostId = postId;
+            if (!pdfPostId) {
+              pdfPostId = await this.appraisalService.getWordPressPostId(id);
+            }
+            
+            if (!pdfPostId) {
+              throw new Error('Post ID is required for generating PDF');
+            }
+            
+            // Get public URL
+            const postUrlData = await this.sheetsService.getValues(`P${id}`);
+            const publicUrl = postUrlData?.[0]?.[0] || '';
+            
+            // Generate PDF and send email
+            await this.appraisalService.updateStatus(id, 'Finalizing', 'Creating PDF document');
+            const pdfResult = await this.appraisalService.finalize(id, pdfPostId, publicUrl);
+            await this.appraisalService.updateStatus(id, 'Finalizing', `PDF created: ${pdfResult.pdfLink}`);
+            break;
+            
+          case 'STEP_COMPLETE':
+            if (!this.appraisalService) {
+              throw new Error('Appraisal service not initialized');
+            }
+            
+            // Mark as complete
+            await this.appraisalService.updateStatus(id, 'Completed', 'Appraisal process completed successfully');
+            await this.appraisalService.complete(id);
             break;
             
           default:
-            // For now, just attempt to run the full process
-            this.logger.warn(`Full step-by-step processing not implemented yet. Starting from ${startStep}`);
+            this.logger.warn(`Unknown step: ${startStep}. Attempting to run full process.`);
             // This will fail if essential data is missing - implement proper step handlers
             await this.appraisalService.processAppraisal(id, appraisalValue, description, appraisalType);
         }
