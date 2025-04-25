@@ -172,3 +172,31 @@ Added a specialized utility for finding appraisals across both Pending and Compl
 2. Reduced code duplication across the codebase
 3. Consistent approach to finding appraisal data
 4. Centralized error handling for sheet searching operations
+
+## 2025-04-26: Enhanced Description Merging with GPT-4o Image Analysis
+
+### Summary
+
+Enhanced the STEP_MERGE_DESCRIPTIONS processing to incorporate GPT-4o image analysis, creating more detailed and accurate descriptions by analyzing the actual artwork images.
+
+### Changes Made
+
+1. Modified the STEP_MERGE_DESCRIPTIONS case in worker.js to use the image analysis capabilities
+2. Updated the analyzeImageAndMergeDescriptions method to support completed sheet operations
+3. Created a seamless flow from image extraction to AI analysis to description merging
+4. Implemented automatic metadata extraction from AI descriptions
+
+### Key Features
+
+1. **Image-Based Analysis**: Extracts the main image from WordPress and analyzes it with GPT-4o
+2. **Expert Art Analysis**: Uses specialized art appraisal prompts for detailed visual assessment
+3. **Unified Description Process**: Works with both pending and completed sheet appraisals
+4. **Automatic Title Generation**: Creates both brief and detailed titles from the analysis
+5. **Metadata Extraction**: Generates structured metadata about the artwork (medium, creator, etc.)
+
+### Benefits
+
+1. More accurate and detailed appraisal descriptions based on visual analysis
+2. Consistent implementation across both pending and completed appraisals
+3. Higher quality titles and metadata for appraisal documents
+4. Reduced manual work for appraisers through AI-assisted description generation

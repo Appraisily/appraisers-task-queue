@@ -145,42 +145,67 @@ class Worker {
             throw new Error('Appraisal service not initialized');
           }
           
-          // Check if this appraisal is in the pending or completed sheet
-          let usingCompletedSheet = false;
-          
-          // First try to get data from pending sheet
-          let existingData = await this.sheetsService.getValues(`J${id}:K${id}`);
-          
-          // If data not found in pending sheet, check completed sheet
-          if (!existingData || !existingData[0]) {
-            this.logger.info(`No data found in pending sheet for appraisal ${id}, checking completed sheet`);
-            try {
-              existingData = await this.sheetsService.getValues(`J${id}:K${id}`, true); // true = check completed sheet
-              if (existingData && existingData[0]) {
-                usingCompletedSheet = true;
-                this.logger.info(`Found appraisal ${id} in completed sheet`);
-              }
-            } catch (error) {
-              this.logger.error(`Error checking completed sheet: ${error.message}`);
+          try {
+            // Use the appraisalFinder to check and get data from either sheet
+            const { exists, usingCompletedSheet } = await this.appraisalFinder.appraisalExists(id);
+            
+            if (!exists) {
+              throw new Error(`Appraisal ${id} not found in either pending or completed sheets`);
             }
+            
+            // Get WordPress post ID first
+            const { data: postIdData } = await this.appraisalFinder.findAppraisalData(id, `G${id}`);
+            if (!postIdData || !postIdData[0] || !postIdData[0][0]) {
+              throw new Error(`No WordPress URL found for appraisal ${id} in either sheet`);
+            }
+            
+            // Extract post ID from WordPress URL
+            const wpUrl = postIdData[0][0];
+            const url = new URL(wpUrl);
+            const postId = url.searchParams.get('post');
+            
+            if (!postId) {
+              throw new Error(`Could not extract post ID from WordPress URL: ${wpUrl}`);
+            }
+            
+            // Get existing value and description data
+            const { data: existingData } = await this.appraisalFinder.findAppraisalData(id, `J${id}:K${id}`);
+            
+            if (!existingData || !existingData[0]) {
+              throw new Error('No existing data found for appraisal');
+            }
+            
+            const [value, existingDescription] = existingData[0];
+            // Use provided description or existing one
+            const descToUse = description || existingDescription;
+            
+            // Log which sheet we're using
+            this.logger.info(`Processing merge using ${usingCompletedSheet ? 'completed' : 'pending'} sheet for appraisal ${id}`);
+            
+            // Use the imageAnalysis method to analyze image and merge descriptions
+            const analysisResult = await this.analyzeImageAndMergeDescriptions(id, postId, descToUse, {
+              usingCompletedSheet: usingCompletedSheet
+            });
+            
+            // Update WordPress with the merged data
+            await this.appraisalService.updateStatus(id, 'Updating', 'Setting titles and metadata in WordPress', usingCompletedSheet);
+            
+            await this.appraisalService.wordpressService.updateAppraisalPost(postId, {
+              title: analysisResult.briefTitle,
+              detailedTitle: analysisResult.detailedTitle,
+              // Add extracted metadata
+              object_type: analysisResult.metadata?.object_type,
+              creator: analysisResult.metadata?.creator,
+              estimated_age: analysisResult.metadata?.estimated_age,
+              medium: analysisResult.metadata?.medium,
+              condition_summary: analysisResult.metadata?.condition_summary
+            });
+            
+            await this.appraisalService.updateStatus(id, 'Ready', 'Description merged and metadata updated', usingCompletedSheet);
+          } catch (error) {
+            this.logger.error(`Error in STEP_MERGE_DESCRIPTIONS for appraisal ${id}:`, error);
+            throw error;
           }
-          
-          if (!existingData || !existingData[0]) {
-            throw new Error('No existing data found for appraisal');
-          }
-          
-          const [value, existingDescription] = existingData[0];
-          // Use provided description or existing one
-          const descToUse = description || existingDescription;
-          if (!descToUse) {
-            throw new Error('No description provided or found for merge step');
-          }
-          
-          // Log which sheet we're using
-          this.logger.info(`Processing merge using ${usingCompletedSheet ? 'completed' : 'pending'} sheet for appraisal ${id}`);
-          
-          // Use the updated mergeDescriptions method with the usingCompletedSheet parameter
-          await this.appraisalService.mergeDescriptions(id, descToUse, usingCompletedSheet);
           
           break;
           
@@ -476,14 +501,15 @@ class Worker {
     this.activeProcesses.add(processId);
 
     try {
-      this.logger.info(`Starting image analysis and description merging for appraisal ${id}`);
+      const { usingCompletedSheet = false } = options;
+      this.logger.info(`Starting image analysis and description merging for appraisal ${id} using ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
       
       if (!this.appraisalService) {
         throw new Error('Appraisal service not initialized');
       }
 
       // Update status
-      await this.appraisalService.updateStatus(id, 'Analyzing', 'Retrieving image for AI analysis');
+      await this.appraisalService.updateStatus(id, 'Analyzing', 'Retrieving image for AI analysis', usingCompletedSheet);
 
       // 1. Get the main image from WordPress
       const wordpressService = this.appraisalService.wordpressService;
@@ -503,7 +529,7 @@ class Worker {
       this.logger.info(`Retrieved main image URL: ${mainImageUrl}`);
       
       // 2. Analyze the image with GPT-4o
-      await this.appraisalService.updateStatus(id, 'Analyzing', 'Generating AI image analysis with GPT-4o');
+      await this.appraisalService.updateStatus(id, 'Analyzing', 'Generating AI image analysis with GPT-4o', usingCompletedSheet);
       const openaiService = this.appraisalService.openaiService;
       
       const imageAnalysisPrompt = 
@@ -523,15 +549,15 @@ class Worker {
       this.logger.info(`Generated AI image description (${aiImageDescription.length} chars)`);
       
       // 3. Save the AI image description to the Google Sheet
-      await this.appraisalService.updateStatus(id, 'Updating', 'Saving AI image analysis');
-      await this.sheetsService.updateValues(`H${id}`, [[aiImageDescription]]);
+      await this.appraisalService.updateStatus(id, 'Updating', 'Saving AI image analysis', usingCompletedSheet);
+      await this.sheetsService.updateValues(`H${id}`, [[aiImageDescription]], usingCompletedSheet);
       
       // 4. Get or update customer description
       if (customerDescription) {
-        await this.sheetsService.updateValues(`K${id}`, [[customerDescription]]);
+        await this.sheetsService.updateValues(`K${id}`, [[customerDescription]], usingCompletedSheet);
       } else {
         // Try to get existing customer description if not provided
-        const existingData = await this.sheetsService.getValues(`K${id}`);
+        const existingData = await this.sheetsService.getValues(`K${id}`, usingCompletedSheet);
         if (existingData && existingData[0] && existingData[0][0]) {
           customerDescription = existingData[0][0];
         } else {
@@ -542,9 +568,9 @@ class Worker {
       }
       
       // 5. Merge descriptions (AI image analysis + customer description)
-      await this.appraisalService.updateStatus(id, 'Analyzing', 'Merging descriptions');
+      await this.appraisalService.updateStatus(id, 'Analyzing', 'Merging descriptions', usingCompletedSheet);
       
-      const mergeResult = await this.appraisalService.mergeDescriptions(id, customerDescription);
+      const mergeResult = await this.appraisalService.mergeDescriptions(id, customerDescription, usingCompletedSheet);
       
       // 6. Return all the data
       const result = {
@@ -558,7 +584,7 @@ class Worker {
         metadata: mergeResult.metadata
       };
       
-      await this.appraisalService.updateStatus(id, 'Ready', 'Image analysis and description merging completed');
+      await this.appraisalService.updateStatus(id, 'Ready', 'Image analysis and description merging completed', usingCompletedSheet);
       
       this.logger.info(`Successfully completed image analysis and description merging for appraisal ${id}`);
       

@@ -71,6 +71,27 @@ class WordPressService {
   }
 
   /**
+   * Get the permalink (public URL) for a WordPress post
+   * @param {string} postId - The WordPress post ID
+   * @returns {Promise<string>} - The permalink URL
+   */
+  async getPermalink(postId) {
+    try {
+      this.logger.info(`Getting permalink for post ${postId}`);
+      const postData = await this.getPost(postId);
+      
+      if (!postData || !postData.link) {
+        throw new Error(`No permalink found for post ${postId}`);
+      }
+      
+      return postData.link;
+    } catch (error) {
+      this.logger.error(`Error getting permalink for post ${postId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Update a WordPress post with appraisal data
    * @param {string} postId - The WordPress post ID
    * @param {Object} updateData - The data to update
