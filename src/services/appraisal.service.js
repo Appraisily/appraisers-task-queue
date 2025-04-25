@@ -12,43 +12,25 @@ class AppraisalService {
     this.appraisalFinder = new AppraisalFinder(sheetsService);
   }
 
-  async processAppraisal(id, value, description, appraisalType = 'Regular') {
+  async processAppraisal(id, value, description, appraisalType = 'Regular', usingCompletedSheet = null) {
     try {
-      // First check if appraisal exists and in which sheet
-      const { exists, usingCompletedSheet } = await this.appraisalFinder.appraisalExists(id);
-      
-      if (!exists) {
-        throw new Error(`Appraisal ${id} not found in either pending or completed sheets`);
+      // Skip sheet determination if usingCompletedSheet is provided as parameter
+      if (usingCompletedSheet === null) {
+        // Only check sheet if not explicitly provided
+        const existenceCheck = await this.appraisalFinder.appraisalExists(id);
+        if (!existenceCheck.exists) {
+          throw new Error(`Appraisal ${id} not found in either pending or completed sheets`);
+        }
+        usingCompletedSheet = existenceCheck.usingCompletedSheet;
       }
       
       this.logger.info(`Processing appraisal ${id} (value: ${value}, type: ${appraisalType}) using ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
       
-      // Update status
-      await this.updateStatus(id, 'Processing', 'Setting appraisal value', usingCompletedSheet);
+      // Update status (keep this - it's important to set the initial status)
+      await this.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
       
-      // Format the value before updating it in sheets
-      const formattedValue = this.formatAppraisalValue(value);
-      
-      // Set the value into sheets
-      try {
-        this.logger.info(`Updating cell J${id} with formatted value: "${formattedValue}" (type: ${typeof formattedValue})`);
-        await this.sheetsService.updateValues(`J${id}`, [[formattedValue]], usingCompletedSheet);
-      } catch (valueError) {
-        this.logger.error(`Error updating appraisal value in cell J${id}:`, valueError);
-        this.logger.error(`Original value: "${value}" (type: ${typeof value})`);
-        throw new Error(`Failed to update appraisal value: ${valueError.message}`);
-      }
-      
-      // Update the description if provided
-      if (description) {
-        await this.updateStatus(id, 'Processing', 'Setting description', usingCompletedSheet);
-        try {
-          await this.sheetsService.updateValues(`K${id}`, [[description]], usingCompletedSheet);
-        } catch (descError) {
-          this.logger.error(`Error updating description in cell K${id}:`, descError);
-          throw new Error(`Failed to update description: ${descError.message}`);
-        }
-      }
+      // Skip value formatting and J column update since value from sheets is already correctly formatted
+      // The input value will be used as-is for WordPress updates later
       
       // Update status
       await this.updateStatus(id, 'Processing', 'Merging description with AI analysis', usingCompletedSheet);
@@ -56,8 +38,8 @@ class AppraisalService {
       // Merge descriptions - pass along which sheet to use
       await this.mergeDescriptions(id, description, usingCompletedSheet);
       
-      // Update WordPress
-      const { postId, publicUrl, usingCompletedSheet: wpUsingCompletedSheet } = await this.updateWordPress(id, formattedValue, description, appraisalType);
+      // Update WordPress with the raw value (no formatting needed)
+      const { postId, publicUrl, usingCompletedSheet: wpUsingCompletedSheet } = await this.updateWordPress(id, value, description, appraisalType);
       
       // Store public URL
       await this.sheetsService.updateValues(`P${id}`, [[publicUrl]], wpUsingCompletedSheet);
@@ -72,7 +54,7 @@ class AppraisalService {
       await this.updateStatus(id, 'Finalizing', `PDF created: ${pdfResult.pdfLink}`, wpUsingCompletedSheet);
       
       // Mark as complete only if not from completed sheet
-      if (!wpUsingCompletedSheet) {
+      if (!usingCompletedSheet) {
         await this.complete(id);
       }
       
@@ -80,7 +62,7 @@ class AppraisalService {
       return { success: true, message: 'Appraisal processed successfully' };
     } catch (error) {
       this.logger.error(`Error processing appraisal ${id}:`, error);
-      await this.updateStatus(id, 'Failed', `Error: ${error.message}`);
+      await this.updateStatus(id, 'Failed', `Error: ${error.message}`, usingCompletedSheet);
       throw error;
     }
   }
@@ -191,10 +173,44 @@ class AppraisalService {
     
     const post = await this.wordpressService.getPost(postId);
     
+    // Safely convert value to string for WordPress, handling Promise objects
+    let safeValue;
+    try {
+      // If value is a Promise object (which can happen in some flows)
+      if (value instanceof Promise) {
+        this.logger.warn(`Value for appraisal ${id} is a Promise object, resolving it first`);
+        try {
+          // Try to resolve the Promise
+          const resolvedValue = await value;
+          safeValue = String(resolvedValue);
+        } catch (promiseError) {
+          this.logger.error(`Failed to resolve Promise value: ${promiseError.message}`);
+          safeValue = "0";
+        }
+      } else if (value === undefined || value === null) {
+        safeValue = "0";
+      } else if (typeof value === 'object') {
+        this.logger.warn(`Value is an object: ${JSON.stringify(value)}, using 0 instead`);
+        safeValue = "0";
+      } else {
+        safeValue = String(value);
+      }
+      
+      // One last check to make sure we have a valid value
+      if (safeValue === "undefined" || safeValue === "null" || safeValue === "NaN") {
+        safeValue = "0";
+      }
+    } catch (err) {
+      this.logger.error(`Error formatting value for WordPress: ${err.message}`);
+      safeValue = "0";
+    }
+    
+    this.logger.info(`Using value for WordPress post ${postId}: ${safeValue}`);
+    
     // Check if mergedDescription is a string or an object with the new structure
     let briefTitle, detailedTitle, description;
     
-    if (typeof mergedDescription === 'object') {
+    if (typeof mergedDescription === 'object' && mergedDescription !== null && !Array.isArray(mergedDescription)) {
       // New structure with brief and detailed titles
       briefTitle = mergedDescription.briefTitle;
       detailedTitle = mergedDescription.detailedTitle;
@@ -230,16 +246,15 @@ class AppraisalService {
     
     // Log final title selection
     this.logger.info(`Using brief title: "${briefTitle}"`);
-    this.logger.info(`Using detailed title (first 50 chars): "${detailedTitle.substring(0, 50)}..."`);
+    this.logger.info(`Using detailed title (first 50 chars): "${detailedTitle?.substring(0, 50)}..."`);
     
     // Simplified WordPress update with only essential fields
     const updatedPost = await this.wordpressService.updateAppraisalPost(postId, {
       title: briefTitle,
       content: post.content?.rendered || '',
-      value: value.toString(),
+      value: safeValue, // Use safely formatted value
       appraisalType: appraisalType,
       detailedTitle: detailedTitle
-      // Removed all metadata fields as requested
     });
 
     return {

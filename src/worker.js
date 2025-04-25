@@ -120,13 +120,13 @@ class Worker {
             await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
             
             // Start full processing, passing the sheet context
-            // Note: processAppraisal internally uses appraisalFinder again, which is fine as it uses the cache.
-            await this.appraisalService.processAppraisal(id, valueToUse, descToUse, appraisalType);
+            // Pass the usingCompletedSheet flag explicitly to processAppraisal
+            await this.appraisalService.processAppraisal(id, valueToUse, descToUse, appraisalType, usingCompletedSheet);
           } catch (error) {
-             // Log the error and use the determined sheet context for status update
-             this.logger.error(`Error in STEP_SET_VALUE for appraisal ${id} on ${usingCompletedSheet ? 'Completed' : 'Pending'} sheet:`, error);
-             await this.appraisalService.updateStatus(id, 'Failed', `STEP_SET_VALUE Error: ${error.message}`, usingCompletedSheet);
-             throw error; // Re-throw after logging and status update
+            // Log the error and use the determined sheet context for status update
+            this.logger.error(`Error in STEP_SET_VALUE for appraisal ${id} on ${usingCompletedSheet ? 'Completed' : 'Pending'} sheet:`, error);
+            await this.appraisalService.updateStatus(id, 'Failed', `STEP_SET_VALUE Error: ${error.message}`, usingCompletedSheet);
+            throw error; // Re-throw after logging and status update
           }
           break;
           
@@ -244,14 +244,14 @@ class Worker {
             }
             
             // Update status
-            await this.appraisalService.updateStatus(id, 'Generating', 'Creating visualizations', usingCompletedSheetForVis);
+            await this.appraisalService.updateStatus(id, 'Generating', 'Creating complete appraisal report', usingCompletedSheetForVis);
             
             // Complete the report (which includes visualizations)
             // wordpressService is likely accessed via appraisalService
             await this.appraisalService.wordpressService.completeAppraisalReport(postIdToUse);
             
             // Update status when done
-            await this.appraisalService.updateStatus(id, 'Generating', 'Visualizations created successfully', usingCompletedSheetForVis);
+            await this.appraisalService.updateStatus(id, 'Generating', 'Appraisal report created successfully', usingCompletedSheetForVis);
           } catch (error) {
              this.logger.error(`Error in STEP_GENERATE_VISUALIZATION for appraisal ${id} on ${usingCompletedSheetForVis ? 'Completed' : 'Pending'} sheet:`, error);
              await this.appraisalService.updateStatus(id, 'Failed', `GEN_VIS Error: ${error.message}`, usingCompletedSheetForVis);
@@ -327,12 +327,13 @@ class Worker {
             const descriptionFromSheet = appraisalData.K; // Column K
             
             // Process appraisal with existing data
-            // Note: processAppraisal internally uses appraisalFinder again, which is fine as it uses the cache.
+            // Pass the usingCompletedSheet flag explicitly
             await this.appraisalService.processAppraisal(
               id, 
               appraisalValueFromSheet, 
               descriptionFromSheet, 
-              type
+              type,
+              usingCompletedSheetForReport
             );
            } catch (error) {
              this.logger.error(`Error in STEP_BUILD_REPORT for appraisal ${id} on ${usingCompletedSheetForReport ? 'Completed' : 'Pending'} sheet:`, error);
@@ -357,12 +358,13 @@ class Worker {
              const defaultValue = defaultData.J; // Column J
              const defaultDesc = defaultData.K; // Column K
              
-             // Note: processAppraisal internally uses appraisalFinder again, which is fine as it uses the cache.
+             // Pass the usingCompletedSheet flag explicitly
              await this.appraisalService.processAppraisal(
                id,
                defaultValue,
                defaultDesc,
-               defaultType
+               defaultType,
+               usingCompletedSheetForDefault
              );
            } catch (error) {
              this.logger.error(`Error in default processing step for appraisal ${id} on ${usingCompletedSheetForDefault ? 'Completed' : 'Pending'} sheet:`, error);
@@ -411,88 +413,100 @@ class Worker {
     this.activeProcesses.add(processId);
 
     // Extract usingCompletedSheet from options, default to false if not provided
-    const { usingCompletedSheet = false } = options; 
+    const { usingCompletedSheet = false } = options;
 
     try {
       this.logger.info(`Starting image analysis and description merging for appraisal ${id} using ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
       
-      // Update status in Google Sheets only, using the determined sheet
-      await this.appraisalService.updateStatus(id, 'Analyzing', 'Retrieving image for AI analysis', usingCompletedSheet);
-
-      // 1. Get the main image from WordPress
-      const wordpressService = this.appraisalService.wordpressService;
-      this.logger.info(`Requesting WordPress post data for post ID ${postId}`);
-      const postData = await wordpressService.getPost(postId);
+      // First check if we already have an AI description in column H
+      await this.appraisalService.updateStatus(id, 'Analyzing', 'Checking for existing AI description', usingCompletedSheet);
+      const existingAiDesc = await this.sheetsService.getValues(`H${id}`, usingCompletedSheet);
+      let aiImageDescription = null;
       
-      if (!postData) {
-        this.logger.error(`Failed to retrieve post data for post ID ${postId}`);
-        throw new Error(`Failed to retrieve post data for post ID ${postId}`);
-      }
-      
-      // Simplified logging
-      this.logger.info(`Post retrieval successful. Post ID: ${postData.id}`);
-      
-      // Get the main image URL from ACF fields
-      let mainImageUrl = null;
-      
-      if (postData.acf && postData.acf.main) {
-        // Just log the image ID instead of the full structure
-        if (typeof postData.acf.main === 'number' || typeof postData.acf.main === 'string') {
-          this.logger.info(`Found 'main' ACF field with value: ${postData.acf.main}`);
-        } else {
-          this.logger.info(`Found 'main' ACF field (object type)`);
-        }
-        
-        // Use the WordPress service's getImageUrl method
-        mainImageUrl = await wordpressService.getImageUrl(postData.acf.main);
-        
-        if (mainImageUrl) {
-          this.logger.info(`Successfully retrieved main image URL: ${mainImageUrl}`);
-        } else {
-          this.logger.warn(`Failed to retrieve URL from main image field`);
-        }
+      if (existingAiDesc && existingAiDesc[0] && existingAiDesc[0][0]) {
+        // Use existing AI description if available
+        aiImageDescription = existingAiDesc[0][0];
+        this.logger.info(`Using existing AI description found in column H for appraisal ${id} (${aiImageDescription.length} chars)`);
       } else {
-        this.logger.warn(`ACF 'main' field not found in post data`);
+        // Only perform image analysis if we don't already have an AI description
+        await this.appraisalService.updateStatus(id, 'Analyzing', 'Retrieving image for AI analysis', usingCompletedSheet);
+
+        // 1. Get the main image from WordPress
+        const wordpressService = this.appraisalService.wordpressService;
+        this.logger.info(`Requesting WordPress post data for post ID ${postId}`);
+        const postData = await wordpressService.getPost(postId);
+        
+        if (!postData) {
+          this.logger.error(`Failed to retrieve post data for post ID ${postId}`);
+          throw new Error(`Failed to retrieve post data for post ID ${postId}`);
+        }
+        
+        // Simplified logging
+        this.logger.info(`Post retrieval successful. Post ID: ${postData.id}`);
+        
+        // Get the main image URL from ACF fields
+        let mainImageUrl = null;
+        
+        if (postData.acf && postData.acf.main) {
+          // Just log the image ID instead of the full structure
+          if (typeof postData.acf.main === 'number' || typeof postData.acf.main === 'string') {
+            this.logger.info(`Found 'main' ACF field with value: ${postData.acf.main}`);
+          } else {
+            this.logger.info(`Found 'main' ACF field (object type)`);
+          }
+          
+          // Use the WordPress service's getImageUrl method
+          mainImageUrl = await wordpressService.getImageUrl(postData.acf.main);
+          
+          if (mainImageUrl) {
+            this.logger.info(`Successfully retrieved main image URL: ${mainImageUrl}`);
+          } else {
+            this.logger.warn(`Failed to retrieve URL from main image field`);
+          }
+        } else {
+          this.logger.warn(`ACF 'main' field not found in post data`);
+        }
+        
+        // If main image not found, try to use the featured image
+        if (!mainImageUrl && postData.featured_media_url) {
+          mainImageUrl = postData.featured_media_url;
+          this.logger.info(`Using featured image URL instead: ${mainImageUrl}`);
+        }
+        
+        if (!mainImageUrl) {
+          this.logger.error(`No image found in WordPress post. API URL used: ${this.appraisalService.wordpressService.apiUrl}/appraisals/${postId}`);
+          throw new Error('No main image found in the WordPress post');
+        }
+        
+        this.logger.info(`Retrieved main image URL: ${mainImageUrl}`);
+        
+        // 2. Analyze the image with GPT-4o
+        await this.appraisalService.updateStatus(id, 'Analyzing', 'Generating AI image analysis with GPT-4o', usingCompletedSheet);
+        const openaiService = this.appraisalService.openaiService;
+        
+        const imageAnalysisPrompt = 
+          "You are an expert art and antiquity appraiser with decades of experience. " +
+          "Please analyze this image thoroughly and provide a detailed, professional description of what you see. " +
+          "Focus on all aspects including: style, period, materials, condition, craftsmanship, artistic significance, " +
+          "and any notable features. If it's an antiquity, describe its historical context and significance. " +
+          "Be comprehensive and use appropriate technical terminology. " +
+          "Your description will be used for a professional appraisal document.";
+        
+        aiImageDescription = await openaiService.analyzeImageWithGPT4o(mainImageUrl, imageAnalysisPrompt);
+        
+        if (!aiImageDescription) {
+          throw new Error('Failed to generate AI image description');
+        }
+        
+        this.logger.info(`Generated new AI image description (${aiImageDescription.length} chars)`);
+        
+        // 3. Save the AI image description to the Google Sheet
+        await this.appraisalService.updateStatus(id, 'Updating', 'Saving AI image analysis', usingCompletedSheet);
+        await this.sheetsService.updateValues(`H${id}`, [[aiImageDescription]], usingCompletedSheet);
       }
       
-      // If main image not found, try to use the featured image
-      if (!mainImageUrl && postData.featured_media_url) {
-        mainImageUrl = postData.featured_media_url;
-        this.logger.info(`Using featured image URL instead: ${mainImageUrl}`);
-      }
-      
-      if (!mainImageUrl) {
-        this.logger.error(`No image found in WordPress post. API URL used: ${this.appraisalService.wordpressService.apiUrl}/appraisals/${postId}`);
-        throw new Error('No main image found in the WordPress post');
-      }
-      
-      this.logger.info(`Retrieved main image URL: ${mainImageUrl}`);
-      
-      // 2. Analyze the image with GPT-4o
-      await this.appraisalService.updateStatus(id, 'Analyzing', 'Generating AI image analysis with GPT-4o', usingCompletedSheet);
-      const openaiService = this.appraisalService.openaiService;
-      
-      const imageAnalysisPrompt = 
-        "You are an expert art and antiquity appraiser with decades of experience. " +
-        "Please analyze this image thoroughly and provide a detailed, professional description of what you see. " +
-        "Focus on all aspects including: style, period, materials, condition, craftsmanship, artistic significance, " +
-        "and any notable features. If it's an antiquity, describe its historical context and significance. " +
-        "Be comprehensive and use appropriate technical terminology. " +
-        "Your description will be used for a professional appraisal document.";
-      
-      const aiImageDescription = await openaiService.analyzeImageWithGPT4o(mainImageUrl, imageAnalysisPrompt);
-      
-      if (!aiImageDescription) {
-        throw new Error('Failed to generate AI image description');
-      }
-      
-      this.logger.info(`Generated AI image description (${aiImageDescription.length} chars)`);
-      
-      // 3. Save the AI image description to the Google Sheet
-      await this.appraisalService.updateStatus(id, 'Updating', 'Saving AI image analysis', usingCompletedSheet);
-      await this.sheetsService.updateValues(`H${id}`, [[aiImageDescription]], usingCompletedSheet);
-      
-      // 4. Get or update customer description
+      // 4. Get or update customer description (appraiser's description from column K)
+      // The appraiser's description takes precedence
       if (customerDescription) {
         await this.sheetsService.updateValues(`K${id}`, [[customerDescription]], usingCompletedSheet);
       } else {
@@ -507,8 +521,9 @@ class Worker {
         }
       }
       
-      // 5. Merge descriptions (AI image analysis + customer description)
-      await this.appraisalService.updateStatus(id, 'Analyzing', 'Merging descriptions', usingCompletedSheet);
+      // 5. Merge descriptions (AI image analysis + customer/appraiser description)
+      // Note: The OpenAI service is configured to prioritize the appraiser's description (first parameter)
+      await this.appraisalService.updateStatus(id, 'Analyzing', 'Merging descriptions (prioritizing appraiser\'s description)', usingCompletedSheet);
       
       const mergeResult = await this.appraisalService.mergeDescriptions(id, customerDescription, usingCompletedSheet);
       
