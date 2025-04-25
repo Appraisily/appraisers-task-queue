@@ -143,3 +143,32 @@ const result = await response.json();
 2. Added node-fetch for image downloading
 3. Implemented base64 encoding for image processing
 4. Structured JSON responses for better integration
+5. Cross-sheet appraisal lookup capabilities
+
+## 2025-04-26: Added AppraisalFinder Utility
+
+### Summary
+
+Added a specialized utility for finding appraisals across both Pending and Completed sheets, eliminating duplicate code and fixing issues with processing completed appraisals.
+
+### Changes Made
+
+1. Created `AppraisalFinder` utility class in `utils/appraisal-finder.js`
+2. Updated `Worker` and `AppraisalService` to use the new utility
+3. Fixed the `STEP_SET_VALUE` processing to look in both sheets
+4. Refactored service methods to use consistent sheet searching pattern
+5. Improved error handling for when appraisals cannot be found
+
+### Key Features
+
+1. **Cross-Sheet Search**: Automatically searches for appraisal data in both pending and completed sheets
+2. **Unified Interface**: Provides a consistent interface for finding appraisal data
+3. **Improved Error Reporting**: Better error messages when appraisals cannot be found
+4. **Code Reusability**: Eliminates duplicate code for sheet searching logic
+
+### Benefits
+
+1. Completed appraisals can now be reprocessed without errors
+2. Reduced code duplication across the codebase
+3. Consistent approach to finding appraisal data
+4. Centralized error handling for sheet searching operations

@@ -1,4 +1,5 @@
 const { createLogger } = require('../utils/logger');
+const AppraisalFinder = require('../utils/appraisal-finder');
 
 class AppraisalService {
   constructor(sheetsService, wordpressService, openaiService, emailService, pdfService) {
@@ -8,49 +9,61 @@ class AppraisalService {
     this.openaiService = openaiService;
     this.emailService = emailService;
     this.pdfService = pdfService;
+    this.appraisalFinder = new AppraisalFinder(sheetsService);
   }
 
-  async processAppraisal(id, value, description, userProvidedType = null) {
+  async processAppraisal(id, value, description, appraisalType = 'Regular') {
     try {
-      // Update initial status
-      await this.updateStatus(id, 'Processing', 'Starting appraisal workflow');
-
-      // Step 1: Set Value
-      await this.updateStatus(id, 'Processing', 'Setting appraisal value');
-      await this.setAppraisalValue(id, value, description);
+      // First check if appraisal exists and in which sheet
+      const { exists, usingCompletedSheet } = await this.appraisalFinder.appraisalExists(id);
       
-      // Step 2: Merge Descriptions and Generate Titles
-      await this.updateStatus(id, 'Analyzing', 'Merging descriptions and generating titles');
-      const titleAndDescription = await this.mergeDescriptions(id, description);
+      if (!exists) {
+        throw new Error(`Appraisal ${id} not found in either pending or completed sheets`);
+      }
       
-      // Step 3: Get appraisal type from Column B
-      await this.updateStatus(id, 'Analyzing', 'Determining appraisal type');
-      const spreadsheetType = await this.getAppraisalType(id);
-      // Use user provided type if available, otherwise use spreadsheet type
-      const appraisalType = userProvidedType || spreadsheetType;
-      this.logger.info(`Using appraisal type: ${appraisalType} (${userProvidedType ? 'from message' : 'from spreadsheet'})`);
+      this.logger.info(`Processing appraisal ${id} (value: ${value}, type: ${appraisalType}) using ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
       
-      // Step 4: Update WordPress with type
-      await this.updateStatus(id, 'Updating', 'Setting titles and metadata in WordPress');
-      const { postId, publicUrl } = await this.updateWordPress(id, value, titleAndDescription, appraisalType);
+      // Update status
+      await this.updateStatus(id, 'Processing', 'Setting appraisal value', usingCompletedSheet);
       
-      // Save public URL to spreadsheet
-      await this.sheetsService.updateValues(`P${id}`, [[publicUrl]]);
+      // Set the value into sheets
+      const formattedValue = this.formatAppraisalValue(value);
+      await this.sheetsService.updateValues(`J${id}`, [[formattedValue]], usingCompletedSheet);
       
-      // Step 5: Complete Appraisal Report
-      await this.updateStatus(id, 'Generating', 'Building full appraisal report');
-      await this.wordpressService.completeAppraisalReport(postId);
+      // Update the description if provided
+      if (description) {
+        await this.updateStatus(id, 'Processing', 'Setting description', usingCompletedSheet);
+        await this.sheetsService.updateValues(`K${id}`, [[description]], usingCompletedSheet);
+      }
       
-      // Step 6: Generate PDF and Send Email
-      await this.updateStatus(id, 'Finalizing', 'Creating PDF document');
-      const pdfResult = await this.finalize(id, postId, publicUrl);
-      await this.updateStatus(id, 'Finalizing', `PDF created: ${pdfResult.pdfLink}`);
+      // Update status
+      await this.updateStatus(id, 'Processing', 'Merging description with AI analysis', usingCompletedSheet);
       
-      // Step 7: Mark as Complete
-      await this.updateStatus(id, 'Completed', 'Appraisal process completed successfully');
-      await this.complete(id);
+      // Merge descriptions - pass along which sheet to use
+      await this.mergeDescriptions(id, description, usingCompletedSheet);
       
-      this.logger.info(`Successfully processed appraisal ${id}`);
+      // Update WordPress
+      const { postId, publicUrl, usingCompletedSheet: wpUsingCompletedSheet } = await this.updateWordPress(id, value, description, appraisalType);
+      
+      // Store public URL
+      await this.sheetsService.updateValues(`P${id}`, [[publicUrl]], wpUsingCompletedSheet);
+      
+      // Generate visualization
+      await this.updateStatus(id, 'Generating', 'Building full appraisal report', wpUsingCompletedSheet);
+      await this.visualize(id, postId, wpUsingCompletedSheet);
+      
+      // Create PDF
+      await this.updateStatus(id, 'Finalizing', 'Creating PDF document', wpUsingCompletedSheet);
+      const pdfResult = await this.finalize(id, postId, publicUrl, wpUsingCompletedSheet);
+      await this.updateStatus(id, 'Finalizing', `PDF created: ${pdfResult.pdfLink}`, wpUsingCompletedSheet);
+      
+      // Mark as complete only if not from completed sheet
+      if (!wpUsingCompletedSheet) {
+        await this.complete(id);
+      }
+      
+      this.logger.info(`Appraisal ${id} processing completed`);
+      return { success: true, message: 'Appraisal processed successfully' };
     } catch (error) {
       this.logger.error(`Error processing appraisal ${id}:`, error);
       await this.updateStatus(id, 'Failed', `Error: ${error.message}`);
@@ -130,8 +143,8 @@ class AppraisalService {
     await this.sheetsService.updateValues(`J${id}:K${id}`, [[value, description]]);
   }
 
-  async mergeDescriptions(id, description) {
-    const values = await this.sheetsService.getValues(`H${id}`);
+  async mergeDescriptions(id, description, useCompletedSheet = false) {
+    const values = await this.sheetsService.getValues(`H${id}`, useCompletedSheet);
     
     // Add null checking to prevent "Cannot read properties of undefined" error
     if (!values || !values[0] || values[0][0] === undefined) {
@@ -143,8 +156,8 @@ class AppraisalService {
       // Extract the components from the result
       const { mergedDescription, briefTitle, detailedTitle, metadata } = result;
       
-      // Save merged description to Column L
-      await this.sheetsService.updateValues(`L${id}`, [[mergedDescription]]);
+      // Save merged description to Column L, using the correct sheet
+      await this.sheetsService.updateValues(`L${id}`, [[mergedDescription]], useCompletedSheet);
       
       // Log the titles and metadata for debugging
       this.logger.info(`Generated brief title: ${briefTitle}`);
@@ -166,8 +179,8 @@ class AppraisalService {
     // Extract the components from the result
     const { mergedDescription, briefTitle, detailedTitle, metadata } = result;
     
-    // Save merged description to Column L
-    await this.sheetsService.updateValues(`L${id}`, [[mergedDescription]]);
+    // Save merged description to Column L, using the correct sheet
+    await this.sheetsService.updateValues(`L${id}`, [[mergedDescription]], useCompletedSheet);
     
     // Log the titles and metadata for debugging
     this.logger.info(`Generated brief title: ${briefTitle}`);
@@ -184,28 +197,36 @@ class AppraisalService {
   }
 
   async getAppraisalType(id) {
-    const values = await this.sheetsService.getValues(`B${id}`);
-    this.logger.info(`[DEBUG] Column B value type: ${typeof values?.[0]?.[0]}`);
-    this.logger.info(`[DEBUG] Column B raw value: ${values?.[0]?.[0]}`);
-    if (!values || !values[0] || !values[0][0]) {
-      this.logger.warn(`No appraisal type found for ID ${id}, using default`);
-      return 'Regular';
+    try {
+      const { data, usingCompletedSheet } = await this.appraisalFinder.findAppraisalData(id, `B${id}`);
+      
+      this.logger.info(`[DEBUG] Column B value type: ${typeof data?.[0]?.[0]}`);
+      this.logger.info(`[DEBUG] Column B raw value: ${data?.[0]?.[0]}`);
+      
+      if (!data || !data[0] || !data[0][0]) {
+        this.logger.warn(`No appraisal type found for ID ${id}, using default`);
+        return 'Regular';
+      }
+      
+      let appraisalType = data[0][0].toString();
+      
+      // Validate and normalize appraisal type
+      const validTypes = ['Regular', 'IRS', 'Insurance'];
+      if (!validTypes.includes(appraisalType)) {
+        this.logger.warn(`Invalid appraisal type "${appraisalType}" found for ID ${id}, using default`);
+        appraisalType = 'Regular';
+      }
+      
+      this.logger.info(`[DEBUG] Processed appraisal type: ${appraisalType} (using ${usingCompletedSheet ? 'completed' : 'pending'} sheet)`);
+      return appraisalType;
+    } catch (error) {
+      this.logger.error(`Error getting appraisal type for ${id}:`, error);
+      return 'Regular'; // Default fallback
     }
-    let appraisalType = values[0][0].toString();
-    
-    // Validate and normalize appraisal type
-    const validTypes = ['Regular', 'IRS', 'Insurance'];
-    if (!validTypes.includes(appraisalType)) {
-      this.logger.warn(`Invalid appraisal type "${appraisalType}" found for ID ${id}, using default`);
-      appraisalType = 'Regular';
-    }
-    
-    this.logger.info(`[DEBUG] Processed appraisal type: ${appraisalType}`);
-    return appraisalType;
   }
 
   async updateWordPress(id, value, mergedDescription, appraisalType) {
-    const postId = await this.getWordPressPostId(id);
+    const { postId, usingCompletedSheet } = await this.getWordPressPostId(id);
     
     const post = await this.wordpressService.getPost(postId);
     
@@ -297,7 +318,8 @@ class AppraisalService {
 
     return {
       postId,
-      publicUrl: updatedPost.publicUrl
+      publicUrl: updatedPost.publicUrl,
+      usingCompletedSheet
     };
   }
 
@@ -311,45 +333,76 @@ class AppraisalService {
   }
 
   async getWordPressPostId(id) {
-    // First check pending sheet
-    let values = await this.sheetsService.getValues(`G${id}`);
-    
-    // If not found, check completed sheet
-    if (!values || !values[0] || !values[0][0]) {
-      this.logger.info(`No WordPress URL found in pending sheet for appraisal ${id}, checking completed sheet`);
-      values = await this.sheetsService.getValues(`G${id}`, true);
-    }
-    
-    if (!values || !values[0] || !values[0][0]) {
-      throw new Error(`No WordPress URL found for appraisal ${id} in either sheet`);
-    }
+    try {
+      const { data, usingCompletedSheet } = await this.appraisalFinder.findAppraisalData(id, `G${id}`);
+      
+      if (!data || !data[0] || !data[0][0]) {
+        throw new Error(`No WordPress URL found for appraisal ${id} in either sheet`);
+      }
 
-    const wpUrl = values[0][0];
-    const url = new URL(wpUrl);
-    const postId = url.searchParams.get('post');
-    
-    if (!postId) {
-      throw new Error(`Could not extract post ID from WordPress URL: ${wpUrl}`);
-    }
+      const wpUrl = data[0][0];
+      const url = new URL(wpUrl);
+      const postId = url.searchParams.get('post');
+      
+      if (!postId) {
+        throw new Error(`Could not extract post ID from WordPress URL: ${wpUrl}`);
+      }
 
-    this.logger.info(`Extracted WordPress post ID: ${postId} from URL: ${wpUrl}`);
-    return postId;
+      this.logger.info(`Extracted WordPress post ID: ${postId} from URL: ${wpUrl} (using ${usingCompletedSheet ? 'completed' : 'pending'} sheet)`);
+      
+      return {
+        postId,
+        usingCompletedSheet
+      };
+    } catch (error) {
+      this.logger.error(`Error getting WordPress post ID for appraisal ${id}:`, error);
+      throw error;
+    }
   }
 
-  async finalize(id, postId, publicUrl) {
+  async visualize(id, postId, usingCompletedSheet = false) {
+    try {
+      this.logger.info(`Generating visualizations for appraisal ${id} (WordPress post ID: ${postId})`);
+      
+      // Call WordPress service to generate report
+      await this.wordpressService.completeAppraisalReport(postId);
+      
+      await this.updateStatus(id, 'Generating', 'Visualizations created successfully', usingCompletedSheet);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`Error generating visualizations for appraisal ${id}:`, error);
+      await this.updateStatus(id, 'Error', `Failed to generate visualizations: ${error.message}`, usingCompletedSheet);
+      throw error;
+    }
+  }
+
+  async finalize(id, postId, publicUrl, usingCompletedSheet = false) {
     // Generate PDF
     this.logger.info(`Generating PDF for appraisal ${id} (postId: ${postId})`);
     const { pdfLink, docLink } = await this.pdfService.generatePDF(postId);
-    await this.sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]]);
+    await this.sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]], usingCompletedSheet);
     this.logger.info(`PDF generated successfully: ${pdfLink}`);
     
-    // Get customer data
+    // Get customer data using the appraisalFinder
     this.logger.info(`Retrieving customer data for appraisal ${id}`);
-    const customerData = await this.getCustomerData(id);
+    const { data: customerDataRows } = await this.appraisalFinder.findAppraisalData(id, `D${id}:E${id}`);
+    
+    let email = 'NA';
+    let name = 'NA';
+    
+    if (customerDataRows && customerDataRows[0] && customerDataRows[0].length >= 2) {
+      [email, name] = customerDataRows[0];
+      // If either value is empty, set it to 'NA'
+      email = email || 'NA';
+      name = name || 'NA';
+    }
+    
+    const customerData = { email, name };
+    this.logger.info(`Customer data for appraisal ${id}: email=${email}, name=${name}`);
     
     // Send email notification and track delivery
     this.logger.info(`Sending completion email to ${customerData.email}`);
-    await this.updateStatus(id, 'Finalizing', `Sending email notification to ${customerData.email}`);
+    await this.updateStatus(id, 'Finalizing', `Sending email notification to ${customerData.email}`, usingCompletedSheet);
     
     const emailResult = await this.emailService.sendAppraisalCompletedEmail(
       customerData.email,
@@ -362,36 +415,18 @@ class AppraisalService {
 
     // Save email delivery status to Column Q
     const emailStatus = `Email sent on ${emailResult.timestamp} (ID: ${emailResult.messageId})`;
-    await this.sheetsService.updateValues(`Q${id}`, [[emailStatus]]);
+    await this.sheetsService.updateValues(`Q${id}`, [[emailStatus]], usingCompletedSheet);
     
     this.logger.info(`Email delivery status saved for appraisal ${id}`);
     
     return { pdfLink, docLink, emailResult };
   }
 
-  async getCustomerData(id) {
-    const values = await this.sheetsService.getValues(`D${id}:E${id}`);
-    
-    let email = 'NA';
-    let name = 'NA';
-    
-    if (values && values[0] && values[0].length >= 2) {
-      [email, name] = values[0];
-      // If either value is empty, set it to 'NA'
-      email = email || 'NA';
-      name = name || 'NA';
-    }
-
-    this.logger.info(`Customer data for appraisal ${id}: email=${email}, name=${name}`);
-
-    return {
-      email,
-      name
-    };
-  }
-
   async complete(id) {
     try {
+      // Mark as complete
+      await this.updateStatus(id, 'Completed', 'Appraisal process completed successfully');
+      
       // Then move to completed sheet
       await this.sheetsService.moveToCompleted(id);
       
@@ -400,6 +435,28 @@ class AppraisalService {
       this.logger.error(`Error completing appraisal ${id}:`, error);
       throw error;
     }
+  }
+
+  async formatAppraisalValue(value) {
+    // Ensure value is a number or numeric string
+    if (value === null || value === undefined) {
+      return '0';
+    }
+    
+    // Convert to string if it's not already
+    let stringValue = String(value).trim();
+    
+    // If it begins with a currency symbol, remove it
+    stringValue = stringValue.replace(/^[$€£¥]/, '');
+    
+    // Remove any commas that might be present for thousands
+    stringValue = stringValue.replace(/,/g, '');
+    
+    // Try to parse as a number, defaulting to 0 if it fails
+    const numValue = parseFloat(stringValue) || 0;
+    
+    // Return the formatted value
+    return numValue.toString();
   }
 }
 

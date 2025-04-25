@@ -6,6 +6,7 @@ const OpenAIService = require('./services/openai.service');
 const EmailService = require('./services/email.service');
 const PDFService = require('./services/pdf.service');
 const AppraisalService = require('./services/appraisal.service');
+const AppraisalFinder = require('./utils/appraisal-finder');
 
 class Worker {
   constructor() {
@@ -14,6 +15,7 @@ class Worker {
     this.appraisalService = null;
     this.activeProcesses = new Set();
     this.isShuttingDown = false;
+    this.appraisalFinder = null;
   }
 
   async initialize() {
@@ -54,6 +56,9 @@ class Worker {
         pdfService
       );
 
+      // Initialize the appraisal finder
+      this.appraisalFinder = new AppraisalFinder(this.sheetsService);
+      
       this.logger.info('Worker initialized successfully');
     } catch (error) {
       this.logger.error('Failed to initialize worker:', error);
@@ -93,12 +98,45 @@ class Worker {
       // Process based on step
       switch (startStep) {
         case 'STEP_SET_VALUE':
-          // First step, so we need all fields
-          if (!appraisalValue && !description) {
-            throw new Error('Missing required fields for STEP_SET_VALUE: appraisalValue or description');
+          // Before error checking, verify if the appraisal exists in either sheet
+          try {
+            const { exists, usingCompletedSheet } = await this.appraisalFinder.appraisalExists(id);
+            
+            if (exists) {
+              // Get appraisal data regardless of which sheet it's in
+              const { data: valueData } = await this.appraisalFinder.findAppraisalData(id, `J${id}`);
+              const { data: descData } = await this.appraisalFinder.findAppraisalData(id, `K${id}`);
+              
+              // Use provided values, or values from sheet if they exist
+              const valueToUse = appraisalValue || (valueData?.[0]?.[0] || null);
+              const descToUse = description || (descData?.[0]?.[0] || null);
+              
+              if (!valueToUse && !descToUse) {
+                throw new Error('Missing required fields for STEP_SET_VALUE: appraisalValue or description');
+              }
+              
+              // Update status with correct sheet
+              await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
+              
+              // Start full processing
+              await this.appraisalService.processAppraisal(id, valueToUse, descToUse, appraisalType);
+            } else {
+              throw new Error(`Appraisal ${id} not found in either pending or completed sheet`);
+            }
+          } catch (error) {
+            if (error.message.includes('Missing required fields')) {
+              // If error is about missing fields and we didn't check the sheet data,
+              // just check the provided params
+              if (!appraisalValue && !description) {
+                throw new Error('Missing required fields for STEP_SET_VALUE: appraisalValue or description');
+              }
+              // Start full processing with the provided params
+              await this.appraisalService.processAppraisal(id, appraisalValue, description, appraisalType);
+            } else {
+              // Rethrow other errors
+              throw error;
+            }
           }
-          // Start full processing
-          await this.appraisalService.processAppraisal(id, appraisalValue, description, appraisalType);
           break;
           
         case 'STEP_MERGE_DESCRIPTIONS':
@@ -106,14 +144,22 @@ class Worker {
           if (!this.appraisalService) {
             throw new Error('Appraisal service not initialized');
           }
-          // Need to get existing data - first try pending, then completed sheet if not found
+          
+          // Check if this appraisal is in the pending or completed sheet
+          let usingCompletedSheet = false;
+          
+          // First try to get data from pending sheet
           let existingData = await this.sheetsService.getValues(`J${id}:K${id}`);
           
           // If data not found in pending sheet, check completed sheet
           if (!existingData || !existingData[0]) {
             this.logger.info(`No data found in pending sheet for appraisal ${id}, checking completed sheet`);
             try {
-              existingData = await this.sheetsService.getValues(`J${id}:K${id}`, true); // New param to check completed sheet
+              existingData = await this.sheetsService.getValues(`J${id}:K${id}`, true); // true = check completed sheet
+              if (existingData && existingData[0]) {
+                usingCompletedSheet = true;
+                this.logger.info(`Found appraisal ${id} in completed sheet`);
+              }
             } catch (error) {
               this.logger.error(`Error checking completed sheet: ${error.message}`);
             }
@@ -130,38 +176,56 @@ class Worker {
             throw new Error('No description provided or found for merge step');
           }
           
-          await this.appraisalService.mergeDescriptions(id, descToUse);
+          // Log which sheet we're using
+          this.logger.info(`Processing merge using ${usingCompletedSheet ? 'completed' : 'pending'} sheet for appraisal ${id}`);
+          
+          // Use the updated mergeDescriptions method with the usingCompletedSheet parameter
+          await this.appraisalService.mergeDescriptions(id, descToUse, usingCompletedSheet);
+          
           break;
           
         case 'STEP_UPDATE_WORDPRESS':
           if (!this.appraisalService) {
             throw new Error('Appraisal service not initialized');
           }
+          
+          // Check if this appraisal is in the pending or completed sheet
+          let usingCompletedSheetForWP = false;
+          
           // Get required data from spreadsheet - first try pending sheet
           let valueData = await this.sheetsService.getValues(`J${id}`);
           let descData = await this.sheetsService.getValues(`L${id}`);
           let appraisalTypeData = await this.sheetsService.getValues(`B${id}`);
           
-          // If data not found, check completed sheet
-          let usingCompletedSheet = false;
-          if (!valueData || !valueData[0] || !descData || !descData[0]) {
+          // If any data is missing, check completed sheet
+          if (!valueData || !valueData[0] || !descData || !descData[0] || !appraisalTypeData || !appraisalTypeData[0]) {
             this.logger.info(`Data missing in pending sheet for appraisal ${id}, checking completed sheet`);
             try {
-              valueData = await this.sheetsService.getValues(`J${id}`, true);
-              descData = await this.sheetsService.getValues(`L${id}`, true);
-              appraisalTypeData = await this.sheetsService.getValues(`B${id}`, true);
-              usingCompletedSheet = true;
+              // Check if data exists in completed sheet
+              const testData = await this.sheetsService.getValues(`A${id}`, true);
+              if (testData && testData[0]) {
+                usingCompletedSheetForWP = true;
+                this.logger.info(`Found appraisal ${id} in completed sheet`);
+                
+                // Get all required data from the completed sheet
+                valueData = await this.sheetsService.getValues(`J${id}`, true);
+                descData = await this.sheetsService.getValues(`L${id}`, true);
+                appraisalTypeData = await this.sheetsService.getValues(`B${id}`, true);
+              }
             } catch (error) {
               this.logger.error(`Error checking completed sheet: ${error.message}`);
             }
           }
+          
+          // Log which sheet we're using
+          this.logger.info(`Processing WordPress update using ${usingCompletedSheetForWP ? 'completed' : 'pending'} sheet for appraisal ${id}`);
           
           const valueToUse = appraisalValue || (valueData?.[0]?.[0] || 0);
           const descriptionToUse = descData?.[0]?.[0] || '';
           const typeToUse = appraisalType || appraisalTypeData?.[0]?.[0] || 'Regular';
           
           // Update WordPress
-          await this.appraisalService.updateStatus(id, 'Updating', 'Setting titles and metadata in WordPress', usingCompletedSheet);
+          await this.appraisalService.updateStatus(id, 'Updating', 'Setting titles and metadata in WordPress', usingCompletedSheetForWP);
           await this.appraisalService.updateWordPress(id, valueToUse, descriptionToUse, typeToUse);
           break;
           
@@ -170,24 +234,56 @@ class Worker {
             throw new Error('Appraisal service not initialized');
           }
           
+          // Check if this appraisal is in the pending or completed sheet
+          let usingCompletedSheetForVis = false;
+          
           // Get the PostID either from options or from spreadsheet
           let postIdToUse = postId;
           if (!postIdToUse) {
-            postIdToUse = await this.appraisalService.getWordPressPostId(id);
+            try {
+              // First check in pending sheet
+              const postData = await this.sheetsService.getValues(`G${id}`);
+              
+              if (!postData || !postData[0] || !postData[0][0]) {
+                // If not found, check completed sheet
+                this.logger.info(`WordPress URL not found in pending sheet for appraisal ${id}, checking completed sheet`);
+                const completedPostData = await this.sheetsService.getValues(`G${id}`, true);
+                
+                if (completedPostData && completedPostData[0] && completedPostData[0][0]) {
+                  usingCompletedSheetForVis = true;
+                  this.logger.info(`Found appraisal ${id} in completed sheet`);
+                  
+                  // Extract post ID from WordPress URL
+                  const wpUrl = completedPostData[0][0];
+                  const url = new URL(wpUrl);
+                  postIdToUse = url.searchParams.get('post');
+                }
+              } else {
+                // Extract post ID from WordPress URL
+                const wpUrl = postData[0][0];
+                const url = new URL(wpUrl);
+                postIdToUse = url.searchParams.get('post');
+              }
+            } catch (error) {
+              this.logger.error(`Error getting WordPress URL for appraisal ${id}:`, error);
+            }
           }
           
           if (!postIdToUse) {
             throw new Error('Post ID is required for generating visualizations');
           }
           
+          // Log which sheet we're using
+          this.logger.info(`Processing visualization using ${usingCompletedSheetForVis ? 'completed' : 'pending'} sheet for appraisal ${id}`);
+          
           // Update status
-          await this.appraisalService.updateStatus(id, 'Generating', 'Creating visualizations');
+          await this.appraisalService.updateStatus(id, 'Generating', 'Creating visualizations', usingCompletedSheetForVis);
           
           // Complete the report (which includes visualizations)
           await this.wordpressService.completeAppraisalReport(postIdToUse);
           
           // Update status when done
-          await this.appraisalService.updateStatus(id, 'Generating', 'Visualizations created successfully');
+          await this.appraisalService.updateStatus(id, 'Generating', 'Visualizations created successfully', usingCompletedSheetForVis);
           break;
           
         case 'STEP_GENERATE_PDF':
@@ -195,30 +291,64 @@ class Worker {
             throw new Error('Appraisal service not initialized');
           }
           
+          // Check if this appraisal is in the pending or completed sheet
+          let usingCompletedSheetForPDF = false;
+          
           // Get PostID
           let pdfPostId = postId;
           if (!pdfPostId) {
-            pdfPostId = await this.appraisalService.getWordPressPostId(id);
+            try {
+              // First check in pending sheet
+              const postData = await this.sheetsService.getValues(`G${id}`);
+              
+              if (!postData || !postData[0] || !postData[0][0]) {
+                // If not found, check completed sheet
+                this.logger.info(`WordPress URL not found in pending sheet for appraisal ${id}, checking completed sheet`);
+                const completedPostData = await this.sheetsService.getValues(`G${id}`, true);
+                
+                if (completedPostData && completedPostData[0] && completedPostData[0][0]) {
+                  usingCompletedSheetForPDF = true;
+                  this.logger.info(`Found appraisal ${id} in completed sheet`);
+                  
+                  // Extract post ID from WordPress URL
+                  const wpUrl = completedPostData[0][0];
+                  const url = new URL(wpUrl);
+                  pdfPostId = url.searchParams.get('post');
+                }
+              } else {
+                // Extract post ID from WordPress URL
+                const wpUrl = postData[0][0];
+                const url = new URL(wpUrl);
+                pdfPostId = url.searchParams.get('post');
+              }
+            } catch (error) {
+              this.logger.error(`Error getting WordPress URL for appraisal ${id}:`, error);
+            }
           }
           
           if (!pdfPostId) {
             throw new Error('Post ID is required for generating PDF');
           }
           
+          // Log which sheet we're using
+          this.logger.info(`Processing PDF generation using ${usingCompletedSheetForPDF ? 'completed' : 'pending'} sheet for appraisal ${id}`);
+          
           // Update status
-          await this.appraisalService.updateStatus(id, 'Finalizing', 'Creating PDF document');
+          await this.appraisalService.updateStatus(id, 'Finalizing', 'Creating PDF document', usingCompletedSheetForPDF);
           
           // Get public URL
           const publicUrl = await this.appraisalService.wordpressService.getPermalink(pdfPostId);
           
           // Generate PDF
-          const pdfResult = await this.appraisalService.finalize(id, pdfPostId, publicUrl);
+          const pdfResult = await this.appraisalService.finalize(id, pdfPostId, publicUrl, usingCompletedSheetForPDF);
           
           // Update status
-          await this.appraisalService.updateStatus(id, 'Finalizing', `PDF created: ${pdfResult.pdfLink}`);
+          await this.appraisalService.updateStatus(id, 'Finalizing', `PDF created: ${pdfResult.pdfLink}`, usingCompletedSheetForPDF);
           
-          // Mark as complete if was a full process
-          await this.appraisalService.updateStatus(id, 'Completed', 'PDF created and emailed to customer');
+          // Mark as complete if was a full process (only if in pending sheet)
+          if (!usingCompletedSheetForPDF) {
+            await this.appraisalService.updateStatus(id, 'Completed', 'PDF created and emailed to customer');
+          }
           break;
           
         case 'STEP_BUILD_REPORT':
@@ -227,9 +357,9 @@ class Worker {
             throw new Error('Appraisal service not initialized');
           }
           
-          await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow');
+          // Check if this appraisal is in the pending or completed sheet
+          let usingCompletedSheetForReport = false;
           
-          // Run the full process starting from the beginning
           // Get required data from spreadsheet - first try pending sheet
           let fullProcessData = await this.sheetsService.getValues(`B${id}:L${id}`);
           
@@ -237,11 +367,20 @@ class Worker {
           if (!fullProcessData || !fullProcessData[0]) {
             this.logger.info(`No data found in pending sheet for appraisal ${id}, checking completed sheet`);
             fullProcessData = await this.sheetsService.getValues(`B${id}:L${id}`, true);
+            if (fullProcessData && fullProcessData[0]) {
+              usingCompletedSheetForReport = true;
+              this.logger.info(`Found appraisal ${id} in completed sheet`);
+            }
           }
           
           if (!fullProcessData || !fullProcessData[0]) {
             throw new Error('No data found for appraisal');
           }
+          
+          // Log which sheet we're using
+          this.logger.info(`Processing full report using ${usingCompletedSheetForReport ? 'completed' : 'pending'} sheet for appraisal ${id}`);
+          
+          await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheetForReport);
           
           const row = fullProcessData[0];
           const type = row[0] || 'Regular';
@@ -259,8 +398,9 @@ class Worker {
           
         default:
           this.logger.warn(`Unknown step: ${startStep}. Attempting to run full process.`);
-          // Fall back to full process
-          await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow');
+          
+          // Check if this appraisal is in the pending or completed sheet
+          let usingCompletedSheetForDefault = false;
           
           // Get all necessary data from the spreadsheet - first try pending sheet
           let defaultData = await this.sheetsService.getValues(`B${id}:L${id}`);
@@ -269,11 +409,21 @@ class Worker {
           if (!defaultData || !defaultData[0]) {
             this.logger.info(`No data found in pending sheet for appraisal ${id}, checking completed sheet`);
             defaultData = await this.sheetsService.getValues(`B${id}:L${id}`, true);
+            if (defaultData && defaultData[0]) {
+              usingCompletedSheetForDefault = true;
+              this.logger.info(`Found appraisal ${id} in completed sheet`);
+            }
           }
           
           if (!defaultData || !defaultData[0]) {
             throw new Error('No data found for appraisal');
           }
+          
+          // Log which sheet we're using
+          this.logger.info(`Processing using ${usingCompletedSheetForDefault ? 'completed' : 'pending'} sheet for appraisal ${id}`);
+          
+          // Update status
+          await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheetForDefault);
           
           const defaultRow = defaultData[0];
           const defaultType = defaultRow[0] || 'Regular';
