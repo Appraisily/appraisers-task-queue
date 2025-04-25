@@ -39,7 +39,7 @@ class AppraisalService {
       await this.mergeDescriptions(id, description, usingCompletedSheet);
       
       // Update WordPress with the raw value (no formatting needed)
-      const { postId, publicUrl, usingCompletedSheet: wpUsingCompletedSheet } = await this.updateWordPress(id, value, description, appraisalType);
+      const { postId, publicUrl, usingCompletedSheet: wpUsingCompletedSheet } = await this.updateWordPress(id, value, description, appraisalType, usingCompletedSheet);
       
       // Store public URL
       await this.sheetsService.updateValues(`P${id}`, [[publicUrl]], wpUsingCompletedSheet);
@@ -97,22 +97,20 @@ class AppraisalService {
       const result = await this.openaiService.mergeDescriptions(description || '', iaDescription);
       
       // Extract the components from the result
-      const { mergedDescription, briefTitle, detailedTitle, metadata } = result;
+      const { mergedDescription, briefTitle, detailedTitle } = result;
       
       // Save merged description to Column L, using the correct sheet
       await this.sheetsService.updateValues(`L${id}`, [[mergedDescription]], useCompletedSheet);
       
-      // Log the titles and metadata for debugging
+      // Log the titles for debugging
       this.logger.info(`Generated brief title: ${briefTitle}`);
-      this.logger.info(`Generated detailed title length: ${detailedTitle.length} characters`);
-      this.logger.info(`Metadata keys: ${Object.keys(metadata || {}).join(', ')}`);
+      this.logger.info(`Generated detailed title length: ${detailedTitle?.length} characters`);
       
       // Return all generated content
       return { 
         mergedDescription,
         briefTitle,
-        detailedTitle,
-        metadata
+        detailedTitle
       };
     }
     
@@ -120,22 +118,20 @@ class AppraisalService {
     const result = await this.openaiService.mergeDescriptions(description || '', iaDescription);
     
     // Extract the components from the result
-    const { mergedDescription, briefTitle, detailedTitle, metadata } = result;
+    const { mergedDescription, briefTitle, detailedTitle } = result;
     
     // Save merged description to Column L, using the correct sheet
     await this.sheetsService.updateValues(`L${id}`, [[mergedDescription]], useCompletedSheet);
     
-    // Log the titles and metadata for debugging
+    // Log the titles for debugging
     this.logger.info(`Generated brief title: ${briefTitle}`);
-    this.logger.info(`Generated detailed title length: ${detailedTitle.length} characters`);
-    this.logger.info(`Metadata keys: ${Object.keys(metadata || {}).join(', ')}`);
+    this.logger.info(`Generated detailed title length: ${detailedTitle?.length} characters`);
     
     // Return all generated content
     return { 
       mergedDescription,
       briefTitle,
-      detailedTitle,
-      metadata
+      detailedTitle
     };
   }
 
@@ -168,47 +164,38 @@ class AppraisalService {
     }
   }
 
-  async updateWordPress(id, value, mergedDescription, appraisalType) {
-    const { postId, usingCompletedSheet } = await this.getWordPressPostId(id);
+  async updateWordPress(id, value, mergedDescription, appraisalType, usingCompletedSheet = false) {
+    // Pass the usingCompletedSheet parameter to getWordPressPostId
+    const { postId } = await this.getWordPressPostId(id, usingCompletedSheet);
     
     const post = await this.wordpressService.getPost(postId);
     
-    // Safely convert value to string for WordPress, handling Promise objects
-    let safeValue;
-    try {
-      // If value is a Promise object (which can happen in some flows)
-      if (value instanceof Promise) {
-        this.logger.warn(`Value for appraisal ${id} is a Promise object, resolving it first`);
-        try {
-          // Try to resolve the Promise
-          const resolvedValue = await value;
-          safeValue = String(resolvedValue);
-        } catch (promiseError) {
-          this.logger.error(`Failed to resolve Promise value: ${promiseError.message}`);
-          safeValue = "0";
-        }
-      } else if (value === undefined || value === null) {
-        safeValue = "0";
-      } else if (typeof value === 'object') {
-        this.logger.warn(`Value is an object: ${JSON.stringify(value)}, using 0 instead`);
-        safeValue = "0";
+    // Validate and format the value
+    let safeValue = value;
+    
+    if (typeof value === 'object' && value !== null) {
+      if (value.then && typeof value.then === 'function') {
+        // This is a Promise object - this happens sometimes due to improper Promise handling
+        this.logger.warn(`Value for appraisal ${id} is a Promise object, converting to error string`);
+        safeValue = '[Error: Invalid value format]';
+      } else if (JSON.stringify(value) === '{}') {
+        // Empty object
+        this.logger.warn(`Value for appraisal ${id} is an empty object, using default value`);
+        safeValue = 0;
       } else {
-        safeValue = String(value);
+        // Try to extract a value property or convert to string
+        safeValue = value.value || value.toString() || 0;
       }
-      
-      // One last check to make sure we have a valid value
-      if (safeValue === "undefined" || safeValue === "null" || safeValue === "NaN") {
-        safeValue = "0";
-      }
-    } catch (err) {
-      this.logger.error(`Error formatting value for WordPress: ${err.message}`);
-      safeValue = "0";
+    } else if (value === undefined || value === null) {
+      safeValue = 0;
     }
     
-    this.logger.info(`Using value for WordPress post ${postId}: ${safeValue}`);
+    this.logger.info(`Updating WordPress post ${postId} with value: ${safeValue}, type: ${appraisalType || 'Regular'}`);
     
-    // Check if mergedDescription is a string or an object with the new structure
-    let briefTitle, detailedTitle, description;
+    // Process different formats of mergedDescription
+    let briefTitle = '';
+    let detailedTitle = '';
+    let description = '';
     
     if (typeof mergedDescription === 'object' && mergedDescription !== null && !Array.isArray(mergedDescription)) {
       // New structure with brief and detailed titles
@@ -264,12 +251,16 @@ class AppraisalService {
     };
   }
 
-  async getWordPressPostId(id) {
+  async getWordPressPostId(id, usingCompletedSheet = false) {
     try {
-      const { data, usingCompletedSheet } = await this.appraisalFinder.findAppraisalData(id, `G${id}`);
+      // Use the provided sheet information instead of finding it again
+      this.logger.info(`Getting WordPress post ID for appraisal ${id} from ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
+      
+      // Get the WordPress URL directly from the specified sheet
+      const data = await this.sheetsService.getValues(`G${id}`, usingCompletedSheet);
       
       if (!data || !data[0] || !data[0][0]) {
-        throw new Error(`No WordPress URL found for appraisal ${id} in either sheet`);
+        throw new Error(`No WordPress URL found for appraisal ${id} in ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
       }
 
       const wpUrl = data[0][0];
@@ -280,7 +271,7 @@ class AppraisalService {
         throw new Error(`Could not extract post ID from WordPress URL: ${wpUrl}`);
       }
 
-      this.logger.info(`Extracted WordPress post ID: ${postId} from URL: ${wpUrl} (using ${usingCompletedSheet ? 'completed' : 'pending'} sheet)`);
+      this.logger.info(`Extracted WordPress post ID: ${postId} from URL: ${wpUrl}`);
       
       return {
         postId,

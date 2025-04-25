@@ -212,7 +212,7 @@ class Worker {
             
             // Update WordPress
             await this.appraisalService.updateStatus(id, 'Updating', 'Setting titles and metadata in WordPress', usingCompletedSheetForWP);
-            await this.appraisalService.updateWordPress(id, valueToUse, descriptionToUse, typeToUse); // updateWordPress internally finds the sheet again via getWordPressPostId, which is fine
+            await this.appraisalService.updateWordPress(id, valueToUse, descriptionToUse, typeToUse, usingCompletedSheetForWP); // Pass usingCompletedSheetForWP flag
           } catch (error) {
              this.logger.error(`Error in STEP_UPDATE_WORDPRESS for appraisal ${id} on ${usingCompletedSheetForWP ? 'Completed' : 'Pending'} sheet:`, error);
              await this.appraisalService.updateStatus(id, 'Failed', `UPDATE_WP Error: ${error.message}`, usingCompletedSheetForWP);

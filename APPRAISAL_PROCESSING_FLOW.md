@@ -28,12 +28,20 @@ This document outlines the step-by-step process of how the appraisal task queue 
 - We skip writing back to the source cell J since it's the input data
 
 ### Step 2: AI Analysis & Merging
-- Update status to "Processing (Merging description with AI analysis)"
-- Retrieve the AI-generated description from column H
-- Merge customer description with AI description using OpenAI
+- Update status to "Analyzing (Checking for existing AI description)"
+- Check if there is already an AI-generated description in column H
+- If AI description exists in column H, use it; otherwise:
+  - Retrieve the main image from WordPress post
+  - Generate new AI description using GPT-4o's image analysis capabilities
+  - Save the AI-generated description to column H
+- Get appraiser's description from column K (this takes precedence)
+- Merge appraiser's description with AI description using OpenAI
+  - The appraiser's description is considered authoritative
+  - In case of contradictions, the appraiser's information is prioritized
 - Save the merged description to column L
 - Generate a brief title and detailed title
-- Log metadata fields that were extracted
+- Save titles to columns S and T
+- Update WordPress post with the new titles and metadata
 
 ### Step 3: WordPress Update
 - Extract WordPress post ID from the URL in column G
@@ -86,8 +94,10 @@ Each `startStep` in the API has specific behavior:
 - Proceeds through the entire workflow
 
 ### STEP_MERGE_DESCRIPTIONS 
-- Specifically focuses on merging customer and AI descriptions
-- Updates WordPress with the merged content
+- Specifically focuses on AI analysis and description merging
+- Checks for existing AI-generated description; only generates a new one if needed
+- Prioritizes the appraiser's description when merging with AI description
+- Updates WordPress with the merged content and generated titles
 - Does not generate PDF or perform other downstream steps
 
 ### STEP_UPDATE_WORDPRESS
