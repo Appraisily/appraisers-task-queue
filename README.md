@@ -1,6 +1,6 @@
 # Appraisers Task Queue Service
 
-A microservice responsible for processing appraisal tasks asynchronously using Google Pub/Sub.
+A microservice responsible for processing appraisal tasks asynchronously through direct service calls.
 
 ## Architecture Overview
 
@@ -14,10 +14,10 @@ The appraisal system follows a microservices architecture with the following com
 
 ```
 ┌─────────────────────┐        ┌─────────────────────┐        ┌─────────────────────┐
-│                     │        │                     │        │                     │
-│  Appraisers         │  HTTP  │  Appraisers         │  PubSub│  Appraisers         │
-│  Frontend           │───────►│  Backend            │───────►│  Task Queue         │
-│                     │◄───────│                     │◄───────│                     │
+│                     │        │                     │  HTTP  │                     │
+│  Appraisers         │  HTTP  │  Appraisers         │───────►│  Appraisers         │
+│  Frontend           │───────►│  Backend            │◄───────│  Task Queue         │
+│                     │◄───────│                     │        │                     │
 │                     │        │                     │        │                     │
 └─────────────────────┘        └─────────────────────┘        └─────────────────────┘
                                         │                              │
@@ -61,7 +61,7 @@ The appraisal processing follows a step-by-step workflow:
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │ Backend routes  │     │ Task Queue      │     │ Task Queue      │
 │ request to      │────►│ receives        │────►│ processes       │
-│ Task Queue      │     │ message         │     │ appraisal       │
+│ Task Queue      │     │ HTTP request    │     │ appraisal       │
 └─────────────────┘     └─────────────────┘     └────────┬────────┘
                                                          │
                                                          ▼
@@ -81,16 +81,46 @@ The appraisal processing follows a step-by-step workflow:
 
 ### Appraisal Processing Steps
 
-1. **SET_VALUE**: Set the appraisal value and store initial description
-2. **MERGE_DESCRIPTIONS**: Combine customer and AI-generated descriptions
-3. **GET_TYPE**: Determine the appraisal type (Regular, IRS, Insurance)
-4. **UPDATE_WORDPRESS**: Update the WordPress post with metadata
-5. **FETCH_VALUER_DATA**: Get additional data from external valuation sources
-6. **GENERATE_VISUALIZATION**: Create charts and visualizations
-7. **BUILD_REPORT**: Generate the HTML report
-8. **GENERATE_PDF**: Create the PDF document
-9. **SEND_EMAIL**: Send notification email to customer
-10. **COMPLETE**: Mark appraisal as completed
+1. **STEP_SET_VALUE**: Set the appraisal value and store initial description
+2. **STEP_MERGE_DESCRIPTIONS**: Combine customer and AI-generated descriptions
+3. **STEP_UPDATE_WORDPRESS**: Update the WordPress post with metadata
+4. **STEP_GENERATE_VISUALIZATION**: Create charts and visualizations
+5. **STEP_BUILD_REPORT**: Build the complete appraisal report
+6. **STEP_GENERATE_PDF**: Create the PDF document and send email notification
+
+## Image Analysis and Description Merging
+
+A specialized endpoint is available for AI image analysis and description merging:
+
+```
+┌─────────────────┐
+│ Backend sends   │
+│ image analysis  │
+│ request         │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│ Task Queue      │     │ Task Queue      │     │ Task Queue      │
+│ fetches image   │────►│ sends to GPT-4o │────►│ gets AI image   │
+│ from WordPress  │     │ for analysis    │     │ description     │
+└─────────────────┘     └─────────────────┘     └────────┬────────┘
+                                                         │
+                                                         ▼
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│ Backend gets    │     │ Task Queue      │     │ Task Queue      │
+│ merged result   │◄────│ returns merged  │◄────│ merges all      │
+│ with metadata   │     │ descriptions    │     │ descriptions    │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+```
+
+This specialized flow handles:
+1. Retrieving the main image from WordPress
+2. Analyzing the image using GPT-4o
+3. Extracting expert descriptions from the AI
+4. Merging with customer-provided descriptions
+5. Extracting structured metadata
+6. Storing all results in Google Sheets
 
 ## Important Implementation Notes
 
@@ -106,7 +136,7 @@ The backend's responsibility is limited to:
 
 The Task Queue service is responsible for:
 - Executing all appraisal processing steps
-- Handling errors and retries
+- Handling errors
 - Updating the appraisal status
 - Generating files and sending notifications
 
@@ -129,12 +159,52 @@ To process from a specific step, the backend sends a request to the Task Queue s
 - **GET /health**: Health check endpoint
 - **GET /api/docs**: API documentation
 - **POST /api/process-step**: Process an appraisal from a specific step
+- **POST /api/analyze-image-and-merge**: Analyze an image with GPT-4o and merge descriptions
+
+### Endpoint Details
+
+#### POST /api/analyze-image-and-merge
+
+Specialized endpoint for AI image analysis and description merging.
+
+```json
+// Request
+{
+  "id": "140",              // Appraisal ID (row in spreadsheet)
+  "postId": "145911",       // WordPress post ID with main image
+  "description": "...",     // Optional customer description
+  "options": {}             // Additional options (optional)
+}
+
+// Response
+{
+  "success": true,
+  "message": "Image analyzed and descriptions merged for appraisal 140",
+  "data": {
+    "appraisalId": "140",
+    "postId": "145911",
+    "aiImageDescription": "...",
+    "customerDescription": "...",
+    "mergedDescription": "...",
+    "briefTitle": "Oil Painting of Countryside",
+    "detailedTitle": "19th Century European Oil Painting of Rural Countryside",
+    "metadata": {
+      "object_type": "Oil Painting",
+      "creator": "Unknown",
+      "estimated_age": "Mid-19th Century",
+      "medium": "Oil on Canvas",
+      "condition_summary": "Good condition with minor craquelure"
+    }
+  },
+  "timestamp": "2025-04-25T09:30:15.123Z"
+}
+```
 
 ## Development
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 16+
 - Google Cloud SDK
 - Access to Google Secret Manager
 
@@ -150,7 +220,7 @@ The following environment variables need to be available through Google Secret M
 
 ```bash
 npm install
-npm run dev
+npm start
 ```
 
 ### Deployment
@@ -165,8 +235,7 @@ gcloud builds submit --config cloudbuild.yaml
 
 Errors during processing are:
 1. Logged for debugging
-2. Published to a Dead Letter Queue (DLQ) topic
-3. Reflected in the appraisal status
+2. Reflected in the appraisal status with detailed error messages
 
 ## Monitoring
 

@@ -6,7 +6,7 @@ class PDFService {
     this.logger = createLogger('PDFService');
     // Initialize immediately in constructor
     this.initialized = true;
-    this.pdfServiceUrl = 'https://appraisals-backend-856401495068.us-central1.run.app/generate-pdf';
+    this.pdfServiceUrl = 'https://appraisals-backend-856401495068.us-central1.run.app/api/pdf/generate-pdf';
     this.logger.info('PDF service initialized immediately');
   }
 

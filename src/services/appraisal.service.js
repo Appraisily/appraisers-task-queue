@@ -132,8 +132,36 @@ class AppraisalService {
 
   async mergeDescriptions(id, description) {
     const values = await this.sheetsService.getValues(`H${id}`);
+    
+    // Add null checking to prevent "Cannot read properties of undefined" error
+    if (!values || !values[0] || values[0][0] === undefined) {
+      this.logger.warn(`No AI description found in column H for appraisal ${id}, using fallback`);
+      // Use empty string as fallback if no AI description is available
+      const iaDescription = '';
+      const result = await this.openaiService.mergeDescriptions(description || '', iaDescription);
+      
+      // Extract the components from the result
+      const { mergedDescription, briefTitle, detailedTitle, metadata } = result;
+      
+      // Save merged description to Column L
+      await this.sheetsService.updateValues(`L${id}`, [[mergedDescription]]);
+      
+      // Log the titles and metadata for debugging
+      this.logger.info(`Generated brief title: ${briefTitle}`);
+      this.logger.info(`Generated detailed title length: ${detailedTitle.length} characters`);
+      this.logger.info(`Metadata keys: ${Object.keys(metadata || {}).join(', ')}`);
+      
+      // Return all generated content
+      return { 
+        mergedDescription,
+        briefTitle,
+        detailedTitle,
+        metadata
+      };
+    }
+    
     const iaDescription = values[0][0];
-    const result = await this.openaiService.mergeDescriptions(description, iaDescription);
+    const result = await this.openaiService.mergeDescriptions(description || '', iaDescription);
     
     // Extract the components from the result
     const { mergedDescription, briefTitle, detailedTitle, metadata } = result;

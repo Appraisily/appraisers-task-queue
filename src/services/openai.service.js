@@ -1,5 +1,7 @@
 const { createLogger } = require('../utils/logger');
 const secretManager = require('../utils/secrets');
+const OpenAI = require('openai');
+const fetch = require('node-fetch');
 
 /**
  * Service for interacting with OpenAI API
@@ -7,7 +9,8 @@ const secretManager = require('../utils/secrets');
 class OpenAIService {
   constructor() {
     this.logger = createLogger('OpenAIService');
-    this.apiKey = null;
+    this.client = null;
+    this.initialized = false;
   }
 
   /**
@@ -18,12 +21,16 @@ class OpenAIService {
     try {
       this.logger.info('Initializing OpenAI service...');
       
-      this.apiKey = await secretManager.getSecret('OPENAI_API_KEY');
-      
-      if (!this.apiKey) {
-        throw new Error('Missing OpenAI API key in Secret Manager');
+      const apiKey = await secretManager.getSecret('OPENAI_API_KEY');
+      if (!apiKey) {
+        throw new Error('OpenAI API key not found in Secret Manager');
       }
       
+      this.client = new OpenAI({
+        apiKey: apiKey
+      });
+      
+      this.initialized = true;
       this.logger.info('OpenAI service initialized successfully');
     } catch (error) {
       this.logger.error('Failed to initialize OpenAI service:', error);
@@ -31,88 +38,172 @@ class OpenAIService {
     }
   }
 
+  isInitialized() {
+    return this.initialized;
+  }
+
   /**
-   * Merge two descriptions using OpenAI
-   * @param {string} appraisalDescription - Appraiser's description
-   * @param {string} iaDescription - AI-generated description
-   * @returns {Promise<Object>} - Object containing mergedDescription, briefTitle, detailedTitle, and metadata
+   * Merge customer description with AI-generated description
+   * @param {string} customerDescription - User-provided description
+   * @param {string} iaDescription - AI-generated description (from image analysis)
+   * @returns {Promise<object>} - Merged description, titles, and metadata
    */
-  async mergeDescriptions(appraisalDescription, iaDescription) {
+  async mergeDescriptions(customerDescription, iaDescription) {
+    if (!this.isInitialized()) {
+      throw new Error('OpenAI service not initialized');
+    }
+    
     try {
-      this.logger.info('Merging descriptions with OpenAI');
+      this.logger.info('Merging descriptions...');
       
-      const fetch = require('node-fetch');
+      const prompt = `
+        You are an expert art and antiques appraiser. Your task is to merge two descriptions of an item:
+        
+        1. Customer Description: "${customerDescription}"
+        
+        2. Expert Analysis: "${iaDescription}"
+        
+        Please create:
+        
+        1. A comprehensive merged description that combines the factual elements from both inputs, 
+           resolving any contradictions in favor of the expert analysis.
+        
+        2. A brief title (max 60 chars) that clearly identifies the item.
+        
+        3. A detailed title (max 120 chars) with more specifics about the item.
+        
+        4. Metadata in JSON format with these fields:
+           - object_type: The type of object being described
+           - creator: Artist or creator name (if known)
+           - estimated_age: Approximate creation date or period
+           - medium: Materials used in creation
+           - condition_summary: Brief assessment of condition
+        
+        Return your response in JSON format with these fields: 
+        mergedDescription, briefTitle, detailedTitle, metadata.
+      `;
       
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`
-        },
-        body: JSON.stringify({
-          model: 'gpt-4',
-          messages: [
-            {
-              role: 'system',
-              content: 'You are a professional art appraiser. Your task is to analyze art descriptions and extract structured metadata, combining information into cohesive descriptions and generating two title versions: 1) A brief title (maximum 60 characters) suitable for display, and 2) A detailed title/description (1-2 paragraphs) with comprehensive metadata about the artwork.'
-            },
-            {
-              role: 'user',
-              content: `Please analyze these two descriptions of an artwork:\n\nAppraiser's Description: ${appraisalDescription}\n\nAI-Generated Description: ${iaDescription}\n\nAnd provide the following structured outputs:\n1. BRIEF_TITLE: A concise title for the WordPress post (max 60 characters)\n2. DETAILED_TITLE: A comprehensive 1-2 paragraph description with rich metadata\n3. MERGED_DESCRIPTION: A cohesive summary description of about 200 words that combines both descriptions\n4. METADATA: Structured data about the artwork in this format:\n   - OBJECT_TYPE: (e.g., Painting, Sculpture, Print)\n   - CREATOR: The artist's name\n   - ESTIMATED_AGE: The period or approximate age\n   - MEDIUM: The materials used\n   - CONDITION_SUMMARY: Brief assessment of the condition`
-            }
-          ],
-          max_tokens: 1200,
-          temperature: 0.5
-        })
+      const response = await this.client.chat.completions.create({
+        model: 'gpt-4-turbo',
+        messages: [
+          { 
+            role: 'system', 
+            content: 'You are an expert art appraiser assistant that helps merge descriptions and extract metadata for appraisals.'
+          },
+          { 
+            role: 'user', 
+            content: prompt
+          }
+        ],
+        temperature: 0.3,
+        response_format: { type: 'json_object' },
+        max_tokens: 1500
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`OpenAI API error: ${response.status} - ${JSON.stringify(errorData)}`);
-      }
-
-      const result = await response.json();
-      const content = result.choices[0].message.content.trim();
       
-      // Parse the response to extract the components
-      const briefTitleMatch = content.match(/BRIEF_TITLE:(.*?)(?=DETAILED_TITLE:|$)/s);
-      const detailedTitleMatch = content.match(/DETAILED_TITLE:(.*?)(?=MERGED_DESCRIPTION:|$)/s);
-      const mergedDescriptionMatch = content.match(/MERGED_DESCRIPTION:(.*?)(?=METADATA:|$)/s);
-      const metadataMatch = content.match(/METADATA:(.*?)$/s);
+      // Get the response text
+      const responseText = response.choices[0].message.content;
       
-      const briefTitle = briefTitleMatch ? briefTitleMatch[1].trim() : 'Untitled Artwork';
-      const detailedTitle = detailedTitleMatch ? detailedTitleMatch[1].trim() : '';
-      const mergedDescription = mergedDescriptionMatch ? mergedDescriptionMatch[1].trim() : content;
-      
-      // Extract structured metadata
-      const metadata = {};
-      if (metadataMatch) {
-        const metadataText = metadataMatch[1];
+      // Parse the JSON response
+      let parsedResponse;
+      try {
+        parsedResponse = JSON.parse(responseText);
+      } catch (parseError) {
+        this.logger.error('Failed to parse OpenAI JSON response:', parseError);
+        this.logger.error('Raw response:', responseText);
         
-        const objectTypeMatch = metadataText.match(/OBJECT_TYPE:(.*?)(?=-|$)/s);
-        const creatorMatch = metadataText.match(/CREATOR:(.*?)(?=-|$)/s);
-        const estimatedAgeMatch = metadataText.match(/ESTIMATED_AGE:(.*?)(?=-|$)/s);
-        const mediumMatch = metadataText.match(/MEDIUM:(.*?)(?=-|$)/s);
-        const conditionMatch = metadataText.match(/CONDITION_SUMMARY:(.*?)(?=-|$)/s);
-        
-        if (objectTypeMatch) metadata.object_type = objectTypeMatch[1].trim();
-        if (creatorMatch) metadata.creator = creatorMatch[1].trim();
-        if (estimatedAgeMatch) metadata.estimated_age = estimatedAgeMatch[1].trim();
-        if (mediumMatch) metadata.medium = mediumMatch[1].trim();
-        if (conditionMatch) metadata.condition_summary = conditionMatch[1].trim();
+        // Return a basic format to prevent complete failure
+        return {
+          mergedDescription: 'Error merging descriptions. Please contact support.',
+          briefTitle: 'Artwork Appraisal',
+          detailedTitle: 'Art Appraisal Report',
+          metadata: {}
+        };
       }
       
-      this.logger.info('Successfully generated titles, merged description, and structured metadata');
-      this.logger.info(`Metadata extracted: ${JSON.stringify(metadata)}`);
+      // Validate the presence of all expected fields
+      const { mergedDescription, briefTitle, detailedTitle, metadata } = parsedResponse;
+      
+      if (!mergedDescription) {
+        throw new Error('Missing mergedDescription in OpenAI response');
+      }
       
       return {
         mergedDescription,
-        briefTitle,
-        detailedTitle,
-        metadata
+        briefTitle: briefTitle || 'Artwork Appraisal',
+        detailedTitle: detailedTitle || 'Art Appraisal Report',
+        metadata: metadata || {}
       };
     } catch (error) {
-      this.logger.error('Error generating titles and merged description:', error);
+      this.logger.error('Error merging descriptions:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Analyze an image using GPT-4o and return a description
+   * @param {string} imageUrl - URL of the image to analyze
+   * @param {string} prompt - Prompt for GPT-4o to analyze the image
+   * @returns {Promise<string>} - Description of the image
+   */
+  async analyzeImageWithGPT4o(imageUrl, prompt) {
+    if (!this.isInitialized()) {
+      throw new Error('OpenAI service not initialized');
+    }
+    
+    try {
+      this.logger.info(`Analyzing image with GPT-4o: ${imageUrl}`);
+      
+      // First, fetch the image and encode as base64
+      let imageData;
+      try {
+        const response = await fetch(imageUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch image: ${response.statusText}`);
+        }
+        
+        const imageBuffer = await response.buffer();
+        imageData = imageBuffer.toString('base64');
+      } catch (fetchError) {
+        this.logger.error('Error fetching image:', fetchError);
+        throw new Error(`Failed to fetch image: ${fetchError.message}`);
+      }
+      
+      // Call GPT-4o with the image
+      const response = await this.client.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          { 
+            role: 'system', 
+            content: 'You are an expert art and antiquity appraiser with extensive knowledge of art history, styles, periods, materials, and valuation techniques.'
+          },
+          { 
+            role: 'user', 
+            content: [
+              {
+                type: 'text',
+                text: prompt
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:image/jpeg;base64,${imageData}`
+                }
+              }
+            ]
+          }
+        ],
+        temperature: 0.2,
+        max_tokens: 1500
+      });
+      
+      // Get the response text
+      const description = response.choices[0].message.content;
+      
+      this.logger.info(`GPT-4o analysis complete, generated ${description.length} characters`);
+      
+      return description;
+    } catch (error) {
+      this.logger.error('Error analyzing image with GPT-4o:', error);
       throw error;
     }
   }

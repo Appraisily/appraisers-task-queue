@@ -20,25 +20,22 @@ const API_DOCUMENTATION = {
         timestamp: 'ISO timestamp of the response'
       }
     },
-    '/api/pubsub': {
-      methods: ['POST'],
-      description: 'Endpoint for receiving PubSub messages (not directly accessible)',
-      requestFormat: {
-        type: 'COMPLETE_APPRAISAL',
-        data: {
-          id: 'String - Unique identifier for the appraisal',
-          appraisalValue: 'Number - Monetary value of the appraisal',
-          description: 'String - Detailed description of the appraisable item',
-          appraisalType: 'String - Type of appraisal (Regular, IRS, Insurance)'
-        }
-      }
-    },
     '/api/process-step': {
       methods: ['POST'],
       description: 'Endpoint for processing an appraisal from a specific step',
       requestFormat: {
         id: 'String - Unique identifier for the appraisal',
         startStep: 'String - The step to start processing from',
+        options: 'Object - Additional options for processing'
+      }
+    },
+    '/api/analyze-image-and-merge': {
+      methods: ['POST'],
+      description: 'Specialized endpoint for analyzing images with GPT-4o and merging descriptions',
+      requestFormat: {
+        id: 'String - Unique identifier for the appraisal',
+        postId: 'String - WordPress post ID',
+        description: 'String - Customer description (optional)',
         options: 'Object - Additional options for processing'
       }
     }
@@ -72,16 +69,48 @@ app.post('/api/process-step', async (req, res) => {
   logger.info(`Received request to process appraisal ${id} from step ${startStep}`);
   
   try {
-    // Queue the task for processing by the worker
-    await worker.queueStepProcessing(id, startStep, options);
+    // Instead of queueing via PubSub, process directly
+    await worker.processFromStep(id, startStep, options);
     
     res.status(200).json({
       success: true,
-      message: `Appraisal ${id} has been queued for processing from step ${startStep}`,
+      message: `Appraisal ${id} has been processed from step ${startStep}`,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    logger.error(`Error queueing step processing for appraisal ${id}:`, error);
+    logger.error(`Error processing appraisal ${id} from step ${startStep}:`, error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Internal server error'
+    });
+  }
+});
+
+// Specialized endpoint for image analysis and description merging
+app.post('/api/analyze-image-and-merge', async (req, res) => {
+  const { id, postId, description = '', options = {} } = req.body;
+  
+  if (!id || !postId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Missing required parameters: id and postId are required'
+    });
+  }
+  
+  logger.info(`Received request to analyze image and merge descriptions for appraisal ${id}, post ${postId}`);
+  
+  try {
+    // Process the image analysis and merge descriptions
+    const result = await worker.analyzeImageAndMergeDescriptions(id, postId, description, options);
+    
+    res.status(200).json({
+      success: true,
+      message: `Image analyzed and descriptions merged for appraisal ${id}`,
+      data: result,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error(`Error analyzing image and merging descriptions for appraisal ${id}:`, error);
     res.status(500).json({
       success: false,
       message: error.message || 'Internal server error'
