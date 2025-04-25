@@ -300,12 +300,8 @@ class AppraisalService {
   }
 
   async finalize(id, postId, publicUrl, usingCompletedSheet = false) {
-    // Generate PDF
-    this.logger.info(`Generating PDF for appraisal ${id} (postId: ${postId}) ${usingCompletedSheet ? 'from completed sheet' : 'from pending sheet'}`);
-    
     try {
-      // Update status first
-      await this.updateStatus(id, 'Finalizing', 'Creating PDF document', usingCompletedSheet);
+      this.logger.info(`Finalizing appraisal ${id} (post ID: ${postId}) using ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
       
       // Generate PDF with proper waiting
       const { pdfLink, docLink } = await this.pdfService.generatePDF(postId);
@@ -320,22 +316,10 @@ class AppraisalService {
       await this.sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]], usingCompletedSheet);
       this.logger.info(`PDF generated successfully: ${pdfLink}`);
       
-      // Get customer data using the appraisalFinder
-      this.logger.info(`Retrieving customer data for appraisal ${id}`);
-      const { data: customerDataRows } = await this.appraisalFinder.findAppraisalData(id, `D${id}:E${id}`);
-      
-      let email = 'NA';
-      let name = 'NA';
-      
-      if (customerDataRows && customerDataRows[0] && customerDataRows[0].length >= 2) {
-        [email, name] = customerDataRows[0];
-        // If either value is empty, set it to 'NA'
-        email = email || 'NA';
-        name = name || 'NA';
-      }
-      
-      const customerData = { email, name };
-      this.logger.info(`Customer data for appraisal ${id}: email=${email}, name=${name}`);
+      // Get customer data directly using the known sheet information
+      this.logger.info(`Retrieving customer data for appraisal ${id} from ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
+      const customerData = await this.getCustomerData(id, usingCompletedSheet);
+      this.logger.info(`Customer data for appraisal ${id}: email=${customerData.email}, name=${customerData.name}`);
       
       // Only send email if we have a valid PDF URL
       if (pdfLink && !pdfLink.includes('placeholder')) {
@@ -367,6 +351,35 @@ class AppraisalService {
       this.logger.error(`Error finalizing appraisal ${id}:`, error);
       await this.updateStatus(id, 'Failed', `PDF generation failed: ${error.message}`, usingCompletedSheet);
       throw error;
+    }
+  }
+
+  /**
+   * Get customer email and name directly from the specified sheet
+   * @param {string|number} id - Appraisal ID
+   * @param {boolean} usingCompletedSheet - Which sheet to check
+   * @returns {Promise<{email: string, name: string}>} - Customer data 
+   */
+  async getCustomerData(id, usingCompletedSheet = false) {
+    try {
+      // Get columns D and E directly from the specified sheet
+      const data = await this.sheetsService.getValues(`D${id}:E${id}`, usingCompletedSheet);
+      
+      let email = 'NA';
+      let name = 'NA';
+      
+      if (data && data[0] && data[0].length >= 2) {
+        [email, name] = data[0];
+        // If either value is empty, set it to 'NA'
+        email = email || 'NA';
+        name = name || 'NA';
+      }
+      
+      return { email, name };
+    } catch (error) {
+      this.logger.error(`Error fetching customer data for appraisal ${id}:`, error);
+      // Return default values in case of error
+      return { email: 'NA', name: 'NA' };
     }
   }
 
