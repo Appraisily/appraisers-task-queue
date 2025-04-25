@@ -222,9 +222,8 @@ class WordPressService {
    */
   async getMedia(mediaId) {
     try {
-      // Extract base API URL without the /appraisals part
-      const baseApiUrl = this.apiUrl.split('/').slice(0, -1).join('/');
-      const mediaUrl = `${baseApiUrl}/media/${mediaId}`;
+      // Use the correct WordPress REST API endpoint for media
+      const mediaUrl = `https://resources.appraisily.com/wp-json/wp/v2/media/${mediaId}`;
       
       this.logger.info(`Fetching media data for ID ${mediaId} from ${mediaUrl}`);
       

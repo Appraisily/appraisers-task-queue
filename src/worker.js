@@ -190,21 +190,26 @@ class Worker {
               usingCompletedSheet: usingCompletedSheet
             });
             
-            // Update WordPress with the merged data
-            await this.appraisalService.updateStatus(id, 'Updating', 'Setting titles and metadata in WordPress', usingCompletedSheet);
-            
-            // Use the brief title for the WordPress post title
-            // Use the merged description as the detailed title (instead of the detailedTitle field from OpenAI)
-            await this.appraisalService.wordpressService.updateAppraisalPost(postId, {
-              title: analysisResult.briefTitle,
-              detailedTitle: analysisResult.mergedDescription, // Use merged description as detailed title
-              // Add extracted metadata
-              object_type: analysisResult.metadata?.object_type,
-              creator: analysisResult.metadata?.creator,
-              estimated_age: analysisResult.metadata?.estimated_age,
-              medium: analysisResult.metadata?.medium,
-              condition_summary: analysisResult.metadata?.condition_summary
-            });
+            // Only update WordPress if we have new data to set
+            if (analysisResult && analysisResult.briefTitle && analysisResult.mergedDescription) {
+              // Update WordPress with the merged data
+              await this.appraisalService.updateStatus(id, 'Updating', 'Setting titles and metadata in WordPress', usingCompletedSheet);
+              
+              // Use the brief title for the WordPress post title
+              // Use the merged description as the detailed title (instead of the detailedTitle field from OpenAI)
+              await this.appraisalService.wordpressService.updateAppraisalPost(postId, {
+                title: analysisResult.briefTitle,
+                detailedTitle: analysisResult.mergedDescription, // Use merged description as detailed title
+                // Add extracted metadata
+                object_type: analysisResult.metadata?.object_type,
+                creator: analysisResult.metadata?.creator,
+                estimated_age: analysisResult.metadata?.estimated_age,
+                medium: analysisResult.metadata?.medium,
+                condition_summary: analysisResult.metadata?.condition_summary
+              });
+            } else {
+              this.logger.info(`Skipping WordPress update for appraisal ${id} - no new data to set`);
+            }
             
             // Save titles to Google Sheets
             this.logger.info(`Saving titles and description to Google Sheets for appraisal ${id}`);
@@ -521,18 +526,19 @@ class Worker {
         throw new Error(`Failed to retrieve post data for post ID ${postId}`);
       }
       
-      this.logger.info(`[DEBUG IMAGE] Post retrieval successful. Post structure: ${JSON.stringify({
-        id: postData.id,
-        title: postData.title?.rendered,
-        has_acf: postData.acf ? 'Yes' : 'No',
-        acf_keys: postData.acf ? Object.keys(postData.acf) : [],
-      }, null, 2)}`);
+      // Simplified logging
+      this.logger.info(`[DEBUG IMAGE] Post retrieval successful. Post ID: ${postData.id}`);
       
       // Get the main image URL from ACF fields
       let mainImageUrl = null;
       
       if (postData.acf && postData.acf.main) {
-        this.logger.info(`[DEBUG IMAGE] Found 'main' ACF field with structure: ${JSON.stringify(postData.acf.main)}`);
+        // Just log the image ID instead of the full structure
+        if (typeof postData.acf.main === 'number' || typeof postData.acf.main === 'string') {
+          this.logger.info(`[DEBUG IMAGE] Found 'main' ACF field with value: ${postData.acf.main}`);
+        } else {
+          this.logger.info(`[DEBUG IMAGE] Found 'main' ACF field (object type)`);
+        }
         
         // Use the WordPress service's getImageUrl method
         mainImageUrl = await wordpressService.getImageUrl(postData.acf.main);
