@@ -102,14 +102,51 @@ class SheetsService {
     try {
       const sheetToUse = checkCompletedSheet ? this.completedSheetName : this.pendingSheetName;
       const fullRange = `'${sheetToUse}'!${range}`;
-      this.logger.info(`Updating values in range: ${fullRange}`);
-
-      await this.sheets.spreadsheets.values.update({
-        spreadsheetId: this.spreadsheetId,
-        range: fullRange,
-        valueInputOption: 'RAW',
-        resource: { values }
-      });
+      
+      // First, get the current values
+      const currentValues = await this.getValues(range, checkCompletedSheet);
+      
+      // Compare current values with new values to see if an update is needed
+      let needsUpdate = true;
+      
+      if (currentValues && currentValues.length > 0) {
+        // Check if the arrays are the same size and have the same values
+        if (currentValues.length === values.length) {
+          needsUpdate = false;
+          
+          // Compare each row
+          for (let i = 0; i < values.length; i++) {
+            if (!currentValues[i] || currentValues[i].length !== values[i].length) {
+              needsUpdate = true;
+              break;
+            }
+            
+            // Compare each cell in the row
+            for (let j = 0; j < values[i].length; j++) {
+              if (currentValues[i][j] !== values[i][j]) {
+                needsUpdate = true;
+                break;
+              }
+            }
+            
+            if (needsUpdate) break;
+          }
+        }
+      }
+      
+      // Only update if the values are different
+      if (needsUpdate) {
+        this.logger.info(`Updating values in range: ${fullRange}`);
+        
+        await this.sheets.spreadsheets.values.update({
+          spreadsheetId: this.spreadsheetId,
+          range: fullRange,
+          valueInputOption: 'RAW',
+          resource: { values }
+        });
+      } else {
+        this.logger.info(`Skipping update for range: ${fullRange} - values unchanged`);
+      }
     } catch (error) {
       this.logger.error(`Error updating values in range ${range}:`, error);
       throw error;

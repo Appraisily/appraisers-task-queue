@@ -214,6 +214,70 @@ class WordPressService {
       throw error;
     }
   }
+
+  /**
+   * Get a media attachment by ID
+   * @param {string|number} mediaId - The WordPress media ID
+   * @returns {Promise<Object>} - The media data (including source_url)
+   */
+  async getMedia(mediaId) {
+    try {
+      // Extract base API URL without the /appraisals part
+      const baseApiUrl = this.apiUrl.split('/').slice(0, -1).join('/');
+      const mediaUrl = `${baseApiUrl}/media/${mediaId}`;
+      
+      this.logger.info(`Fetching media data for ID ${mediaId} from ${mediaUrl}`);
+      
+      const response = await fetch(mediaUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': this.authHeader,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`WordPress API error: ${response.status} ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      this.logger.error(`Error getting media with ID ${mediaId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get the image URL from a field value (which may be an ID, object, or URL)
+   * @param {string|number|object} imageField - The field value
+   * @returns {Promise<string|null>} - The image URL or null if not found
+   */
+  async getImageUrl(imageField) {
+    if (!imageField) return null;
+
+    try {
+      // If it's already a URL, return it
+      if (typeof imageField === 'string' && imageField.startsWith('http')) {
+        return imageField;
+      }
+      
+      // If it's an object with a URL property, return that
+      if (typeof imageField === 'object' && imageField.url) {
+        return imageField.url;
+      }
+
+      // If it's a numeric ID (either number or string containing a number), fetch the media
+      if (typeof imageField === 'number' || (typeof imageField === 'string' && /^\d+$/.test(imageField))) {
+        const mediaData = await this.getMedia(imageField);
+        return mediaData?.source_url || null;
+      }
+
+      return null;
+    } catch (error) {
+      this.logger.error(`Error getting image URL:`, error);
+      return null;
+    }
+  }
 }
 
 module.exports = WordPressService;

@@ -152,6 +152,9 @@ class Worker {
               throw new Error(`Appraisal ${id} not found in either pending or completed sheets`);
             }
             
+            // Log which sheet we're using
+            this.logger.info(`Processing merge using ${usingCompletedSheet ? 'completed' : 'pending'} sheet for appraisal ${id}`);
+            
             // Get WordPress post ID first
             const { data: postIdData } = await this.appraisalFinder.findAppraisalData(id, `G${id}`);
             if (!postIdData || !postIdData[0] || !postIdData[0][0]) {
@@ -167,19 +170,20 @@ class Worker {
               throw new Error(`Could not extract post ID from WordPress URL: ${wpUrl}`);
             }
             
-            // Get existing value and description data
-            const { data: existingData } = await this.appraisalFinder.findAppraisalData(id, `J${id}:K${id}`);
+            // Get existing data directly with one call to minimize sheet operations
+            const { data: existingData } = await this.appraisalFinder.findAppraisalData(id, `A${id}:L${id}`);
             
             if (!existingData || !existingData[0]) {
               throw new Error('No existing data found for appraisal');
             }
             
-            const [value, existingDescription] = existingData[0];
+            // Get value and existing description from the row data
+            // Column J (index 9) is value, Column K (index 10) is description
+            const value = existingData[0][9]; // Column J
+            const existingDescription = existingData[0][10]; // Column K
+            
             // Use provided description or existing one
             const descToUse = description || existingDescription;
-            
-            // Log which sheet we're using
-            this.logger.info(`Processing merge using ${usingCompletedSheet ? 'completed' : 'pending'} sheet for appraisal ${id}`);
             
             // Use the imageAnalysis method to analyze image and merge descriptions
             const analysisResult = await this.analyzeImageAndMergeDescriptions(id, postId, descToUse, {
@@ -522,33 +526,21 @@ class Worker {
         title: postData.title?.rendered,
         has_acf: postData.acf ? 'Yes' : 'No',
         acf_keys: postData.acf ? Object.keys(postData.acf) : [],
-        has_main_field: postData.acf?.main ? 'Yes' : 'No',
-        main_field_structure: postData.acf?.main ? Object.keys(postData.acf.main) : [],
-        has_featured_media: postData.featured_media ? 'Yes' : 'No',
-        featured_media_id: postData.featured_media,
-        featured_media_url: postData.featured_media_url
       }, null, 2)}`);
       
       // Get the main image URL from ACF fields
       let mainImageUrl = null;
       
-      // Detailed logging for ACF main field
       if (postData.acf && postData.acf.main) {
         this.logger.info(`[DEBUG IMAGE] Found 'main' ACF field with structure: ${JSON.stringify(postData.acf.main)}`);
         
-        // Check if it's an ID or URL
-        if (typeof postData.acf.main === 'object') {
-          if (postData.acf.main.url) {
-            mainImageUrl = postData.acf.main.url;
-            this.logger.info(`[DEBUG IMAGE] Using URL from main.url: ${mainImageUrl}`);
-          } else if (postData.acf.main.ID) {
-            this.logger.info(`[DEBUG IMAGE] Found ID in main.ID: ${postData.acf.main.ID} but no URL - need to fetch attachment data`);
-            // If we have an ID but no URL, we could potentially fetch the attachment data here
-          }
-        } else if (typeof postData.acf.main === 'number' || /^\d+$/.test(postData.acf.main)) {
-          // It's just an ID, we need to fetch the attachment data
-          this.logger.info(`[DEBUG IMAGE] 'main' appears to be an image ID: ${postData.acf.main} - need to fetch attachment data`);
-          // In the future we could add code here to fetch the attachment using the ID
+        // Use the WordPress service's getImageUrl method
+        mainImageUrl = await wordpressService.getImageUrl(postData.acf.main);
+        
+        if (mainImageUrl) {
+          this.logger.info(`[DEBUG IMAGE] Successfully retrieved main image URL: ${mainImageUrl}`);
+        } else {
+          this.logger.warn(`[DEBUG IMAGE] Failed to retrieve URL from main image field`);
         }
       } else {
         this.logger.warn(`[DEBUG IMAGE] ACF 'main' field not found in post data`);
