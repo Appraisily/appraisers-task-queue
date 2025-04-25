@@ -122,14 +122,14 @@ class WordPressService {
 
       // Prepare ACF fields update
       const acfData = {
-        value: value,
+        value: value ? Number(value) : null,
         appraisaltype: appraisalType || 'Regular',
         shortcodes_inserted: true
       };
 
       // Add detailed title to ACF if provided
       if (detailedTitle) {
-        acfData.detailed_title = detailedTitle;
+        acfData.detailedTitle = detailedTitle;
         this.logger.info(`Adding detailed title to post ${postId}`);
       }
 
