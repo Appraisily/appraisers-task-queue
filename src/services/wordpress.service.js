@@ -105,9 +105,6 @@ class WordPressService {
         value, 
         appraisalType, 
         detailedTitle, 
-        status_progress, 
-        status_details, 
-        status_timestamp,
         object_type,
         creator,
         estimated_age,
@@ -144,11 +141,6 @@ class WordPressService {
       if (medium) acfData.medium = medium;
       if (condition_summary) acfData.condition_summary = condition_summary;
       if (condition) acfData.condition = condition;
-
-      // Add status updates if provided
-      if (status_progress) acfData.status_progress = status_progress;
-      if (status_details) acfData.status_details = status_details;
-      if (status_timestamp) acfData.status_timestamp = status_timestamp;
 
       // Log the ACF fields being updated
       this.logger.info(`Updating WordPress post ${postId} with ACF fields: ${Object.keys(acfData).join(', ')}`);

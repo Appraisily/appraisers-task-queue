@@ -509,21 +509,59 @@ class Worker {
 
       // 1. Get the main image from WordPress
       const wordpressService = this.appraisalService.wordpressService;
+      this.logger.info(`[DEBUG IMAGE] Requesting WordPress post data for post ID ${postId}`);
       const postData = await wordpressService.getPost(postId);
       
       if (!postData) {
+        this.logger.error(`[DEBUG IMAGE] Failed to retrieve post data for post ID ${postId}`);
         throw new Error(`Failed to retrieve post data for post ID ${postId}`);
       }
       
+      this.logger.info(`[DEBUG IMAGE] Post retrieval successful. Post structure: ${JSON.stringify({
+        id: postData.id,
+        title: postData.title?.rendered,
+        has_acf: postData.acf ? 'Yes' : 'No',
+        acf_keys: postData.acf ? Object.keys(postData.acf) : [],
+        has_main_field: postData.acf?.main ? 'Yes' : 'No',
+        main_field_structure: postData.acf?.main ? Object.keys(postData.acf.main) : [],
+        has_featured_media: postData.featured_media ? 'Yes' : 'No',
+        featured_media_id: postData.featured_media,
+        featured_media_url: postData.featured_media_url
+      }, null, 2)}`);
+      
       // Get the main image URL from ACF fields
-      let mainImageUrl = postData.acf?.main?.url;
+      let mainImageUrl = null;
+      
+      // Detailed logging for ACF main field
+      if (postData.acf && postData.acf.main) {
+        this.logger.info(`[DEBUG IMAGE] Found 'main' ACF field with structure: ${JSON.stringify(postData.acf.main)}`);
+        
+        // Check if it's an ID or URL
+        if (typeof postData.acf.main === 'object') {
+          if (postData.acf.main.url) {
+            mainImageUrl = postData.acf.main.url;
+            this.logger.info(`[DEBUG IMAGE] Using URL from main.url: ${mainImageUrl}`);
+          } else if (postData.acf.main.ID) {
+            this.logger.info(`[DEBUG IMAGE] Found ID in main.ID: ${postData.acf.main.ID} but no URL - need to fetch attachment data`);
+            // If we have an ID but no URL, we could potentially fetch the attachment data here
+          }
+        } else if (typeof postData.acf.main === 'number' || /^\d+$/.test(postData.acf.main)) {
+          // It's just an ID, we need to fetch the attachment data
+          this.logger.info(`[DEBUG IMAGE] 'main' appears to be an image ID: ${postData.acf.main} - need to fetch attachment data`);
+          // In the future we could add code here to fetch the attachment using the ID
+        }
+      } else {
+        this.logger.warn(`[DEBUG IMAGE] ACF 'main' field not found in post data`);
+      }
       
       // If main image not found, try to use the featured image
-      if (!mainImageUrl) {
+      if (!mainImageUrl && postData.featured_media_url) {
         mainImageUrl = postData.featured_media_url;
+        this.logger.info(`[DEBUG IMAGE] Using featured image URL instead: ${mainImageUrl}`);
       }
       
       if (!mainImageUrl) {
+        this.logger.error(`[DEBUG IMAGE] No image found in WordPress post. API URL used: ${this.appraisalService.wordpressService.apiUrl}/appraisals/${postId}`);
         throw new Error('No main image found in the WordPress post');
       }
       
