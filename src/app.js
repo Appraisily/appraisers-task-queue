@@ -69,8 +69,26 @@ app.post('/api/process-step', async (req, res) => {
   logger.info(`Received request to process appraisal ${id} from step ${startStep}`);
   
   try {
-    // Instead of queueing via PubSub, process directly
-    await worker.processFromStep(id, startStep, options);
+    // Ensure worker and finder are initialized
+    if (!worker || !worker.appraisalFinder) {
+      throw new Error('Worker or AppraisalFinder not initialized');
+    }
+
+    // Determine the correct sheet *before* calling the worker
+    const { exists, usingCompletedSheet } = await worker.appraisalFinder.appraisalExists(id);
+
+    if (!exists) {
+      logger.error(`Appraisal ${id} not found in either sheet.`);
+      return res.status(404).json({
+        success: false,
+        message: `Appraisal ${id} not found in either Pending or Completed sheets.`
+      });
+    }
+    
+    logger.info(`Appraisal ${id} found in ${usingCompletedSheet ? 'Completed' : 'Pending'} sheet. Starting process...`);
+
+    // Pass the determined sheet flag to the worker method
+    await worker.processFromStep(id, startStep, usingCompletedSheet, options);
     
     res.status(200).json({
       success: true,

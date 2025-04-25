@@ -132,22 +132,36 @@ class AppraisalFinder {
    * Get multiple data points for an appraisal at once
    * @param {string|number} id - Appraisal ID
    * @param {string[]} columns - Array of column letters or ranges (e.g., ["A", "J:K"])
+   * @param {boolean} usingCompletedSheet - Flag indicating which sheet the appraisal is in (determined by caller)
    * @returns {Promise<{data: Object, usingCompletedSheet: boolean}>} Object with column values and which sheet it was found in
+   * @throws {Error} If the appraisal data cannot be found in the specified sheet
    */
-  async getMultipleFields(id, columns) {
-    // First determine which sheet to use
-    const { exists, usingCompletedSheet } = await this.appraisalExists(id);
+  async getMultipleFields(id, columns, usingCompletedSheet) {
+    // We trust the caller to provide the correct sheet flag
+    this.logger.info(`Getting multiple fields (${columns.join(', ')}) for appraisal ${id} from ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
+
+    // Removed the internal call to this.appraisalExists(id) as the sheet is provided.
     
-    if (!exists) {
-      throw new Error(`Appraisal ${id} not found in either sheet`);
+    // Create a full range (A:Z) to fetch the entire potential row data efficiently
+    const fullRange = `A${id}:Z${id}`;
+    
+    // Use findAppraisalData which will utilize the cache if possible, but target the specified sheet
+    // Note: findAppraisalData needs to be slightly adjusted or we directly call sheetsService.getValues
+    // Let's call sheetsService.getValues directly here for simplicity, as findAppraisalData logic
+    // is primarily for *finding* the sheet, which we've already done.
+    let data;
+    try {
+      data = await this.sheetsService.getValues(fullRange, usingCompletedSheet);
+    } catch (error) {
+        this.logger.error(`Error fetching range ${fullRange} for appraisal ${id} from ${usingCompletedSheet ? 'completed' : 'pending'} sheet: ${error.message}`);
+        throw new Error(`Failed to fetch data for appraisal ${id} from the specified sheet.`);
     }
     
-    // Create a full range that includes all requested columns
-    const fullRange = `A${id}:Z${id}`;
-    const { data } = await this.findAppraisalData(id, fullRange);
-    
     if (!data || !data[0]) {
-      throw new Error(`No data found for appraisal ${id}`);
+      // This case should ideally not happen if appraisalExists passed before calling this function,
+      // but could occur due to race conditions or delays.
+      this.logger.error(`No data found for appraisal ${id} in range ${fullRange} on ${usingCompletedSheet ? 'completed' : 'pending'} sheet, despite prior existence check.`);
+      throw new Error(`No data found for appraisal ${id} in the specified sheet.`);
     }
     
     // Create result object with column-value pairs
@@ -155,28 +169,45 @@ class AppraisalFinder {
     const row = data[0];
     
     // Map column letters to array indices (A=0, B=1, etc.)
-    const columnToIndex = (col) => col.charCodeAt(0) - 65; // 'A' is 65 in ASCII
+    const columnToIndex = (col) => {
+      if (col.length !== 1 || col < 'A' || col > 'Z') {
+        this.logger.error(`Invalid column specified: ${col}`);
+        throw new Error(`Invalid column specified: ${col}`);
+      }
+      return col.charCodeAt(0) - 65; // 'A' is 65 in ASCII
+    };
     
     // Process each requested column
     for (const column of columns) {
-      if (column.includes(':')) {
-        // Handle ranges like "J:K"
-        const [start, end] = column.split(':');
-        const startIdx = columnToIndex(start);
-        const endIdx = columnToIndex(end);
-        
-        for (let i = startIdx; i <= endIdx; i++) {
-          const colLetter = String.fromCharCode(65 + i);
-          result[colLetter] = row[i] !== undefined ? row[i] : null;
+      try {
+        if (column.includes(':')) {
+          // Handle ranges like "J:K"
+          const [start, end] = column.split(':');
+          const startIdx = columnToIndex(start);
+          const endIdx = columnToIndex(end);
+          
+          if (startIdx > endIdx) {
+             throw new Error(`Invalid range specified: ${column}`);
+          }
+          
+          for (let i = startIdx; i <= endIdx; i++) {
+            const colLetter = String.fromCharCode(65 + i);
+            result[colLetter] = row[i] !== undefined ? row[i] : null;
+          }
+        } else {
+          // Handle single columns like "J"
+          const idx = columnToIndex(column);
+          result[column] = row[idx] !== undefined ? row[idx] : null;
         }
-      } else {
-        // Handle single columns like "J"
-        const idx = columnToIndex(column);
-        result[column] = row[idx] !== undefined ? row[idx] : null;
+      } catch (parseError) {
+         this.logger.error(`Error processing column/range "${column}" for appraisal ${id}: ${parseError.message}`);
+         // Assign null or re-throw depending on desired behavior for invalid columns
+         result[column] = null; 
       }
     }
     
-    return { data: result, usingCompletedSheet };
+    // Return data along with the sheet flag that was used
+    return { data: result, usingCompletedSheet }; 
   }
 }
 
