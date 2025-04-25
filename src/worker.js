@@ -190,9 +190,11 @@ class Worker {
             // Update WordPress with the merged data
             await this.appraisalService.updateStatus(id, 'Updating', 'Setting titles and metadata in WordPress', usingCompletedSheet);
             
+            // Use the brief title for the WordPress post title
+            // Use the merged description as the detailed title (instead of the detailedTitle field from OpenAI)
             await this.appraisalService.wordpressService.updateAppraisalPost(postId, {
               title: analysisResult.briefTitle,
-              detailedTitle: analysisResult.detailedTitle,
+              detailedTitle: analysisResult.mergedDescription, // Use merged description as detailed title
               // Add extracted metadata
               object_type: analysisResult.metadata?.object_type,
               creator: analysisResult.metadata?.creator,
@@ -200,6 +202,11 @@ class Worker {
               medium: analysisResult.metadata?.medium,
               condition_summary: analysisResult.metadata?.condition_summary
             });
+            
+            // Save titles to Google Sheets
+            this.logger.info(`Saving titles and description to Google Sheets for appraisal ${id}`);
+            await this.sheetsService.updateValues(`S${id}`, [[analysisResult.briefTitle]], usingCompletedSheet);
+            await this.sheetsService.updateValues(`T${id}`, [[analysisResult.mergedDescription]], usingCompletedSheet);
             
             await this.appraisalService.updateStatus(id, 'Ready', 'Description merged and metadata updated', usingCompletedSheet);
           } catch (error) {

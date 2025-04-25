@@ -200,3 +200,25 @@ Enhanced the STEP_MERGE_DESCRIPTIONS processing to incorporate GPT-4o image anal
 2. Consistent implementation across both pending and completed appraisals
 3. Higher quality titles and metadata for appraisal documents
 4. Reduced manual work for appraisers through AI-assisted description generation
+
+## 2025-04-26: Enhanced Detailed Title Implementation
+
+### Summary
+
+Updated the implementation to use the merged description as the detailed title in WordPress, providing more comprehensive and detailed information for appraisals.
+
+### Changes Made
+
+1. Modified the mergeDescriptions OpenAI prompt to generate more detailed comprehensive descriptions
+2. Increased the max_tokens limit from 1500 to 2500 to allow for longer descriptions
+3. Updated the STEP_MERGE_DESCRIPTIONS case to use the merged description as the detailedTitle ACF field
+4. Added saving of both briefTitle and mergedDescription to columns S and T in Google Sheets
+5. Removed the separate detailedTitle generation (now using mergedDescription instead)
+
+### Key Benefits
+
+1. **More Comprehensive Details**: The detailed title now contains all relevant information from customer descriptions, AI image analysis, and price lists
+2. **Consistent Information**: The same comprehensive description is stored in both Google Sheets and WordPress
+3. **Prioritization Logic**: If contradictions exist between sources, the AI prioritizes expert analysis information
+4. **Better SEO**: More detailed and keyword-rich content improves search engine visibility
+5. **Higher Quality Appraisals**: More thorough descriptions lead to higher quality appraisal documents

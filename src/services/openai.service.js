@@ -61,18 +61,18 @@ class OpenAIService {
         
         1. Customer Description: "${customerDescription}"
         
-        2. Expert Analysis: "${iaDescription}"
+        2. Expert Analysis (from image): "${iaDescription}"
         
         Please create:
         
-        1. A comprehensive merged description that combines the factual elements from both inputs, 
-           resolving any contradictions in favor of the expert analysis.
+        1. A comprehensive merged description that combines ALL the factual elements from both inputs.
+          This should be detailed and can be quite lengthy to ensure all important information is included.
+          If there are contradictions between the descriptions, prioritize the Expert Analysis information.
+          Include ALL relevant details about style, period, materials, condition, artist background, and other significant attributes.
         
         2. A brief title (max 60 chars) that clearly identifies the item.
         
-        3. A detailed title (max 120 chars) with more specifics about the item.
-        
-        4. Metadata in JSON format with these fields:
+        3. Metadata in JSON format with these fields:
            - object_type: The type of object being described
            - creator: Artist or creator name (if known)
            - estimated_age: Approximate creation date or period
@@ -80,7 +80,7 @@ class OpenAIService {
            - condition_summary: Brief assessment of condition
         
         Return your response in JSON format with these fields: 
-        mergedDescription, briefTitle, detailedTitle, metadata.
+        mergedDescription, briefTitle, metadata.
       `;
       
       const response = await this.client.chat.completions.create({
@@ -88,7 +88,7 @@ class OpenAIService {
         messages: [
           { 
             role: 'system', 
-            content: 'You are an expert art appraiser assistant that helps merge descriptions and extract metadata for appraisals.'
+            content: 'You are an expert art appraiser assistant that creates comprehensive appraisal descriptions. Include all relevant details and prioritize expert analysis over customer descriptions when there are contradictions. Be thorough and detailed in your merged descriptions.'
           },
           { 
             role: 'user', 
@@ -97,7 +97,7 @@ class OpenAIService {
         ],
         temperature: 0.3,
         response_format: { type: 'json_object' },
-        max_tokens: 1500
+        max_tokens: 2500
       });
       
       // Get the response text
@@ -121,16 +121,17 @@ class OpenAIService {
       }
       
       // Validate the presence of all expected fields
-      const { mergedDescription, briefTitle, detailedTitle, metadata } = parsedResponse;
+      const { mergedDescription, briefTitle, metadata } = parsedResponse;
       
       if (!mergedDescription) {
         throw new Error('Missing mergedDescription in OpenAI response');
       }
       
       return {
-        mergedDescription,
+        mergedDescription: mergedDescription || 'Error generating description.',
         briefTitle: briefTitle || 'Artwork Appraisal',
-        detailedTitle: detailedTitle || 'Art Appraisal Report',
+        // For backward compatibility, use the merged description as detailed title
+        detailedTitle: mergedDescription || 'Art Appraisal Report',
         metadata: metadata || {}
       };
     } catch (error) {
