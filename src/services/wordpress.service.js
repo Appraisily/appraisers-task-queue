@@ -187,12 +187,14 @@ class WordPressService {
     try {
       this.logger.info(`Triggering appraisal report generation for post ${postId}`);
       
-      // This typically makes a request to the main appraisals backend
-      // to trigger the report generation process
-      const appraisalsBackendUrl = await secretManager.getSecret('APPRAISALS_BACKEND_URL');
+      // Use runtime environment variable instead of Secret Manager
+      // This is implemented as a runtime variable in Cloud Run
+      let appraisalsBackendUrl = process.env.APPRAISALS_BACKEND_URL;
       
+      // Fallback value if the runtime variable is not set
       if (!appraisalsBackendUrl) {
-        throw new Error('Missing APPRAISALS_BACKEND_URL in Secret Manager');
+        this.logger.warn('APPRAISALS_BACKEND_URL runtime variable not found, using fallback URL');
+        appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
       }
       
       const response = await fetch(`${appraisalsBackendUrl}/appraisal/generate-report/${postId}`, {
