@@ -11,7 +11,7 @@ class AppraisalFinder {
   constructor(sheetsService) {
     this.logger = createLogger('AppraisalFinder');
     this.sheetsService = sheetsService;
-    this.cache = new Map(); // Cache to store appraisal location (pending vs completed)
+    this.appraisalLocationCache = new Map(); // Cache to remember which sheet an appraisal is in
   }
 
   /**
@@ -24,19 +24,23 @@ class AppraisalFinder {
   async findAppraisalData(id, range) {
     this.logger.info(`Searching for appraisal ${id} in range ${range}`);
     
-    // Check cache first to avoid redundant lookups
+    // Check cache first
     const cacheKey = `appraisal-${id}`;
-    if (this.cache.has(cacheKey)) {
-      const cachedInfo = this.cache.get(cacheKey);
-      this.logger.info(`Using cached location for appraisal ${id}: ${cachedInfo.usingCompletedSheet ? 'completed' : 'pending'} sheet`);
+    if (this.appraisalLocationCache.has(cacheKey)) {
+      const usingCompletedSheet = this.appraisalLocationCache.get(cacheKey);
+      this.logger.info(`Using cached location for appraisal ${id}: ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
       
       try {
-        // Even with known sheet, still need to get the specific data requested
-        const data = await this.sheetsService.getValues(`${range.replace(/\d+/g, id)}`, cachedInfo.usingCompletedSheet);
-        return { data, usingCompletedSheet: cachedInfo.usingCompletedSheet };
+        const data = await this.sheetsService.getValues(`${range.replace(/\d+/g, id)}`, usingCompletedSheet);
+        if (data && data[0]) {
+          return { data, usingCompletedSheet };
+        }
+        // If we get here, the cache is stale
+        this.logger.warn(`Cached location for appraisal ${id} is stale, refreshing`);
+        this.appraisalLocationCache.delete(cacheKey);
       } catch (error) {
-        this.logger.warn(`Error using cached sheet information for ${id}, will try full lookup: ${error.message}`);
-        this.cache.delete(cacheKey); // Clear invalid cache entry
+        this.logger.error(`Error fetching from cached location: ${error.message}`);
+        this.appraisalLocationCache.delete(cacheKey);
       }
     }
     
@@ -52,6 +56,7 @@ class AppraisalFinder {
         if (data && data[0]) {
           usingCompletedSheet = true;
           this.logger.info(`Found appraisal ${id} in completed sheet for range ${range}`);
+          this.appraisalLocationCache.set(cacheKey, true); // Cache the location
         }
       } catch (error) {
         this.logger.error(`Error checking completed sheet: ${error.message}`);
@@ -59,14 +64,12 @@ class AppraisalFinder {
       }
     } else {
       this.logger.info(`Found appraisal ${id} in pending sheet for range ${range}`);
+      this.appraisalLocationCache.set(cacheKey, false); // Cache the location
     }
     
     if (!data || !data[0]) {
       throw new Error(`No data found for appraisal ${id} in range ${range} in either sheet`);
     }
-    
-    // Cache the result for future lookups
-    this.cache.set(cacheKey, { usingCompletedSheet, timestamp: Date.now() });
     
     // Log which sheet is being used
     this.logger.info(`Using ${usingCompletedSheet ? 'completed' : 'pending'} sheet for appraisal ${id}`);
@@ -80,31 +83,34 @@ class AppraisalFinder {
    * @returns {Promise<{exists: boolean, usingCompletedSheet: boolean}>} Whether the appraisal exists and which sheet it's in
    */
   async appraisalExists(id) {
-    // Check cache first
-    const cacheKey = `appraisal-${id}`;
-    if (this.cache.has(cacheKey)) {
-      const cachedInfo = this.cache.get(cacheKey);
-      this.logger.info(`Using cached existence info for appraisal ${id}: exists in ${cachedInfo.usingCompletedSheet ? 'completed' : 'pending'} sheet`);
-      return { exists: true, usingCompletedSheet: cachedInfo.usingCompletedSheet };
-    }
-    
     try {
+      // Check cache first
+      const cacheKey = `appraisal-${id}`;
+      if (this.appraisalLocationCache.has(cacheKey)) {
+        const usingCompletedSheet = this.appraisalLocationCache.get(cacheKey);
+        // Verify the cached location is still valid
+        const data = await this.sheetsService.getValues(`A${id}`, usingCompletedSheet);
+        if (data && data[0]) {
+          return { exists: true, usingCompletedSheet };
+        }
+        // If we get here, the cache is stale
+        this.appraisalLocationCache.delete(cacheKey);
+      }
+      
       // Check if row exists in pending sheet first
       let data = await this.sheetsService.getValues(`A${id}`);
       if (data && data[0]) {
-        // Cache the result
-        this.cache.set(cacheKey, { usingCompletedSheet: false, timestamp: Date.now() });
+        this.appraisalLocationCache.set(cacheKey, false);
         return { exists: true, usingCompletedSheet: false };
       }
       
       // If not in pending, check completed sheet
       data = await this.sheetsService.getValues(`A${id}`, true);
       if (data && data[0]) {
-        // Cache the result
-        this.cache.set(cacheKey, { usingCompletedSheet: true, timestamp: Date.now() });
+        this.appraisalLocationCache.set(cacheKey, true);
         return { exists: true, usingCompletedSheet: true };
       }
-      
+   
       return { exists: false, usingCompletedSheet: false };
     } catch (error) {
       this.logger.error(`Error checking if appraisal ${id} exists:`, error);
@@ -119,34 +125,58 @@ class AppraisalFinder {
    * @returns {Promise<{data: any[][], usingCompletedSheet: boolean}>} Full row data and which sheet it was found in
    */
   async getFullRow(id, columnRange) {
-    // Check cache first to determine which sheet to check
-    const cacheKey = `appraisal-${id}`;
-    if (this.cache.has(cacheKey)) {
-      const cachedInfo = this.cache.get(cacheKey);
-      this.logger.info(`Using cached sheet info for full row retrieval of appraisal ${id}`);
-      
-      // Get data from the known sheet
-      const data = await this.sheetsService.getValues(`${columnRange.replace(/:\w+/g, '')}${id}:${columnRange.split(':')[1]}${id}`, cachedInfo.usingCompletedSheet);
-      return { data, usingCompletedSheet: cachedInfo.usingCompletedSheet };
-    }
-    
-    // If not in cache, use the standard lookup method
     return this.findAppraisalData(id, `${columnRange}${id}`);
   }
   
   /**
-   * Clear the cache for a specific appraisal or all appraisals
-   * @param {string|number} [id] - Optional appraisal ID to clear from cache
+   * Get multiple data points for an appraisal at once
+   * @param {string|number} id - Appraisal ID
+   * @param {string[]} columns - Array of column letters or ranges (e.g., ["A", "J:K"])
+   * @returns {Promise<{data: Object, usingCompletedSheet: boolean}>} Object with column values and which sheet it was found in
    */
-  clearCache(id = null) {
-    if (id) {
-      const cacheKey = `appraisal-${id}`;
-      this.cache.delete(cacheKey);
-      this.logger.info(`Cache cleared for appraisal ${id}`);
-    } else {
-      this.cache.clear();
-      this.logger.info('Full appraisal finder cache cleared');
+  async getMultipleFields(id, columns) {
+    // First determine which sheet to use
+    const { exists, usingCompletedSheet } = await this.appraisalExists(id);
+    
+    if (!exists) {
+      throw new Error(`Appraisal ${id} not found in either sheet`);
     }
+    
+    // Create a full range that includes all requested columns
+    const fullRange = `A${id}:Z${id}`;
+    const { data } = await this.findAppraisalData(id, fullRange);
+    
+    if (!data || !data[0]) {
+      throw new Error(`No data found for appraisal ${id}`);
+    }
+    
+    // Create result object with column-value pairs
+    const result = {};
+    const row = data[0];
+    
+    // Map column letters to array indices (A=0, B=1, etc.)
+    const columnToIndex = (col) => col.charCodeAt(0) - 65; // 'A' is 65 in ASCII
+    
+    // Process each requested column
+    for (const column of columns) {
+      if (column.includes(':')) {
+        // Handle ranges like "J:K"
+        const [start, end] = column.split(':');
+        const startIdx = columnToIndex(start);
+        const endIdx = columnToIndex(end);
+        
+        for (let i = startIdx; i <= endIdx; i++) {
+          const colLetter = String.fromCharCode(65 + i);
+          result[colLetter] = row[i] !== undefined ? row[i] : null;
+        }
+      } else {
+        // Handle single columns like "J"
+        const idx = columnToIndex(column);
+        result[column] = row[idx] !== undefined ? row[idx] : null;
+      }
+    }
+    
+    return { data: result, usingCompletedSheet };
   }
 }
 

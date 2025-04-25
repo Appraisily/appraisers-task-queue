@@ -21,21 +21,16 @@ class AppraisalService {
         throw new Error(`Appraisal ${id} not found in either pending or completed sheets`);
       }
       
-      // Get all necessary data at once to avoid multiple API calls
-      const { data: appraisalData } = await this.appraisalFinder.getFullRow(id, 'A:Q');
-      if (!appraisalData || !appraisalData[0]) {
-        throw new Error(`No data found for appraisal ${id}`);
-      }
-      
       this.logger.info(`Processing appraisal ${id} (value: ${value}, type: ${appraisalType}) using ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
       
       // Update status
       await this.updateStatus(id, 'Processing', 'Setting appraisal value', usingCompletedSheet);
       
+      // Format the value before updating it in sheets
+      const formattedValue = this.formatAppraisalValue(value);
+      
       // Set the value into sheets
       try {
-        const formattedValue = this.formatAppraisalValue(value);
-        this.logger.info(`Formatted appraisal value: "${value}" -> "${formattedValue}"`);
         this.logger.info(`Updating cell J${id} with formatted value: "${formattedValue}" (type: ${typeof formattedValue})`);
         await this.sheetsService.updateValues(`J${id}`, [[formattedValue]], usingCompletedSheet);
       } catch (valueError) {
@@ -62,7 +57,7 @@ class AppraisalService {
       await this.mergeDescriptions(id, description, usingCompletedSheet);
       
       // Update WordPress
-      const { postId, publicUrl, usingCompletedSheet: wpUsingCompletedSheet } = await this.updateWordPress(id, value, description, appraisalType);
+      const { postId, publicUrl, usingCompletedSheet: wpUsingCompletedSheet } = await this.updateWordPress(id, formattedValue, description, appraisalType);
       
       // Store public URL
       await this.sheetsService.updateValues(`P${id}`, [[publicUrl]], wpUsingCompletedSheet);
@@ -385,17 +380,6 @@ class AppraisalService {
   }
 
   async formatAppraisalValue(value) {
-    // Handle Promise objects
-    if (value && typeof value === 'object' && typeof value.then === 'function') {
-      this.logger.warn('Received Promise object as value, resolving first');
-      try {
-        value = await value;
-      } catch (error) {
-        this.logger.error('Failed to resolve Promise value:', error);
-        return '0';
-      }
-    }
-    
     // Ensure value is a number or numeric string
     if (value === null || value === undefined) {
       return '0';
@@ -424,7 +408,9 @@ class AppraisalService {
     }
     
     // Always return a string, never an object
-    return numValue.toString();
+    const result = numValue.toString();
+    this.logger.info(`Formatted appraisal value: "${value}" -> "${result}"`);
+    return result;
   }
 }
 

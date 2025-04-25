@@ -38,13 +38,6 @@ const API_DOCUMENTATION = {
         description: 'String - Customer description (optional)',
         options: 'Object - Additional options for processing'
       }
-    },
-    '/api/appraisal/:id': {
-      methods: ['GET'],
-      description: 'Endpoint to efficiently retrieve appraisal data from a single API call',
-      requestFormat: {
-        id: 'String - Unique identifier for the appraisal'
-      }
     }
   }
 };
@@ -86,53 +79,6 @@ app.post('/api/process-step', async (req, res) => {
     });
   } catch (error) {
     logger.error(`Error processing appraisal ${id} from step ${startStep}:`, error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Internal server error'
-    });
-  }
-});
-
-// New endpoint to efficiently get appraisal data
-app.get('/api/appraisal/:id', async (req, res) => {
-  const id = req.params.id;
-  
-  if (!id) {
-    return res.status(400).json({
-      success: false,
-      message: 'Missing appraisal ID parameter'
-    });
-  }
-  
-  logger.info(`Received request to get data for appraisal ${id}`);
-  
-  try {
-    // First check if appraisal exists and in which sheet
-    const { exists, usingCompletedSheet } = await worker.appraisalFinder.appraisalExists(id);
-    
-    if (!exists) {
-      return res.status(404).json({
-        success: false,
-        message: `Appraisal ${id} not found in either pending or completed sheet`
-      });
-    }
-    
-    // Get all data for the appraisal at once
-    const { data } = await worker.appraisalFinder.getFullRow(id, 'A:Q');
-    
-    const appraisalData = {
-      id,
-      sheetType: usingCompletedSheet ? 'completed' : 'pending',
-      data: data[0]
-    };
-    
-    res.status(200).json({
-      success: true,
-      appraisal: appraisalData,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    logger.error(`Error retrieving appraisal ${id}:`, error);
     res.status(500).json({
       success: false,
       message: error.message || 'Internal server error'

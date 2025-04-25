@@ -105,25 +105,22 @@ class Worker {
             const { exists, usingCompletedSheet } = await this.appraisalFinder.appraisalExists(id);
             
             if (exists) {
-              // First, update status with correct sheet
-              await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
+              // Fetch all required data in a single operation, reducing API calls
+              const { data: appraisalData } = await this.appraisalFinder.getMultipleFields(id, ['A', 'J', 'K']);
               
-              // Fetch all necessary data at once
-              const { data: fullRowData } = await this.appraisalFinder.getFullRow(id, 'A:Q');
-              
-              // Extract values from the row or use the ones provided in request
-              const valueToUse = appraisalValue || (fullRowData?.[0]?.[9] || null); // Column J is index 9
-              const descToUse = description || (fullRowData?.[0]?.[10] || null); // Column K is index 10
-              const typeToUse = appraisalType || (fullRowData?.[0]?.[1] || 'Regular'); // Column B is index 1
-              
-              this.logger.info(`Retrieved data for appraisal ${id}: value=${valueToUse}, type=${typeToUse}`);
+              // Use provided values, or values from sheet if they exist
+              const valueToUse = appraisalValue || (appraisalData.J || null);
+              const descToUse = description || (appraisalData.K || null);
               
               if (!valueToUse && !descToUse) {
                 throw new Error('Missing required fields for STEP_SET_VALUE: appraisalValue or description');
               }
               
-              // Start full processing with all data
-              await this.appraisalService.processAppraisal(id, valueToUse, descToUse, typeToUse);
+              // Update status with correct sheet
+              await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
+              
+              // Start full processing
+              await this.appraisalService.processAppraisal(id, valueToUse, descToUse, appraisalType);
             } else {
               throw new Error(`Appraisal ${id} not found in either pending or completed sheet`);
             }
@@ -157,14 +154,15 @@ class Worker {
             // Log which sheet we're using
             this.logger.info(`Processing merge using ${usingCompletedSheet ? 'completed' : 'pending'} sheet for appraisal ${id}`);
             
-            // Get WordPress post ID first
-            const { data: postIdData } = await this.appraisalFinder.findAppraisalData(id, `G${id}`);
-            if (!postIdData || !postIdData[0] || !postIdData[0][0]) {
+            // Get all data we need in a single call
+            const { data: appraisalData } = await this.appraisalFinder.getMultipleFields(id, ['G', 'J', 'K']);
+            
+            if (!appraisalData.G) {
               throw new Error(`No WordPress URL found for appraisal ${id} in either sheet`);
             }
             
             // Extract post ID from WordPress URL
-            const wpUrl = postIdData[0][0];
+            const wpUrl = appraisalData.G;
             const url = new URL(wpUrl);
             const postId = url.searchParams.get('post');
             
@@ -172,17 +170,9 @@ class Worker {
               throw new Error(`Could not extract post ID from WordPress URL: ${wpUrl}`);
             }
             
-            // Get existing data directly with one call to minimize sheet operations
-            const { data: existingData } = await this.appraisalFinder.findAppraisalData(id, `A${id}:L${id}`);
-            
-            if (!existingData || !existingData[0]) {
-              throw new Error('No existing data found for appraisal');
-            }
-            
-            // Get value and existing description from the row data
-            // Column J (index 9) is value, Column K (index 10) is description
-            const value = existingData[0][9]; // Column J
-            const existingDescription = existingData[0][10]; // Column K
+            // Get value and existing description directly from the fetched data
+            const value = appraisalData.J;
+            const existingDescription = appraisalData.K;
             
             // Use provided description or existing one
             const descToUse = description || existingDescription;

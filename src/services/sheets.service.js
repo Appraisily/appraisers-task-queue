@@ -138,22 +138,49 @@ class SheetsService {
       if (needsUpdate) {
         this.logger.info(`Updating values in range: ${fullRange}`);
         
-        // Add validation before sending to the API
+        // Pre-process all values to ensure they're compatible with Sheets API
         for (let i = 0; i < values.length; i++) {
           for (let j = 0; j < values[i].length; j++) {
-            // Check for objects or undefined values
-            if (values[i][j] === undefined) {
+            const originalValue = values[i][j];
+            
+            // Handle undefined values
+            if (originalValue === undefined) {
               this.logger.warn(`Found undefined value at position [${i}][${j}], replacing with empty string`);
               values[i][j] = '';
-            } else if (typeof values[i][j] === 'object' && values[i][j] !== null) {
-              this.logger.warn(`Found object value at position [${i}][${j}], converting to string: ${JSON.stringify(values[i][j])}`);
-              values[i][j] = JSON.stringify(values[i][j]);
+              continue;
             }
             
-            // Ensure all values are strings or numbers
-            if (typeof values[i][j] !== 'string' && typeof values[i][j] !== 'number' && values[i][j] !== null) {
-              this.logger.warn(`Converting non-string/non-number value at [${i}][${j}] to string: ${values[i][j]}`);
-              values[i][j] = String(values[i][j]);
+            // Handle object values - convert Promise objects to strings
+            if (originalValue !== null && typeof originalValue === 'object') {
+              if (originalValue instanceof Promise) {
+                this.logger.warn(`Found Promise at position [${i}][${j}], converting to string`);
+                // Ensure Promise is not directly used - convert to '[object Promise]' instead of attempting to use it
+                values[i][j] = '[object Promise]';
+              } else {
+                try {
+                  // Try to stringify the object if possible
+                  const stringified = JSON.stringify(originalValue);
+                  this.logger.warn(`Converting object at position [${i}][${j}] to string: ${stringified}`);
+                  values[i][j] = stringified;
+                } catch (stringifyError) {
+                  // If stringify fails, use a simple string representation
+                  this.logger.error(`Error stringifying object at [${i}][${j}]:`, stringifyError);
+                  values[i][j] = '[object Object]';
+                }
+              }
+              continue;
+            }
+            
+            // Ensure boolean values are converted to strings
+            if (typeof originalValue === 'boolean') {
+              values[i][j] = originalValue.toString();
+              continue;
+            }
+            
+            // No need to convert strings or numbers, they're already supported
+            if (typeof originalValue !== 'string' && typeof originalValue !== 'number' && originalValue !== null) {
+              this.logger.warn(`Converting ${typeof originalValue} value at [${i}][${j}] to string: ${originalValue}`);
+              values[i][j] = String(originalValue);
             }
           }
         }
