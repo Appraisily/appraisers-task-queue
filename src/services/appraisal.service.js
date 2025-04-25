@@ -75,64 +75,11 @@ class AppraisalService {
     try {
       this.logger.info(`Updating status for appraisal ${id} to: ${status}${details ? ` (${details})` : ''}`);
       
-      // Update status in column F
+      // Update status in column F only
       await this.sheetsService.updateValues(`F${id}`, [[status]], useCompletedSheet);
       
-      // If details are provided, add more context in column R (detailed status column)
-      if (details) {
-        const timestamp = new Date().toISOString();
-        const statusDetails = `[${timestamp}] ${status}: ${details}`;
-        
-        try {
-          // Get the existing detailed status log if any
-          const existingDetails = await this.sheetsService.getValues(`R${id}`, useCompletedSheet);
-          let updatedDetails = statusDetails;
-          
-          if (existingDetails && existingDetails[0] && existingDetails[0][0]) {
-            // Prepend new status to existing log (limited to last 5 status updates to avoid overflow)
-            const detailsLog = existingDetails[0][0].split('\n');
-            const recentDetails = [statusDetails, ...detailsLog.slice(0, 4)];
-            updatedDetails = recentDetails.join('\n');
-          }
-          
-          // Update the detailed status column
-          await this.sheetsService.updateValues(`R${id}`, [[updatedDetails]], useCompletedSheet);
-        } catch (detailsError) {
-          this.logger.error(`Error updating status details for appraisal ${id}:`, detailsError);
-        }
-      }
+      // REMOVED: Detailed status log in column R - not needed
       
-      // Broadcast status update to WordPress
-      try {
-        // Get appraisal data for broadcasting
-        const appraisalData = await this.sheetsService.getValues(`A${id}:G${id}`, useCompletedSheet);
-        
-        if (appraisalData && appraisalData[0]) {
-          const row = appraisalData[0];
-          const metadata = { status_details: details || '' };
-          
-          // Update WordPress with detailed status
-          const postUrl = row[6] || '';
-          if (postUrl) {
-            const url = new URL(postUrl);
-            const postId = url.searchParams.get('post');
-            
-            if (postId) {
-              try {
-                await this.wordpressService.updateAppraisalPost(postId, {
-                  status_progress: status,
-                  status_details: details || '',
-                  status_timestamp: new Date().toISOString()
-                });
-              } catch (wpError) {
-                this.logger.error(`Error updating WordPress status for post ${postId}:`, wpError);
-              }
-            }
-          }
-        }
-      } catch (broadcastError) {
-        this.logger.error(`Error broadcasting status update for appraisal ${id}:`, broadcastError);
-      }
     } catch (error) {
       this.logger.error(`Error updating status for appraisal ${id}:`, error);
       // Don't throw here to prevent status updates from breaking the main flow
@@ -231,21 +178,19 @@ class AppraisalService {
     const post = await this.wordpressService.getPost(postId);
     
     // Check if mergedDescription is a string or an object with the new structure
-    let briefTitle, detailedTitle, description, metadata;
+    let briefTitle, detailedTitle, description;
     
     if (typeof mergedDescription === 'object') {
       // New structure with brief and detailed titles
       briefTitle = mergedDescription.briefTitle;
       detailedTitle = mergedDescription.detailedTitle;
       description = mergedDescription.mergedDescription;
-      metadata = mergedDescription.metadata || {};
     } else {
       // Legacy format (just a string)
       // Don't truncate the title if it's the only one we have
       briefTitle = mergedDescription;
       detailedTitle = mergedDescription;
       description = mergedDescription;
-      metadata = {};
     }
     
     // Ensure the brief title doesn't appear truncated in the UI
@@ -269,51 +214,18 @@ class AppraisalService {
       this.logger.info(`Generated fallback title: ${briefTitle}`);
     }
     
-    // Extract additional metadata from appraisal data if metadata doesn't have all fields
-    // Only do this if we don't already have metadata from OpenAI
-    if (!metadata || Object.keys(metadata).length === 0) {
-      // Get the data from columns H (IA description) and L (merged description) to extract potential metadata
-      const [iaValues, mergedValues] = await Promise.all([
-        this.sheetsService.getValues(`H${id}`),
-        this.sheetsService.getValues(`L${id}`)
-      ]);
-      
-      // Extract metadata using regex patterns from descriptions
-      const iaDescription = iaValues?.[0]?.[0] || '';
-      const mergedDescriptionText = mergedValues?.[0]?.[0] || '';
-      const allText = iaDescription + ' ' + mergedDescriptionText + ' ' + detailedTitle;
-      
-      // Extract potential metadata using regex patterns
-      metadata = {
-        object_type: this.extractMetadata(allText, /(?:object type|artwork type|item type)[:\s]+([^,.;]+)/i),
-        creator: this.extractMetadata(allText, /(?:by|artist|creator)[:\s]+([^,.;]+)/i),
-        estimated_age: this.extractMetadata(allText, /(?:created|circa|dates from|period|age)[:\s]+([^,.;]+)/i),
-        medium: this.extractMetadata(allText, /(?:medium|materials|created with|made of)[:\s]+([^,.;]+)/i),
-        condition_summary: this.extractMetadata(allText, /(?:condition|state)[:\s]+([^,.;]+)/i)
-      };
-      
-      // Log extracted metadata
-      this.logger.info(`Extracted metadata from descriptions:`, metadata);
-    } else {
-      this.logger.info(`Using structured metadata from OpenAI:`, metadata);
-    }
-    
     // Log final title selection
     this.logger.info(`Using brief title: "${briefTitle}"`);
     this.logger.info(`Using detailed title (first 50 chars): "${detailedTitle.substring(0, 50)}..."`);
     
+    // Simplified WordPress update with only essential fields
     const updatedPost = await this.wordpressService.updateAppraisalPost(postId, {
       title: briefTitle,
       content: post.content?.rendered || '',
       value: value.toString(),
       appraisalType: appraisalType,
-      detailedTitle: detailedTitle,
-      // Add extracted metadata
-      object_type: metadata.object_type,
-      creator: metadata.creator,
-      estimated_age: metadata.estimated_age,
-      medium: metadata.medium,
-      condition_summary: metadata.condition_summary
+      detailedTitle: detailedTitle
+      // Removed all metadata fields as requested
     });
 
     return {
@@ -321,15 +233,6 @@ class AppraisalService {
       publicUrl: updatedPost.publicUrl,
       usingCompletedSheet
     };
-  }
-
-  // Helper function to extract metadata using regex
-  extractMetadata(text, pattern) {
-    const match = text.match(pattern);
-    if (match && match[1]) {
-      return match[1].trim();
-    }
-    return null;
   }
 
   async getWordPressPostId(id) {

@@ -185,37 +185,37 @@ class Worker {
             // Use provided description or existing one
             const descToUse = description || existingDescription;
             
+            // Update status in Google Sheets only (no WordPress updates)
+            await this.appraisalService.updateStatus(id, 'Analyzing', 'Analyzing image and merging descriptions', usingCompletedSheet);
+            
             // Use the imageAnalysis method to analyze image and merge descriptions
             const analysisResult = await this.analyzeImageAndMergeDescriptions(id, postId, descToUse, {
               usingCompletedSheet: usingCompletedSheet
             });
-            
-            // Only update WordPress if we have new data to set
-            if (analysisResult && analysisResult.briefTitle && analysisResult.mergedDescription) {
-              // Update WordPress with the merged data
-              await this.appraisalService.updateStatus(id, 'Updating', 'Setting titles and metadata in WordPress', usingCompletedSheet);
-              
-              // Use the brief title for the WordPress post title
-              // Use the merged description as the detailed title (instead of the detailedTitle field from OpenAI)
-              await this.appraisalService.wordpressService.updateAppraisalPost(postId, {
-                title: analysisResult.briefTitle,
-                detailedTitle: analysisResult.mergedDescription, // Use merged description as detailed title
-                // Add extracted metadata
-                object_type: analysisResult.metadata?.object_type,
-                creator: analysisResult.metadata?.creator,
-                estimated_age: analysisResult.metadata?.estimated_age,
-                medium: analysisResult.metadata?.medium,
-                condition_summary: analysisResult.metadata?.condition_summary
-              });
-            } else {
-              this.logger.info(`Skipping WordPress update for appraisal ${id} - no new data to set`);
-            }
             
             // Save titles to Google Sheets
             this.logger.info(`Saving titles and description to Google Sheets for appraisal ${id}`);
             await this.sheetsService.updateValues(`S${id}`, [[analysisResult.briefTitle]], usingCompletedSheet);
             await this.sheetsService.updateValues(`T${id}`, [[analysisResult.mergedDescription]], usingCompletedSheet);
             
+            // Only update WordPress if we have new data to set
+            if (analysisResult && analysisResult.briefTitle && analysisResult.mergedDescription) {
+              this.logger.info(`Updating WordPress post ${postId} with new titles and metadata`);
+              
+              // Use the brief title for the WordPress post title
+              // Use the merged description as the detailed title
+              await this.appraisalService.wordpressService.updateAppraisalPost(postId, {
+                title: analysisResult.briefTitle,
+                detailedTitle: analysisResult.mergedDescription
+                // No additional metadata fields - removed as requested
+              });
+              
+              this.logger.info(`WordPress post ${postId} updated successfully`);
+            } else {
+              this.logger.info(`Skipping WordPress update for appraisal ${id} - no new data to set`);
+            }
+            
+            // Final status update in Google Sheets
             await this.appraisalService.updateStatus(id, 'Ready', 'Description merged and metadata updated', usingCompletedSheet);
           } catch (error) {
             this.logger.error(`Error in STEP_MERGE_DESCRIPTIONS for appraisal ${id}:`, error);
@@ -513,21 +513,21 @@ class Worker {
       const { usingCompletedSheet = false } = options;
       this.logger.info(`Starting image analysis and description merging for appraisal ${id} using ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
       
-      // Update status
+      // Update status in Google Sheets only
       await this.appraisalService.updateStatus(id, 'Analyzing', 'Retrieving image for AI analysis', usingCompletedSheet);
 
       // 1. Get the main image from WordPress
       const wordpressService = this.appraisalService.wordpressService;
-      this.logger.info(`[DEBUG IMAGE] Requesting WordPress post data for post ID ${postId}`);
+      this.logger.info(`Requesting WordPress post data for post ID ${postId}`);
       const postData = await wordpressService.getPost(postId);
       
       if (!postData) {
-        this.logger.error(`[DEBUG IMAGE] Failed to retrieve post data for post ID ${postId}`);
+        this.logger.error(`Failed to retrieve post data for post ID ${postId}`);
         throw new Error(`Failed to retrieve post data for post ID ${postId}`);
       }
       
       // Simplified logging
-      this.logger.info(`[DEBUG IMAGE] Post retrieval successful. Post ID: ${postData.id}`);
+      this.logger.info(`Post retrieval successful. Post ID: ${postData.id}`);
       
       // Get the main image URL from ACF fields
       let mainImageUrl = null;
@@ -535,31 +535,31 @@ class Worker {
       if (postData.acf && postData.acf.main) {
         // Just log the image ID instead of the full structure
         if (typeof postData.acf.main === 'number' || typeof postData.acf.main === 'string') {
-          this.logger.info(`[DEBUG IMAGE] Found 'main' ACF field with value: ${postData.acf.main}`);
+          this.logger.info(`Found 'main' ACF field with value: ${postData.acf.main}`);
         } else {
-          this.logger.info(`[DEBUG IMAGE] Found 'main' ACF field (object type)`);
+          this.logger.info(`Found 'main' ACF field (object type)`);
         }
         
         // Use the WordPress service's getImageUrl method
         mainImageUrl = await wordpressService.getImageUrl(postData.acf.main);
         
         if (mainImageUrl) {
-          this.logger.info(`[DEBUG IMAGE] Successfully retrieved main image URL: ${mainImageUrl}`);
+          this.logger.info(`Successfully retrieved main image URL: ${mainImageUrl}`);
         } else {
-          this.logger.warn(`[DEBUG IMAGE] Failed to retrieve URL from main image field`);
+          this.logger.warn(`Failed to retrieve URL from main image field`);
         }
       } else {
-        this.logger.warn(`[DEBUG IMAGE] ACF 'main' field not found in post data`);
+        this.logger.warn(`ACF 'main' field not found in post data`);
       }
       
       // If main image not found, try to use the featured image
       if (!mainImageUrl && postData.featured_media_url) {
         mainImageUrl = postData.featured_media_url;
-        this.logger.info(`[DEBUG IMAGE] Using featured image URL instead: ${mainImageUrl}`);
+        this.logger.info(`Using featured image URL instead: ${mainImageUrl}`);
       }
       
       if (!mainImageUrl) {
-        this.logger.error(`[DEBUG IMAGE] No image found in WordPress post. API URL used: ${this.appraisalService.wordpressService.apiUrl}/appraisals/${postId}`);
+        this.logger.error(`No image found in WordPress post. API URL used: ${this.appraisalService.wordpressService.apiUrl}/appraisals/${postId}`);
         throw new Error('No main image found in the WordPress post');
       }
       
@@ -620,8 +620,6 @@ class Worker {
         detailedTitle: mergeResult.detailedTitle,
         metadata: mergeResult.metadata
       };
-      
-      await this.appraisalService.updateStatus(id, 'Ready', 'Image analysis and description merging completed', usingCompletedSheet);
       
       this.logger.info(`Successfully completed image analysis and description merging for appraisal ${id}`);
       

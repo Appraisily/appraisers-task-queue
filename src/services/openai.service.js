@@ -44,7 +44,7 @@ class OpenAIService {
 
   /**
    * Merge customer description with AI-generated description
-   * @param {string} customerDescription - User-provided description
+   * @param {string} customerDescription - User-provided description (from the appraiser - most important)
    * @param {string} iaDescription - AI-generated description (from image analysis)
    * @returns {Promise<object>} - Merged description, titles, and metadata
    */
@@ -59,28 +59,22 @@ class OpenAIService {
       const prompt = `
         You are an expert art and antiques appraiser. Your task is to merge two descriptions of an item:
         
-        1. Customer Description: "${customerDescription}"
+        1. Appraiser's Description (MOST IMPORTANT): "${customerDescription}"
         
-        2. Expert Analysis (from image): "${iaDescription}"
+        2. AI Image Analysis: "${iaDescription}"
         
         Please create:
         
-        1. A comprehensive merged description that combines ALL the factual elements from both inputs.
-          This should be detailed and can be quite lengthy to ensure all important information is included.
-          If there are contradictions between the descriptions, prioritize the Expert Analysis information.
-          Include ALL relevant details about style, period, materials, condition, artist background, and other significant attributes.
+        1. A comprehensive merged description that combines all relevant elements from both inputs.
+           This should be detailed to ensure all important information is included.
+           THE APPRAISER'S DESCRIPTION IS AUTHORITATIVE. In case of ANY contradictions between descriptions, 
+           ALWAYS prioritize the Appraiser's Description information.
+           Include all relevant details about style, period, materials, condition, artist background, and other significant attributes.
         
         2. A brief title (max 60 chars) that clearly identifies the item.
         
-        3. Metadata in JSON format with these fields:
-           - object_type: The type of object being described
-           - creator: Artist or creator name (if known)
-           - estimated_age: Approximate creation date or period
-           - medium: Materials used in creation
-           - condition_summary: Brief assessment of condition
-        
         Return your response in JSON format with these fields: 
-        mergedDescription, briefTitle, metadata.
+        mergedDescription, briefTitle.
       `;
       
       const response = await this.client.chat.completions.create({
@@ -88,7 +82,7 @@ class OpenAIService {
         messages: [
           { 
             role: 'system', 
-            content: 'You are an expert art appraiser assistant that creates comprehensive appraisal descriptions. Include all relevant details and prioritize expert analysis over customer descriptions when there are contradictions. Be thorough and detailed in your merged descriptions.'
+            content: 'You are an expert art appraiser assistant that creates comprehensive appraisal descriptions. Always prioritize the appraiser\'s description over AI analysis when there are any contradictions. The appraiser\'s input is authoritative and should be considered the most reliable source of information.'
           },
           { 
             role: 'user', 
@@ -115,13 +109,12 @@ class OpenAIService {
         return {
           mergedDescription: 'Error merging descriptions. Please contact support.',
           briefTitle: 'Artwork Appraisal',
-          detailedTitle: 'Art Appraisal Report',
-          metadata: {}
+          detailedTitle: 'Art Appraisal Report'
         };
       }
       
       // Validate the presence of all expected fields
-      const { mergedDescription, briefTitle, metadata } = parsedResponse;
+      const { mergedDescription, briefTitle } = parsedResponse;
       
       if (!mergedDescription) {
         throw new Error('Missing mergedDescription in OpenAI response');
@@ -131,8 +124,7 @@ class OpenAIService {
         mergedDescription: mergedDescription || 'Error generating description.',
         briefTitle: briefTitle || 'Artwork Appraisal',
         // For backward compatibility, use the merged description as detailed title
-        detailedTitle: mergedDescription || 'Art Appraisal Report',
-        metadata: metadata || {}
+        detailedTitle: mergedDescription || 'Art Appraisal Report'
       };
     } catch (error) {
       this.logger.error('Error merging descriptions:', error);
