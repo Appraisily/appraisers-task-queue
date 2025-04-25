@@ -197,12 +197,13 @@ class WordPressService {
         appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
       }
       
-      const response = await fetch(`${appraisalsBackendUrl}/appraisal/generate-report/${postId}`, {
+      const response = await fetch(`${appraisalsBackendUrl}/complete-appraisal-report`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': this.authHeader
-        }
+        },
+        body: JSON.stringify({ postId: postId })
       });
       
       if (!response.ok) {
