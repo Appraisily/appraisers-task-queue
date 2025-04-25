@@ -34,17 +34,22 @@ class AppraisalFinder {
         data = await this.sheetsService.getValues(`${range.replace(/\d+/g, id)}`, true); // true = check completed sheet
         if (data && data[0]) {
           usingCompletedSheet = true;
-          this.logger.info(`Found appraisal ${id} in completed sheet`);
+          this.logger.info(`Found appraisal ${id} in completed sheet for range ${range}`);
         }
       } catch (error) {
         this.logger.error(`Error checking completed sheet: ${error.message}`);
         // Continue execution even if completed sheet check fails
       }
+    } else {
+      this.logger.info(`Found appraisal ${id} in pending sheet for range ${range}`);
     }
     
     if (!data || !data[0]) {
-      throw new Error(`No data found for appraisal ${id} in range ${range}`);
+      throw new Error(`No data found for appraisal ${id} in range ${range} in either sheet`);
     }
+    
+    // Log which sheet is being used
+    this.logger.info(`Using ${usingCompletedSheet ? 'completed' : 'pending'} sheet for appraisal ${id}`);
     
     return { data, usingCompletedSheet };
   }

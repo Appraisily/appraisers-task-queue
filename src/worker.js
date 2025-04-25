@@ -40,12 +40,17 @@ class Worker {
       const emailService = new EmailService();
       const pdfService = new PDFService();
       
+      // Initialize services concurrently
+      this.logger.info('Initializing dependent services...');
       await Promise.all([
         wordpressService.initialize(),
         openaiService.initialize(),
         emailService.initialize(),
         pdfService.initialize()
       ]);
+      
+      // Initialize appraisal finder first to avoid race conditions
+      this.appraisalFinder = new AppraisalFinder(this.sheetsService);
       
       // Initialize AppraisalService with all dependencies
       this.appraisalService = new AppraisalService(
@@ -55,11 +60,8 @@ class Worker {
         emailService,
         pdfService
       );
-
-      // Initialize the appraisal finder
-      this.appraisalFinder = new AppraisalFinder(this.sheetsService);
       
-      this.logger.info('Worker initialized successfully');
+      this.logger.info('Worker initialized successfully - appraisal service is ready for immediate use');
     } catch (error) {
       this.logger.error('Failed to initialize worker:', error);
       throw error;
@@ -141,9 +143,6 @@ class Worker {
           
         case 'STEP_MERGE_DESCRIPTIONS':
           // Need description at minimum
-          if (!this.appraisalService) {
-            throw new Error('Appraisal service not initialized');
-          }
           
           try {
             // Use the appraisalFinder to check and get data from either sheet
@@ -217,9 +216,6 @@ class Worker {
           break;
           
         case 'STEP_UPDATE_WORDPRESS':
-          if (!this.appraisalService) {
-            throw new Error('Appraisal service not initialized');
-          }
           
           // Check if this appraisal is in the pending or completed sheet
           let usingCompletedSheetForWP = false;
@@ -262,9 +258,6 @@ class Worker {
           break;
           
         case 'STEP_GENERATE_VISUALIZATION':
-          if (!this.appraisalService) {
-            throw new Error('Appraisal service not initialized');
-          }
           
           // Check if this appraisal is in the pending or completed sheet
           let usingCompletedSheetForVis = false;
@@ -319,42 +312,34 @@ class Worker {
           break;
           
         case 'STEP_GENERATE_PDF':
-          if (!this.appraisalService) {
-            throw new Error('Appraisal service not initialized');
-          }
           
-          // Check if this appraisal is in the pending or completed sheet
+          // Get PostID using the appraisalFinder utility
+          let pdfPostId = postId;
           let usingCompletedSheetForPDF = false;
           
-          // Get PostID
-          let pdfPostId = postId;
           if (!pdfPostId) {
             try {
-              // First check in pending sheet
-              const postData = await this.sheetsService.getValues(`G${id}`);
+              // Use the appraisalFinder to get WordPress URL from either sheet
+              const { data: postData, usingCompletedSheet } = await this.appraisalFinder.findAppraisalData(id, `G${id}`);
+              usingCompletedSheetForPDF = usingCompletedSheet;
               
               if (!postData || !postData[0] || !postData[0][0]) {
-                // If not found, check completed sheet
-                this.logger.info(`WordPress URL not found in pending sheet for appraisal ${id}, checking completed sheet`);
-                const completedPostData = await this.sheetsService.getValues(`G${id}`, true);
-                
-                if (completedPostData && completedPostData[0] && completedPostData[0][0]) {
-                  usingCompletedSheetForPDF = true;
-                  this.logger.info(`Found appraisal ${id} in completed sheet`);
-                  
-                  // Extract post ID from WordPress URL
-                  const wpUrl = completedPostData[0][0];
-                  const url = new URL(wpUrl);
-                  pdfPostId = url.searchParams.get('post');
-                }
-              } else {
-                // Extract post ID from WordPress URL
-                const wpUrl = postData[0][0];
-                const url = new URL(wpUrl);
-                pdfPostId = url.searchParams.get('post');
+                throw new Error(`No WordPress URL found for appraisal ${id} in either sheet`);
               }
+              
+              // Extract post ID from WordPress URL
+              const wpUrl = postData[0][0];
+              const url = new URL(wpUrl);
+              pdfPostId = url.searchParams.get('post');
+              
+              if (!pdfPostId) {
+                throw new Error(`Could not extract post ID from WordPress URL: ${wpUrl}`);
+              }
+              
+              this.logger.info(`Extracted WordPress post ID ${pdfPostId} for appraisal ${id} from ${usingCompletedSheetForPDF ? 'completed' : 'pending'} sheet`);
             } catch (error) {
               this.logger.error(`Error getting WordPress URL for appraisal ${id}:`, error);
+              throw error;
             }
           }
           
@@ -362,32 +347,42 @@ class Worker {
             throw new Error('Post ID is required for generating PDF');
           }
           
-          // Log which sheet we're using
-          this.logger.info(`Processing PDF generation using ${usingCompletedSheetForPDF ? 'completed' : 'pending'} sheet for appraisal ${id}`);
-          
-          // Update status
-          await this.appraisalService.updateStatus(id, 'Finalizing', 'Creating PDF document', usingCompletedSheetForPDF);
-          
-          // Get public URL
-          const publicUrl = await this.appraisalService.wordpressService.getPermalink(pdfPostId);
-          
-          // Generate PDF
-          const pdfResult = await this.appraisalService.finalize(id, pdfPostId, publicUrl, usingCompletedSheetForPDF);
-          
-          // Update status
-          await this.appraisalService.updateStatus(id, 'Finalizing', `PDF created: ${pdfResult.pdfLink}`, usingCompletedSheetForPDF);
-          
-          // Mark as complete if was a full process (only if in pending sheet)
-          if (!usingCompletedSheetForPDF) {
-            await this.appraisalService.updateStatus(id, 'Completed', 'PDF created and emailed to customer');
+          try {
+            // Log which sheet we're using
+            this.logger.info(`Processing PDF generation using ${usingCompletedSheetForPDF ? 'completed' : 'pending'} sheet for appraisal ${id}`);
+            
+            // Update status
+            await this.appraisalService.updateStatus(id, 'Finalizing', 'Creating PDF document', usingCompletedSheetForPDF);
+            
+            // Get public URL
+            const publicUrl = await this.appraisalService.wordpressService.getPermalink(pdfPostId);
+            
+            // Generate PDF - this will throw an error if the PDF generation fails
+            this.logger.info(`Waiting for PDF generation for appraisal ${id} with post ID ${pdfPostId}`);
+            const pdfResult = await this.appraisalService.finalize(id, pdfPostId, publicUrl, usingCompletedSheetForPDF);
+            
+            // Validate PDF URLs
+            if (!pdfResult.pdfLink || pdfResult.pdfLink.includes('placeholder')) {
+              throw new Error(`PDF generation returned placeholder or invalid URLs`);
+            }
+            
+            // Update status with the actual PDF link
+            await this.appraisalService.updateStatus(id, 'Finalizing', `PDF created: ${pdfResult.pdfLink}`, usingCompletedSheetForPDF);
+            
+            // Mark as complete if was a full process (only if in pending sheet)
+            if (!usingCompletedSheetForPDF) {
+              await this.appraisalService.updateStatus(id, 'Completed', 'PDF created and emailed to customer');
+            }
+            
+          } catch (error) {
+            this.logger.error(`PDF generation failed for appraisal ${id}: ${error.message}`);
+            await this.appraisalService.updateStatus(id, 'Failed', `PDF generation failed: ${error.message}`, usingCompletedSheetForPDF);
+            throw error;
           }
           break;
           
         case 'STEP_BUILD_REPORT':
           // New step to handle building the full report
-          if (!this.appraisalService) {
-            throw new Error('Appraisal service not initialized');
-          }
           
           // Check if this appraisal is in the pending or completed sheet
           let usingCompletedSheetForReport = false;
@@ -476,9 +471,7 @@ class Worker {
       
       // Update status to failed
       try {
-        if (this.appraisalService) {
-          await this.appraisalService.updateStatus(id, 'Failed', `Error: ${error.message}`);
-        }
+        await this.appraisalService.updateStatus(id, 'Failed', `Error: ${error.message}`);
       } catch (statusError) {
         this.logger.error(`Error updating status for failed appraisal ${id}:`, statusError);
       }
@@ -511,10 +504,6 @@ class Worker {
       const { usingCompletedSheet = false } = options;
       this.logger.info(`Starting image analysis and description merging for appraisal ${id} using ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
       
-      if (!this.appraisalService) {
-        throw new Error('Appraisal service not initialized');
-      }
-
       // Update status
       await this.appraisalService.updateStatus(id, 'Analyzing', 'Retrieving image for AI analysis', usingCompletedSheet);
 
@@ -527,7 +516,12 @@ class Worker {
       }
       
       // Get the main image URL from ACF fields
-      const mainImageUrl = postData.acf?.main_image?.url || postData.acf?.image?.url;
+      let mainImageUrl = postData.acf?.main?.url;
+      
+      // If main image not found, try to use the featured image
+      if (!mainImageUrl) {
+        mainImageUrl = postData.featured_media_url;
+      }
       
       if (!mainImageUrl) {
         throw new Error('No main image found in the WordPress post');
@@ -601,9 +595,7 @@ class Worker {
       
       // Update status to failed
       try {
-        if (this.appraisalService) {
-          await this.appraisalService.updateStatus(id, 'Failed', `Image analysis error: ${error.message}`);
-        }
+        await this.appraisalService.updateStatus(id, 'Failed', `Image analysis error: ${error.message}`);
       } catch (statusError) {
         this.logger.error(`Error updating status for failed appraisal ${id}:`, statusError);
       }

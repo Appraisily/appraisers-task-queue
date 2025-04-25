@@ -20,36 +20,57 @@ class PDFService {
   }
 
   async generatePDF(postId, sessionId) {
+    this.logger.info(`Generating PDF for post ${postId}`);
+    
+    // Use a longer timeout for PDF generation (120 seconds/2 minutes)
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120000);
+    
     try {
-      this.logger.info(`Generating PDF for post ${postId}`);
-      
+      // Use timeout and better error handling
       const response = await fetch(this.pdfServiceUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ postId, session_ID: sessionId })
+        body: JSON.stringify({ postId, session_ID: sessionId }),
+        signal: controller.signal,
+        timeout: 120000 // 2 minute timeout
       });
 
+      // Clear the timeout if the response comes back before timeout
+      clearTimeout(timeout);
+
       if (!response.ok) {
-        this.logger.warn(`PDF generation returned non-OK status: ${response.status}, using fallback`);
-        return {
-          pdfLink: `https://placeholder-pdf-url/${postId}`,
-          docLink: `https://placeholder-doc-url/${postId}`
-        };
+        const errorText = await response.text().catch(() => 'No error details available');
+        this.logger.error(`PDF generation returned non-OK status: ${response.status}, details: ${errorText}`);
+        throw new Error(`PDF generation failed with status: ${response.status}`);
       }
 
       const data = await response.json();
-      this.logger.info(`PDF generated successfully for post ${postId}`);
+      
+      // Verify we have actual URLs, not placeholders
+      if (!data.pdfLink || data.pdfLink.includes('placeholder') || 
+          !data.docLink || data.docLink.includes('placeholder')) {
+        this.logger.error(`PDF generation returned placeholder URLs: ${JSON.stringify(data)}`);
+        throw new Error(`PDF generation returned invalid placeholder URLs`);
+      }
+      
+      this.logger.info(`PDF generated successfully for post ${postId}: ${data.pdfLink}`);
       
       return {
         pdfLink: data.pdfLink,
         docLink: data.docLink
       };
     } catch (error) {
-      this.logger.warn(`PDF generation failed, using fallback URLs: ${error.message}`);
-      return {
-        pdfLink: `https://placeholder-pdf-url/${postId}`,
-        docLink: `https://placeholder-doc-url/${postId}`
-      };
+      // Don't swallow the error - let it propagate to stop the process
+      if (error.name === 'AbortError') {
+        this.logger.error(`PDF generation for post ${postId} timed out after 120 seconds`);
+        throw new Error(`PDF generation timed out after 120 seconds`);
+      }
+      
+      this.logger.error(`PDF generation failed for post ${postId}: ${error.message}`);
+      throw error;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 }

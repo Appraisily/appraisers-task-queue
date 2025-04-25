@@ -65,6 +65,12 @@ class EmailService {
       
       const { pdfLink, appraisalUrl } = data;
       
+      // Validate PDF link to prevent sending emails with placeholder or invalid URLs
+      if (!pdfLink || pdfLink.includes('placeholder')) {
+        this.logger.error(`Cannot send email with invalid PDF link: ${pdfLink}`);
+        throw new Error('Invalid PDF link - cannot send email with placeholder URL');
+      }
+      
       const msg = {
         to,
         from: this.fromEmail,
@@ -81,7 +87,7 @@ class EmailService {
         }
       };
       
-      this.logger.info(`Sending appraisal completed email to ${to}`);
+      this.logger.info(`Sending appraisal completed email to ${to} with PDF link: ${pdfLink}`);
       const [response] = await sgMail.send(msg);
       
       this.logger.info(`Email sent successfully, ID: ${response.messageId}`);

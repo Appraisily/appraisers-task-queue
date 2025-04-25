@@ -378,48 +378,73 @@ class AppraisalService {
 
   async finalize(id, postId, publicUrl, usingCompletedSheet = false) {
     // Generate PDF
-    this.logger.info(`Generating PDF for appraisal ${id} (postId: ${postId})`);
-    const { pdfLink, docLink } = await this.pdfService.generatePDF(postId);
-    await this.sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]], usingCompletedSheet);
-    this.logger.info(`PDF generated successfully: ${pdfLink}`);
+    this.logger.info(`Generating PDF for appraisal ${id} (postId: ${postId}) ${usingCompletedSheet ? 'from completed sheet' : 'from pending sheet'}`);
     
-    // Get customer data using the appraisalFinder
-    this.logger.info(`Retrieving customer data for appraisal ${id}`);
-    const { data: customerDataRows } = await this.appraisalFinder.findAppraisalData(id, `D${id}:E${id}`);
-    
-    let email = 'NA';
-    let name = 'NA';
-    
-    if (customerDataRows && customerDataRows[0] && customerDataRows[0].length >= 2) {
-      [email, name] = customerDataRows[0];
-      // If either value is empty, set it to 'NA'
-      email = email || 'NA';
-      name = name || 'NA';
-    }
-    
-    const customerData = { email, name };
-    this.logger.info(`Customer data for appraisal ${id}: email=${email}, name=${name}`);
-    
-    // Send email notification and track delivery
-    this.logger.info(`Sending completion email to ${customerData.email}`);
-    await this.updateStatus(id, 'Finalizing', `Sending email notification to ${customerData.email}`, usingCompletedSheet);
-    
-    const emailResult = await this.emailService.sendAppraisalCompletedEmail(
-      customerData.email,
-      customerData.name,
-      { 
-        pdfLink,
-        appraisalUrl: publicUrl
+    try {
+      // Update status first
+      await this.updateStatus(id, 'Finalizing', 'Creating PDF document', usingCompletedSheet);
+      
+      // Generate PDF with proper waiting
+      const { pdfLink, docLink } = await this.pdfService.generatePDF(postId);
+      
+      // Validate PDF URL - don't proceed with placeholders or invalid URLs
+      if (!pdfLink || pdfLink.includes('placeholder') || !docLink || docLink.includes('placeholder')) {
+        throw new Error(`Invalid PDF URLs received: ${pdfLink}`);
       }
-    );
+      
+      // Save PDF links to Google Sheets
+      this.logger.info(`Saving PDF links to ${usingCompletedSheet ? 'Completed' : 'Pending'} Appraisals sheet`);
+      await this.sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]], usingCompletedSheet);
+      this.logger.info(`PDF generated successfully: ${pdfLink}`);
+      
+      // Get customer data using the appraisalFinder
+      this.logger.info(`Retrieving customer data for appraisal ${id}`);
+      const { data: customerDataRows } = await this.appraisalFinder.findAppraisalData(id, `D${id}:E${id}`);
+      
+      let email = 'NA';
+      let name = 'NA';
+      
+      if (customerDataRows && customerDataRows[0] && customerDataRows[0].length >= 2) {
+        [email, name] = customerDataRows[0];
+        // If either value is empty, set it to 'NA'
+        email = email || 'NA';
+        name = name || 'NA';
+      }
+      
+      const customerData = { email, name };
+      this.logger.info(`Customer data for appraisal ${id}: email=${email}, name=${name}`);
+      
+      // Only send email if we have a valid PDF URL
+      if (pdfLink && !pdfLink.includes('placeholder')) {
+        // Send email notification and track delivery
+        this.logger.info(`Sending completion email to ${customerData.email}`);
+        await this.updateStatus(id, 'Finalizing', `Sending email notification to ${customerData.email}`, usingCompletedSheet);
+        
+        const emailResult = await this.emailService.sendAppraisalCompletedEmail(
+          customerData.email,
+          customerData.name,
+          { 
+            pdfLink,
+            appraisalUrl: publicUrl
+          }
+        );
 
-    // Save email delivery status to Column Q
-    const emailStatus = `Email sent on ${emailResult.timestamp} (ID: ${emailResult.messageId})`;
-    await this.sheetsService.updateValues(`Q${id}`, [[emailStatus]], usingCompletedSheet);
-    
-    this.logger.info(`Email delivery status saved for appraisal ${id}`);
-    
-    return { pdfLink, docLink, emailResult };
+        // Save email delivery status to Column Q
+        const emailStatus = `Email sent on ${emailResult.timestamp} (ID: ${emailResult.messageId})`;
+        await this.sheetsService.updateValues(`Q${id}`, [[emailStatus]], usingCompletedSheet);
+        
+        this.logger.info(`Email delivery status saved for appraisal ${id}`);
+      } else {
+        this.logger.warn(`Skipping email for appraisal ${id} due to invalid PDF URL`);
+        await this.updateStatus(id, 'Warning', `Email not sent - invalid PDF URL`, usingCompletedSheet);
+      }
+      
+      return { pdfLink, docLink, emailResult: {} };
+    } catch (error) {
+      this.logger.error(`Error finalizing appraisal ${id}:`, error);
+      await this.updateStatus(id, 'Failed', `PDF generation failed: ${error.message}`, usingCompletedSheet);
+      throw error;
+    }
   }
 
   async complete(id) {
