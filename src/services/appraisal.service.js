@@ -27,13 +27,25 @@ class AppraisalService {
       await this.updateStatus(id, 'Processing', 'Setting appraisal value', usingCompletedSheet);
       
       // Set the value into sheets
-      const formattedValue = this.formatAppraisalValue(value);
-      await this.sheetsService.updateValues(`J${id}`, [[formattedValue]], usingCompletedSheet);
+      try {
+        const formattedValue = this.formatAppraisalValue(value);
+        this.logger.info(`Updating cell J${id} with formatted value: "${formattedValue}" (type: ${typeof formattedValue})`);
+        await this.sheetsService.updateValues(`J${id}`, [[formattedValue]], usingCompletedSheet);
+      } catch (valueError) {
+        this.logger.error(`Error updating appraisal value in cell J${id}:`, valueError);
+        this.logger.error(`Original value: "${value}" (type: ${typeof value})`);
+        throw new Error(`Failed to update appraisal value: ${valueError.message}`);
+      }
       
       // Update the description if provided
       if (description) {
         await this.updateStatus(id, 'Processing', 'Setting description', usingCompletedSheet);
-        await this.sheetsService.updateValues(`K${id}`, [[description]], usingCompletedSheet);
+        try {
+          await this.sheetsService.updateValues(`K${id}`, [[description]], usingCompletedSheet);
+        } catch (descError) {
+          this.logger.error(`Error updating description in cell K${id}:`, descError);
+          throw new Error(`Failed to update description: ${descError.message}`);
+        }
       }
       
       // Update status
@@ -381,10 +393,22 @@ class AppraisalService {
     stringValue = stringValue.replace(/,/g, '');
     
     // Try to parse as a number, defaulting to 0 if it fails
-    const numValue = parseFloat(stringValue) || 0;
+    let numValue;
+    try {
+      numValue = parseFloat(stringValue);
+      // Check if numValue is NaN (Not a Number)
+      if (isNaN(numValue)) {
+        numValue = 0;
+      }
+    } catch (error) {
+      this.logger.error(`Error parsing value "${stringValue}":`, error);
+      numValue = 0;
+    }
     
-    // Return the formatted value
-    return numValue.toString();
+    // Always return a string, never an object
+    const result = numValue.toString();
+    this.logger.info(`Formatted appraisal value: "${value}" -> "${result}"`);
+    return result;
   }
 }
 

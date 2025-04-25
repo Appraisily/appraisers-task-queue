@@ -138,6 +138,29 @@ class SheetsService {
       if (needsUpdate) {
         this.logger.info(`Updating values in range: ${fullRange}`);
         
+        // Add validation before sending to the API
+        for (let i = 0; i < values.length; i++) {
+          for (let j = 0; j < values[i].length; j++) {
+            // Check for objects or undefined values
+            if (values[i][j] === undefined) {
+              this.logger.warn(`Found undefined value at position [${i}][${j}], replacing with empty string`);
+              values[i][j] = '';
+            } else if (typeof values[i][j] === 'object' && values[i][j] !== null) {
+              this.logger.warn(`Found object value at position [${i}][${j}], converting to string: ${JSON.stringify(values[i][j])}`);
+              values[i][j] = JSON.stringify(values[i][j]);
+            }
+            
+            // Ensure all values are strings or numbers
+            if (typeof values[i][j] !== 'string' && typeof values[i][j] !== 'number' && values[i][j] !== null) {
+              this.logger.warn(`Converting non-string/non-number value at [${i}][${j}] to string: ${values[i][j]}`);
+              values[i][j] = String(values[i][j]);
+            }
+          }
+        }
+        
+        // Log the actual values being sent
+        this.logger.info(`Sending values to API: ${JSON.stringify(values)}`);
+        
         await this.sheets.spreadsheets.values.update({
           spreadsheetId: this.spreadsheetId,
           range: fullRange,
@@ -149,7 +172,15 @@ class SheetsService {
       }
     } catch (error) {
       this.logger.error(`Error updating values in range ${range}:`, error);
-      throw error;
+      
+      // Enhanced error logging
+      if (error.message && error.message.includes('struct_value')) {
+        this.logger.error(`Received struct_value error. This is likely due to an invalid data format.`);
+        this.logger.error(`Values being sent: ${JSON.stringify(values)}`);
+        this.logger.error(`Value types: ${JSON.stringify(values.map(row => row.map(cell => typeof cell)))}`);
+      }
+      
+      throw new Error(`Failed to update values in range ${range}: ${error.message}`);
     }
   }
 
