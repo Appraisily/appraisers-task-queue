@@ -11,6 +11,7 @@ class AppraisalFinder {
   constructor(sheetsService) {
     this.logger = createLogger('AppraisalFinder');
     this.sheetsService = sheetsService;
+    this.cache = new Map(); // Cache to store appraisal location (pending vs completed)
   }
 
   /**
@@ -22,6 +23,22 @@ class AppraisalFinder {
    */
   async findAppraisalData(id, range) {
     this.logger.info(`Searching for appraisal ${id} in range ${range}`);
+    
+    // Check cache first to avoid redundant lookups
+    const cacheKey = `appraisal-${id}`;
+    if (this.cache.has(cacheKey)) {
+      const cachedInfo = this.cache.get(cacheKey);
+      this.logger.info(`Using cached location for appraisal ${id}: ${cachedInfo.usingCompletedSheet ? 'completed' : 'pending'} sheet`);
+      
+      try {
+        // Even with known sheet, still need to get the specific data requested
+        const data = await this.sheetsService.getValues(`${range.replace(/\d+/g, id)}`, cachedInfo.usingCompletedSheet);
+        return { data, usingCompletedSheet: cachedInfo.usingCompletedSheet };
+      } catch (error) {
+        this.logger.warn(`Error using cached sheet information for ${id}, will try full lookup: ${error.message}`);
+        this.cache.delete(cacheKey); // Clear invalid cache entry
+      }
+    }
     
     // First try to get data from pending sheet
     let data = await this.sheetsService.getValues(`${range.replace(/\d+/g, id)}`);
@@ -48,6 +65,9 @@ class AppraisalFinder {
       throw new Error(`No data found for appraisal ${id} in range ${range} in either sheet`);
     }
     
+    // Cache the result for future lookups
+    this.cache.set(cacheKey, { usingCompletedSheet, timestamp: Date.now() });
+    
     // Log which sheet is being used
     this.logger.info(`Using ${usingCompletedSheet ? 'completed' : 'pending'} sheet for appraisal ${id}`);
     
@@ -60,16 +80,28 @@ class AppraisalFinder {
    * @returns {Promise<{exists: boolean, usingCompletedSheet: boolean}>} Whether the appraisal exists and which sheet it's in
    */
   async appraisalExists(id) {
+    // Check cache first
+    const cacheKey = `appraisal-${id}`;
+    if (this.cache.has(cacheKey)) {
+      const cachedInfo = this.cache.get(cacheKey);
+      this.logger.info(`Using cached existence info for appraisal ${id}: exists in ${cachedInfo.usingCompletedSheet ? 'completed' : 'pending'} sheet`);
+      return { exists: true, usingCompletedSheet: cachedInfo.usingCompletedSheet };
+    }
+    
     try {
       // Check if row exists in pending sheet first
       let data = await this.sheetsService.getValues(`A${id}`);
       if (data && data[0]) {
+        // Cache the result
+        this.cache.set(cacheKey, { usingCompletedSheet: false, timestamp: Date.now() });
         return { exists: true, usingCompletedSheet: false };
       }
       
       // If not in pending, check completed sheet
       data = await this.sheetsService.getValues(`A${id}`, true);
       if (data && data[0]) {
+        // Cache the result
+        this.cache.set(cacheKey, { usingCompletedSheet: true, timestamp: Date.now() });
         return { exists: true, usingCompletedSheet: true };
       }
       
@@ -87,7 +119,34 @@ class AppraisalFinder {
    * @returns {Promise<{data: any[][], usingCompletedSheet: boolean}>} Full row data and which sheet it was found in
    */
   async getFullRow(id, columnRange) {
+    // Check cache first to determine which sheet to check
+    const cacheKey = `appraisal-${id}`;
+    if (this.cache.has(cacheKey)) {
+      const cachedInfo = this.cache.get(cacheKey);
+      this.logger.info(`Using cached sheet info for full row retrieval of appraisal ${id}`);
+      
+      // Get data from the known sheet
+      const data = await this.sheetsService.getValues(`${columnRange.replace(/:\w+/g, '')}${id}:${columnRange.split(':')[1]}${id}`, cachedInfo.usingCompletedSheet);
+      return { data, usingCompletedSheet: cachedInfo.usingCompletedSheet };
+    }
+    
+    // If not in cache, use the standard lookup method
     return this.findAppraisalData(id, `${columnRange}${id}`);
+  }
+  
+  /**
+   * Clear the cache for a specific appraisal or all appraisals
+   * @param {string|number} [id] - Optional appraisal ID to clear from cache
+   */
+  clearCache(id = null) {
+    if (id) {
+      const cacheKey = `appraisal-${id}`;
+      this.cache.delete(cacheKey);
+      this.logger.info(`Cache cleared for appraisal ${id}`);
+    } else {
+      this.cache.clear();
+      this.logger.info('Full appraisal finder cache cleared');
+    }
   }
 }
 

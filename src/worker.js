@@ -105,23 +105,25 @@ class Worker {
             const { exists, usingCompletedSheet } = await this.appraisalFinder.appraisalExists(id);
             
             if (exists) {
-              // Get appraisal data regardless of which sheet it's in
-              const { data: valueData } = await this.appraisalFinder.findAppraisalData(id, `J${id}`);
-              const { data: descData } = await this.appraisalFinder.findAppraisalData(id, `K${id}`);
+              // First, update status with correct sheet
+              await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
               
-              // Use provided values, or values from sheet if they exist
-              const valueToUse = appraisalValue || (valueData?.[0]?.[0] || null);
-              const descToUse = description || (descData?.[0]?.[0] || null);
+              // Fetch all necessary data at once
+              const { data: fullRowData } = await this.appraisalFinder.getFullRow(id, 'A:Q');
+              
+              // Extract values from the row or use the ones provided in request
+              const valueToUse = appraisalValue || (fullRowData?.[0]?.[9] || null); // Column J is index 9
+              const descToUse = description || (fullRowData?.[0]?.[10] || null); // Column K is index 10
+              const typeToUse = appraisalType || (fullRowData?.[0]?.[1] || 'Regular'); // Column B is index 1
+              
+              this.logger.info(`Retrieved data for appraisal ${id}: value=${valueToUse}, type=${typeToUse}`);
               
               if (!valueToUse && !descToUse) {
                 throw new Error('Missing required fields for STEP_SET_VALUE: appraisalValue or description');
               }
               
-              // Update status with correct sheet
-              await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
-              
-              // Start full processing
-              await this.appraisalService.processAppraisal(id, valueToUse, descToUse, appraisalType);
+              // Start full processing with all data
+              await this.appraisalService.processAppraisal(id, valueToUse, descToUse, typeToUse);
             } else {
               throw new Error(`Appraisal ${id} not found in either pending or completed sheet`);
             }
