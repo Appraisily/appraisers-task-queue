@@ -106,11 +106,23 @@ class Worker {
           if (!this.appraisalService) {
             throw new Error('Appraisal service not initialized');
           }
-          // Need to get existing data
-          const existingData = await this.sheetsService.getValues(`J${id}:K${id}`);
+          // Need to get existing data - first try pending, then completed sheet if not found
+          let existingData = await this.sheetsService.getValues(`J${id}:K${id}`);
+          
+          // If data not found in pending sheet, check completed sheet
+          if (!existingData || !existingData[0]) {
+            this.logger.info(`No data found in pending sheet for appraisal ${id}, checking completed sheet`);
+            try {
+              existingData = await this.sheetsService.getValues(`J${id}:K${id}`, true); // New param to check completed sheet
+            } catch (error) {
+              this.logger.error(`Error checking completed sheet: ${error.message}`);
+            }
+          }
+          
           if (!existingData || !existingData[0]) {
             throw new Error('No existing data found for appraisal');
           }
+          
           const [value, existingDescription] = existingData[0];
           // Use provided description or existing one
           const descToUse = description || existingDescription;
@@ -125,19 +137,31 @@ class Worker {
           if (!this.appraisalService) {
             throw new Error('Appraisal service not initialized');
           }
-          // Get required data from spreadsheet
-          const [valueData, descData, appraisalTypeData] = await Promise.all([
-            this.sheetsService.getValues(`J${id}`),  // Value
-            this.sheetsService.getValues(`L${id}`),  // Merged description
-            this.sheetsService.getValues(`B${id}`)   // Appraisal type
-          ]);
+          // Get required data from spreadsheet - first try pending sheet
+          let valueData = await this.sheetsService.getValues(`J${id}`);
+          let descData = await this.sheetsService.getValues(`L${id}`);
+          let appraisalTypeData = await this.sheetsService.getValues(`B${id}`);
+          
+          // If data not found, check completed sheet
+          let usingCompletedSheet = false;
+          if (!valueData || !valueData[0] || !descData || !descData[0]) {
+            this.logger.info(`Data missing in pending sheet for appraisal ${id}, checking completed sheet`);
+            try {
+              valueData = await this.sheetsService.getValues(`J${id}`, true);
+              descData = await this.sheetsService.getValues(`L${id}`, true);
+              appraisalTypeData = await this.sheetsService.getValues(`B${id}`, true);
+              usingCompletedSheet = true;
+            } catch (error) {
+              this.logger.error(`Error checking completed sheet: ${error.message}`);
+            }
+          }
           
           const valueToUse = appraisalValue || (valueData?.[0]?.[0] || 0);
           const descriptionToUse = descData?.[0]?.[0] || '';
           const typeToUse = appraisalType || appraisalTypeData?.[0]?.[0] || 'Regular';
           
           // Update WordPress
-          await this.appraisalService.updateStatus(id, 'Updating', 'Setting titles and metadata in WordPress');
+          await this.appraisalService.updateStatus(id, 'Updating', 'Setting titles and metadata in WordPress', usingCompletedSheet);
           await this.appraisalService.updateWordPress(id, valueToUse, descriptionToUse, typeToUse);
           break;
           
@@ -206,8 +230,15 @@ class Worker {
           await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow');
           
           // Run the full process starting from the beginning
-          // Get required data from spreadsheet
-          const fullProcessData = await this.sheetsService.getValues(`B${id}:L${id}`);
+          // Get required data from spreadsheet - first try pending sheet
+          let fullProcessData = await this.sheetsService.getValues(`B${id}:L${id}`);
+          
+          // If not found, check completed sheet
+          if (!fullProcessData || !fullProcessData[0]) {
+            this.logger.info(`No data found in pending sheet for appraisal ${id}, checking completed sheet`);
+            fullProcessData = await this.sheetsService.getValues(`B${id}:L${id}`, true);
+          }
+          
           if (!fullProcessData || !fullProcessData[0]) {
             throw new Error('No data found for appraisal');
           }
@@ -231,8 +262,15 @@ class Worker {
           // Fall back to full process
           await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow');
           
-          // Get all necessary data from the spreadsheet
-          const defaultData = await this.sheetsService.getValues(`B${id}:L${id}`);
+          // Get all necessary data from the spreadsheet - first try pending sheet
+          let defaultData = await this.sheetsService.getValues(`B${id}:L${id}`);
+          
+          // If not found, check completed sheet
+          if (!defaultData || !defaultData[0]) {
+            this.logger.info(`No data found in pending sheet for appraisal ${id}, checking completed sheet`);
+            defaultData = await this.sheetsService.getValues(`B${id}:L${id}`, true);
+          }
+          
           if (!defaultData || !defaultData[0]) {
             throw new Error('No data found for appraisal');
           }

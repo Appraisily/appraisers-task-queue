@@ -58,12 +58,12 @@ class AppraisalService {
     }
   }
 
-  async updateStatus(id, status, details = null) {
+  async updateStatus(id, status, details = null, useCompletedSheet = false) {
     try {
       this.logger.info(`Updating status for appraisal ${id} to: ${status}${details ? ` (${details})` : ''}`);
       
       // Update status in column F
-      await this.sheetsService.updateValues(`F${id}`, [[status]]);
+      await this.sheetsService.updateValues(`F${id}`, [[status]], useCompletedSheet);
       
       // If details are provided, add more context in column R (detailed status column)
       if (details) {
@@ -72,7 +72,7 @@ class AppraisalService {
         
         try {
           // Get the existing detailed status log if any
-          const existingDetails = await this.sheetsService.getValues(`R${id}`);
+          const existingDetails = await this.sheetsService.getValues(`R${id}`, useCompletedSheet);
           let updatedDetails = statusDetails;
           
           if (existingDetails && existingDetails[0] && existingDetails[0][0]) {
@@ -83,7 +83,7 @@ class AppraisalService {
           }
           
           // Update the detailed status column
-          await this.sheetsService.updateValues(`R${id}`, [[updatedDetails]]);
+          await this.sheetsService.updateValues(`R${id}`, [[updatedDetails]], useCompletedSheet);
         } catch (detailsError) {
           this.logger.error(`Error updating status details for appraisal ${id}:`, detailsError);
         }
@@ -92,7 +92,7 @@ class AppraisalService {
       // Broadcast status update to WordPress
       try {
         // Get appraisal data for broadcasting
-        const appraisalData = await this.sheetsService.getValues(`A${id}:G${id}`);
+        const appraisalData = await this.sheetsService.getValues(`A${id}:G${id}`, useCompletedSheet);
         
         if (appraisalData && appraisalData[0]) {
           const row = appraisalData[0];
@@ -311,10 +311,17 @@ class AppraisalService {
   }
 
   async getWordPressPostId(id) {
-    const values = await this.sheetsService.getValues(`G${id}`);
+    // First check pending sheet
+    let values = await this.sheetsService.getValues(`G${id}`);
+    
+    // If not found, check completed sheet
+    if (!values || !values[0] || !values[0][0]) {
+      this.logger.info(`No WordPress URL found in pending sheet for appraisal ${id}, checking completed sheet`);
+      values = await this.sheetsService.getValues(`G${id}`, true);
+    }
     
     if (!values || !values[0] || !values[0][0]) {
-      throw new Error(`No WordPress URL found for appraisal ${id}`);
+      throw new Error(`No WordPress URL found for appraisal ${id} in either sheet`);
     }
 
     const wpUrl = values[0][0];

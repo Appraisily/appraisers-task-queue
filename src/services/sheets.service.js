@@ -75,11 +75,12 @@ class SheetsService {
     }
   }
 
-  async getValues(range) {
+  async getValues(range, checkCompletedSheet = false) {
     if (!this.initialized) throw new Error('Sheets service not initialized');
 
     try {
-      const fullRange = `'${this.pendingSheetName}'!${range}`;
+      const sheetToUse = checkCompletedSheet ? this.completedSheetName : this.pendingSheetName;
+      const fullRange = `'${sheetToUse}'!${range}`;
       this.logger.info(`Getting values from range: ${fullRange}`);
 
       const response = await this.sheets.spreadsheets.values.get({
@@ -95,11 +96,12 @@ class SheetsService {
     }
   }
 
-  async updateValues(range, values) {
+  async updateValues(range, values, checkCompletedSheet = false) {
     if (!this.initialized) throw new Error('Sheets service not initialized');
 
     try {
-      const fullRange = `'${this.pendingSheetName}'!${range}`;
+      const sheetToUse = checkCompletedSheet ? this.completedSheetName : this.pendingSheetName;
+      const fullRange = `'${sheetToUse}'!${range}`;
       this.logger.info(`Updating values in range: ${fullRange}`);
 
       await this.sheets.spreadsheets.values.update({
