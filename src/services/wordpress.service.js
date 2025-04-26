@@ -142,6 +142,34 @@ class WordPressService {
       if (condition_summary) acfData.condition_summary = condition_summary;
       if (condition) acfData.condition = condition;
 
+      // DEBUG: Log detailed info about the ACF fields
+      this.logger.info(`======= DETAILED ACF UPDATE DEBUG (POST ${postId}) =======`);
+      for (const [field, fieldValue] of Object.entries(acfData)) {
+        const valueType = typeof fieldValue;
+        const valuePreview = valueType === 'string' 
+          ? `"${fieldValue.substring(0, 50)}${fieldValue.length > 50 ? '...' : ''}"`
+          : String(fieldValue);
+        
+        this.logger.info(`ACF Field "${field}": [${valueType}] ${valuePreview}`);
+      }
+      
+      // Check for potential issues with detailedTitle
+      if (detailedTitle) {
+        if (detailedTitle.length > 100000) {
+          this.logger.warn(`detailedTitle is extremely long (${detailedTitle.length} chars) - may exceed WordPress limits`);
+        }
+        if (detailedTitle.includes('\u0000')) {
+          this.logger.warn(`detailedTitle contains null bytes which could cause saving issues`);
+        }
+      }
+      
+      const requestBody = JSON.stringify({
+        ...payload,
+        acf: acfData
+      });
+      
+      this.logger.info(`Request payload length: ${requestBody.length} bytes`);
+      
       // Log the ACF fields being updated
       this.logger.info(`Updating WordPress post ${postId} with ACF fields: ${Object.keys(acfData).join(', ')}`);
 
@@ -152,18 +180,36 @@ class WordPressService {
           'Authorization': this.authHeader,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          ...payload,
-          acf: acfData
-        })
+        body: requestBody
       });
 
       if (!response.ok) {
         const errorText = await response.text();
+        this.logger.error(`WordPress API Error Details for post ${postId}:`);
+        this.logger.error(`Status: ${response.status} ${response.statusText}`);
+        this.logger.error(`Response: ${errorText}`);
         throw new Error(`WordPress API error: ${response.status} ${response.statusText} - ${errorText}`);
       }
 
       const updatedPost = await response.json();
+      
+      // DEBUG: Check the response to see if ACF fields were updated
+      if (updatedPost.acf) {
+        this.logger.info(`Response ACF fields for post ${postId}: ${Object.keys(updatedPost.acf).join(', ')}`);
+        
+        // Check if detailedTitle was saved correctly
+        if (detailedTitle && updatedPost.acf.detailedTitle) {
+          const responseDetailedTitle = updatedPost.acf.detailedTitle;
+          const detailedTitleLength = responseDetailedTitle.length;
+          const isTruncated = detailedTitleLength < detailedTitle.length;
+          
+          this.logger.info(`detailedTitle in response: ${detailedTitleLength} chars${isTruncated ? ' (TRUNCATED)' : ''}`);
+        } else if (detailedTitle && !updatedPost.acf.detailedTitle) {
+          this.logger.warn(`detailedTitle was sent but is missing from WordPress response!`);
+        }
+      } else {
+        this.logger.warn(`No ACF data in WordPress response for post ${postId}`);
+      }
       
       // Get public URL
       const publicUrl = updatedPost.link;

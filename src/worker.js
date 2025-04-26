@@ -243,15 +243,16 @@ class Worker {
                 }
             }
             
-            // Update status
-            await this.appraisalService.updateStatus(id, 'Generating', 'Creating complete appraisal report', usingCompletedSheetForVis);
+            // Don't update status to "Generating" in the sheets
+            // Just log that we're generating the visualization
+            this.logger.info(`Generating visualization for appraisal ${id} (WordPress Post ID: ${postIdToUse})`);
             
             // Complete the report (which includes visualizations)
             // wordpressService is likely accessed via appraisalService
             await this.appraisalService.wordpressService.completeAppraisalReport(postIdToUse);
             
-            // Update status when done
-            await this.appraisalService.updateStatus(id, 'Generating', 'Appraisal report created successfully', usingCompletedSheetForVis);
+            // Log completion but don't update sheet status
+            this.logger.info(`Appraisal report created successfully for ${id}`);
           } catch (error) {
              this.logger.error(`Error in STEP_GENERATE_VISUALIZATION for appraisal ${id} on ${usingCompletedSheetForVis ? 'Completed' : 'Pending'} sheet:`, error);
              await this.appraisalService.updateStatus(id, 'Failed', `GEN_VIS Error: ${error.message}`, usingCompletedSheetForVis);

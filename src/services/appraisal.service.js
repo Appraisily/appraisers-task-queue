@@ -45,7 +45,9 @@ class AppraisalService {
       await this.sheetsService.updateValues(`P${id}`, [[publicUrl]], wpUsingCompletedSheet);
       
       // Generate visualization
-      await this.updateStatus(id, 'Generating', 'Building full appraisal report', wpUsingCompletedSheet);
+      // We no longer update status to "Generating" in the sheets
+      // Just log the status change internally
+      this.logger.info(`Generating visualizations for appraisal ${id} - Building full appraisal report`);
       await this.visualize(id, postId, wpUsingCompletedSheet);
       
       // Create PDF
@@ -71,7 +73,15 @@ class AppraisalService {
     try {
       this.logger.info(`Updating status for appraisal ${id} to: ${status}${details ? ` (${details})` : ''}`);
       
-      // Update status in column F only
+      // Don't update the status in column F if we're in Generating phase
+      // This prevents SheetsService from changing the status and causing conflicts
+      if (status === 'Generating') {
+        this.logger.info(`Skipping sheet status update for 'Generating' phase to prevent conflicts`);
+        // We still log the status change for internal tracking but don't modify the sheet
+        return;
+      }
+      
+      // Update status in column F only for non-Generating statuses
       await this.sheetsService.updateValues(`F${id}`, [[status]], useCompletedSheet);
       
       // REMOVED: Detailed status log in column R - not needed
@@ -197,17 +207,34 @@ class AppraisalService {
     let detailedTitle = '';
     let description = '';
     
+    // DEBUG: Log the incoming mergedDescription type and structure
+    this.logger.info(`DEBUG: mergedDescription is type: ${typeof mergedDescription}`);
+    if (typeof mergedDescription === 'object') {
+      this.logger.info(`DEBUG: mergedDescription object keys: ${Object.keys(mergedDescription).join(', ')}`);
+    } else if (typeof mergedDescription === 'string') {
+      this.logger.info(`DEBUG: mergedDescription string length: ${mergedDescription.length} chars`);
+    } else {
+      this.logger.info(`DEBUG: mergedDescription unexpected type value: ${String(mergedDescription)}`);
+    }
+    
     if (typeof mergedDescription === 'object' && mergedDescription !== null && !Array.isArray(mergedDescription)) {
       // New structure with brief and detailed titles
       briefTitle = mergedDescription.briefTitle;
       detailedTitle = mergedDescription.detailedTitle;
       description = mergedDescription.mergedDescription;
+      
+      // DEBUG: Log the extracted values
+      this.logger.info(`DEBUG: Extracted from object - briefTitle (${typeof briefTitle}): ${briefTitle ? briefTitle.substring(0, 50) + '...' : 'undefined'}`);
+      this.logger.info(`DEBUG: Extracted from object - detailedTitle (${typeof detailedTitle}): ${detailedTitle ? `${detailedTitle.substring(0, 50)}... (${detailedTitle.length} chars)` : 'undefined'}`);
     } else {
       // Legacy format (just a string)
       // Don't truncate the title if it's the only one we have
       briefTitle = mergedDescription;
       detailedTitle = mergedDescription;
       description = mergedDescription;
+      
+      // DEBUG: Log legacy format handling
+      this.logger.info(`DEBUG: Using legacy format - all fields assigned same string value (${typeof mergedDescription}) of length ${mergedDescription ? mergedDescription.length : 0} chars`);
     }
     
     // Ensure the brief title doesn't appear truncated in the UI
@@ -219,6 +246,7 @@ class AppraisalService {
         if (briefTitle.length > 80) {
           briefTitle = briefTitle.substring(0, 80).trim() + '...';
         }
+        this.logger.info(`DEBUG: Generated briefTitle from detailedTitle: "${briefTitle}"`);
       }
     }
     
@@ -234,6 +262,25 @@ class AppraisalService {
     // Log final title selection
     this.logger.info(`Using brief title: "${briefTitle}"`);
     this.logger.info(`Using detailed title (first 50 chars): "${detailedTitle?.substring(0, 50)}..."`);
+    this.logger.info(`DEBUG: Final detailedTitle length: ${detailedTitle?.length || 0} chars`);
+    
+    // Check for potential issues with detailedTitle
+    if (detailedTitle) {
+      if (typeof detailedTitle !== 'string') {
+        this.logger.error(`ERROR: detailedTitle is not a string but a ${typeof detailedTitle}`);
+        detailedTitle = String(detailedTitle);
+      }
+      
+      if (detailedTitle.length === 0) {
+        this.logger.warn(`WARNING: detailedTitle is an empty string`);
+      }
+      
+      if (detailedTitle.length > 10000) {
+        this.logger.warn(`WARNING: detailedTitle is very long (${detailedTitle.length} chars) - may exceed WordPress limits`);
+      }
+    } else {
+      this.logger.warn(`WARNING: detailedTitle is null or undefined before WordPress update`);
+    }
     
     // Simplified WordPress update with only essential fields
     const updatedPost = await this.wordpressService.updateAppraisalPost(postId, {
@@ -243,6 +290,15 @@ class AppraisalService {
       appraisalType: appraisalType,
       detailedTitle: detailedTitle
     });
+
+    // DEBUG: Check if the detailedTitle was saved correctly in the response
+    if (updatedPost.acf && detailedTitle) {
+      if (updatedPost.acf.detailedTitle) {
+        this.logger.info(`DEBUG: WordPress response contains detailedTitle of length: ${updatedPost.acf.detailedTitle.length} chars`);
+      } else {
+        this.logger.warn(`DEBUG: WordPress response is missing detailedTitle field despite being sent`);
+      }
+    }
 
     return {
       postId,
@@ -287,13 +343,19 @@ class AppraisalService {
     try {
       this.logger.info(`Generating visualizations for appraisal ${id} (WordPress post ID: ${postId})`);
       
+      // Don't update status in sheets here to prevent SheetsService from updating status column
+      // We only log the status change but don't call updateStatus() method
+      this.logger.info(`Visualization status: Generating visualizations (status change not reflected in sheet)`);
+      
       // Call WordPress service to generate report
       await this.wordpressService.completeAppraisalReport(postId);
       
-      await this.updateStatus(id, 'Generating', 'Visualizations created successfully', usingCompletedSheet);
+      // Also skip the status update when visualizations are created
+      this.logger.info(`Visualization status: Visualizations created successfully (status change not reflected in sheet)`);
       return { success: true };
     } catch (error) {
       this.logger.error(`Error generating visualizations for appraisal ${id}:`, error);
+      // For errors, we still want to update the status
       await this.updateStatus(id, 'Error', `Failed to generate visualizations: ${error.message}`, usingCompletedSheet);
       throw error;
     }
