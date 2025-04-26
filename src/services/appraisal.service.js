@@ -312,14 +312,35 @@ class AppraisalService {
     try {
       this.logger.info(`Generating visualizations for appraisal ${id} (WordPress post ID: ${postId})`);
       
-      // Use updateStatus for consistency, even though it will skip sheet updates for 'Generating'
-      await this.updateStatus(id, 'Generating', 'Building visualizations and analytics', usingCompletedSheet);
+      // Update status - internal logging only, no sheet updates for 'Generating'
+      await this.updateStatus(id, 'Generating', 'Building full appraisal report', usingCompletedSheet);
       
-      // Call WordPress service to generate report
-      await this.wordpressService.completeAppraisalReport(postId);
+      // Use runtime environment variable for backend URL
+      let appraisalsBackendUrl = process.env.APPRAISALS_BACKEND_URL;
       
-      // Also use updateStatus for completion, even though it may skip sheet updates
-      await this.updateStatus(id, 'Generating', 'Visualizations created successfully', usingCompletedSheet);
+      // Fallback value if the runtime variable is not set
+      if (!appraisalsBackendUrl) {
+        this.logger.warn('APPRAISALS_BACKEND_URL runtime variable not found, using fallback URL');
+        appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
+      }
+      
+      // Directly call the backend API instead of going through WordPress service
+      const response = await fetch(`${appraisalsBackendUrl}/complete-appraisal-report`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // Use the same authorization header as WordPress service
+          'Authorization': this.wordpressService.authHeader
+        },
+        body: JSON.stringify({ postId: postId })
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Report generation failed: ${response.status} ${response.statusText} - ${errorText}`);
+      }
+      
+      this.logger.info(`Successfully generated full appraisal report for post ${postId}`);
       
       return { success: true };
     } catch (error) {

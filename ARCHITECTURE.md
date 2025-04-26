@@ -109,4 +109,36 @@ If you see errors like the following:
 Error in step STEP_MERGE_DESCRIPTIONS: Cannot read properties of undefined (reading 'mergeDescriptions')
 ```
 
-It's likely because you're trying to process appraisals directly in the backend instead of forwarding to the Task Queue. Make sure all processing requests are forwarded to the Task Queue. 
+It's likely because you're trying to process appraisals directly in the backend instead of forwarding to the Task Queue. Make sure all processing requests are forwarded to the Task Queue.
+
+## Service Responsibilities and Boundaries
+
+### Service Separation of Concerns
+
+Each service in the application has clear responsibilities:
+
+1. **AppraisalService**: Coordinates the overall appraisal process, maintains state in Google Sheets.
+   - Handles generation of the full appraisal report by calling the backend directly
+   - Responsible for PDF generation, finalization and notification
+
+2. **WordPressService**: Handles all communication with the WordPress API.
+   - Creates and updates posts
+   - Manages custom fields
+   - Retrieves media and post data
+   - DOES NOT trigger other backend services - maintains strict separation of concerns
+
+3. **SheetsService**: Manages all Google Sheets operations.
+   - No business logic, pure data operations
+
+4. **OpenAIService**: Handles communication with AI services.
+   - Responsible for text processing and generation
+   
+5. **PDFService**: Manages creation of PDF reports.
+   - Delegates to Google Docs for the actual generation
+
+6. **EmailService**: Handles notification delivery.
+   - Templates and sends emails
+
+### Changes from Previous Architecture
+
+**April 2025 Update**: Fixed architectural issue where WordPressService was improperly triggering appraisal report generation. This responsibility has been moved to the AppraisalService, which now calls the backend API directly. This change enforces proper separation of concerns - WordPress service should only communicate with WordPress, not with other backend services. 

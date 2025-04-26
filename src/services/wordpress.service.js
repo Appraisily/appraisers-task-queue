@@ -191,46 +191,6 @@ class WordPressService {
       throw error;
     }
   }
-  
-  /**
-   * Trigger the appraisal report generation process
-   * @param {string} postId - The WordPress post ID
-   * @returns {Promise<void>}
-   */
-  async completeAppraisalReport(postId) {
-    try {
-      this.logger.info(`Triggering appraisal report generation for post ${postId}`);
-      
-      // Use runtime environment variable instead of Secret Manager
-      // This is implemented as a runtime variable in Cloud Run
-      let appraisalsBackendUrl = process.env.APPRAISALS_BACKEND_URL;
-      
-      // Fallback value if the runtime variable is not set
-      if (!appraisalsBackendUrl) {
-        this.logger.warn('APPRAISALS_BACKEND_URL runtime variable not found, using fallback URL');
-        appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
-      }
-      
-      const response = await fetch(`${appraisalsBackendUrl}/complete-appraisal-report`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': this.authHeader
-        },
-        body: JSON.stringify({ postId: postId })
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Report generation failed: ${response.status} ${response.statusText} - ${errorText}`);
-      }
-      
-      this.logger.info(`Successfully triggered report generation for post ${postId}`);
-    } catch (error) {
-      this.logger.error(`Error completing appraisal report for post ${postId}:`, error);
-      throw error;
-    }
-  }
 
   /**
    * Get a media attachment by ID
