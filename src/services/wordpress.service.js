@@ -141,17 +141,6 @@ class WordPressService {
       if (medium) acfData.medium = medium;
       if (condition_summary) acfData.condition_summary = condition_summary;
       if (condition) acfData.condition = condition;
-
-      // DEBUG: Log detailed info about the ACF fields
-      this.logger.info(`======= DETAILED ACF UPDATE DEBUG (POST ${postId}) =======`);
-      for (const [field, fieldValue] of Object.entries(acfData)) {
-        const valueType = typeof fieldValue;
-        const valuePreview = valueType === 'string' 
-          ? `"${fieldValue.substring(0, 50)}${fieldValue.length > 50 ? '...' : ''}"`
-          : String(fieldValue);
-        
-        this.logger.info(`ACF Field "${field}": [${valueType}] ${valuePreview}`);
-      }
       
       // Check for potential issues with detailedTitle
       if (detailedTitle) {
@@ -168,10 +157,7 @@ class WordPressService {
         acf: acfData
       });
       
-      this.logger.info(`Request payload length: ${requestBody.length} bytes`);
-      
-      // Log the ACF fields being updated
-      this.logger.info(`Updating WordPress post ${postId} with ACF fields: ${Object.keys(acfData).join(', ')}`);
+      this.logger.info(`Updating WordPress post ${postId}`);
 
       // Update the post
       const response = await fetch(`${this.apiUrl}/appraisals/${postId}`, {
@@ -192,24 +178,6 @@ class WordPressService {
       }
 
       const updatedPost = await response.json();
-      
-      // DEBUG: Check the response to see if ACF fields were updated
-      if (updatedPost.acf) {
-        this.logger.info(`Response ACF fields for post ${postId}: ${Object.keys(updatedPost.acf).join(', ')}`);
-        
-        // Check if detailedtitle was saved correctly
-        if (detailedTitle && updatedPost.acf.detailedtitle) {
-          const responseDetailedTitle = updatedPost.acf.detailedtitle;
-          const detailedTitleLength = responseDetailedTitle.length;
-          const isTruncated = detailedTitleLength < detailedTitle.length;
-          
-          this.logger.info(`detailedtitle in response: ${detailedTitleLength} chars${isTruncated ? ' (TRUNCATED)' : ''}`);
-        } else if (detailedTitle && !updatedPost.acf.detailedtitle) {
-          this.logger.warn(`detailedtitle was sent but is missing from WordPress response!`);
-        }
-      } else {
-        this.logger.warn(`No ACF data in WordPress response for post ${postId}`);
-      }
       
       // Get public URL
       const publicUrl = updatedPost.link;

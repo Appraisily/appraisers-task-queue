@@ -117,37 +117,37 @@ class AppraisalService {
     // Ensure we have a valid description to merge (customer provided)
     const customerDescription = description || '';
     
-    // Log the inputs for debugging
-    this.logger.info(`Customer description length: ${customerDescription.length} chars`);
-    this.logger.info(`AI description length: ${iaDescription.length} chars`);
+    // Use OpenAI service to make the API call - this now only returns the raw response
+    const openaiResponse = await this.openaiService.mergeDescriptions(customerDescription, iaDescription);
     
-    // Use OpenAI to merge descriptions - pass both the customer description and AI description
-    const result = await this.openaiService.mergeDescriptions(customerDescription, iaDescription);
+    // Apply additional processing and validation here in the AppraisalService
+    // Extract the components from the raw response
+    const { mergedDescription, briefTitle } = openaiResponse;
     
-    // Extract the components from the result
-    const { mergedDescription, briefTitle, detailedTitle } = result;
+    if (!mergedDescription) {
+      this.logger.warn(`Missing mergedDescription in OpenAI response for appraisal ${id}`);
+    }
+    
+    // Create the complete response with required fields
+    const result = {
+      mergedDescription: mergedDescription || 'Error generating description.',
+      briefTitle: briefTitle || 'Artwork Appraisal',
+      // Set detailedTitle to be the same as mergedDescription
+      detailedTitle: mergedDescription || 'Error generating description.'
+    };
     
     // Save merged description to Column L, using the correct sheet
-    await this.sheetsService.updateValues(`L${id}`, [[mergedDescription]], useCompletedSheet);
+    await this.sheetsService.updateValues(`L${id}`, [[result.mergedDescription]], useCompletedSheet);
     
-    // Log the titles for debugging
-    this.logger.info(`Generated brief title: ${briefTitle}`);
-    this.logger.info(`Generated detailed title length: ${detailedTitle?.length} characters`);
+    this.logger.info(`Generated and saved merged description for appraisal ${id}`);
     
     // Return all generated content
-    return { 
-      mergedDescription,
-      briefTitle,
-      detailedTitle
-    };
+    return result;
   }
 
   async getAppraisalType(id) {
     try {
       const { data, usingCompletedSheet } = await this.appraisalFinder.findAppraisalData(id, `B${id}`);
-      
-      this.logger.info(`[DEBUG] Column B value type: ${typeof data?.[0]?.[0]}`);
-      this.logger.info(`[DEBUG] Column B raw value: ${data?.[0]?.[0]}`);
       
       if (!data || !data[0] || !data[0][0]) {
         this.logger.warn(`No appraisal type found for ID ${id}, using default`);
@@ -163,7 +163,7 @@ class AppraisalService {
         appraisalType = 'Regular';
       }
       
-      this.logger.info(`[DEBUG] Processed appraisal type: ${appraisalType} (using ${usingCompletedSheet ? 'completed' : 'pending'} sheet)`);
+      this.logger.info(`Appraisal type for ID ${id}: ${appraisalType}`);
       return appraisalType;
     } catch (error) {
       this.logger.error(`Error getting appraisal type for ${id}:`, error);
@@ -204,35 +204,18 @@ class AppraisalService {
     let detailedTitle = '';
     let description = '';
     
-    // DEBUG: Log the incoming mergedDescription type and structure
-    this.logger.info(`DEBUG: mergedDescriptionObj is type: ${typeof mergedDescriptionObj}`);
-    if (typeof mergedDescriptionObj === 'object') {
-      this.logger.info(`DEBUG: mergedDescriptionObj object keys: ${Object.keys(mergedDescriptionObj).join(', ')}`);
-    } else if (typeof mergedDescriptionObj === 'string') {
-      this.logger.info(`DEBUG: mergedDescriptionObj string length: ${mergedDescriptionObj.length} chars`);
-    } else {
-      this.logger.info(`DEBUG: mergedDescriptionObj unexpected type value: ${String(mergedDescriptionObj)}`);
-    }
-    
     if (typeof mergedDescriptionObj === 'object' && mergedDescriptionObj !== null && !Array.isArray(mergedDescriptionObj)) {
       // New structure with brief and detailed titles
       briefTitle = mergedDescriptionObj.briefTitle;
       detailedTitle = mergedDescriptionObj.detailedTitle || mergedDescriptionObj.mergedDescription;
       description = mergedDescriptionObj.mergedDescription;
-      
-      // DEBUG: Log the extracted values
-      this.logger.info(`DEBUG: Extracted from object - briefTitle (${typeof briefTitle}): ${briefTitle ? briefTitle.substring(0, 50) + '...' : 'undefined'}`);
-      this.logger.info(`DEBUG: Extracted from object - detailedTitle (${typeof detailedTitle}): ${detailedTitle ? `${detailedTitle.substring(0, 50)}... (${detailedTitle.length} chars)` : 'undefined'}`);
-      this.logger.info(`DEBUG: Extracted from object - mergedDescription (${typeof description}): ${description ? `${description.substring(0, 50)}... (${description.length} chars)` : 'undefined'}`);
     } else {
       // Legacy format (just a string)
       // Don't truncate the title if it's the only one we have
       briefTitle = mergedDescriptionObj;
       detailedTitle = mergedDescriptionObj;
       description = mergedDescriptionObj;
-      
-      // DEBUG: Log legacy format handling
-      this.logger.info(`DEBUG: Using legacy format - all fields assigned same string value (${typeof mergedDescriptionObj}) of length ${mergedDescriptionObj ? mergedDescriptionObj.length : 0} chars`);
+      this.logger.warn(`Legacy format detected for appraisal ${id}: using string value for all fields`);
     }
     
     // Ensure the brief title doesn't appear truncated in the UI
@@ -244,7 +227,6 @@ class AppraisalService {
         if (briefTitle.length > 80) {
           briefTitle = briefTitle.substring(0, 80).trim() + '...';
         }
-        this.logger.info(`DEBUG: Generated briefTitle from detailedTitle: "${briefTitle}"`);
       }
     }
     
@@ -257,10 +239,8 @@ class AppraisalService {
       this.logger.info(`Generated fallback title: ${briefTitle}`);
     }
     
-    // Log final title selection
-    this.logger.info(`Using brief title: "${briefTitle}"`);
-    this.logger.info(`Using detailed title (first 50 chars): "${detailedTitle?.substring(0, 50)}..."`);
-    this.logger.info(`DEBUG: Final detailedTitle length: ${detailedTitle?.length || 0} chars`);
+    // Log final selections
+    this.logger.info(`Using brief title for post title and detailedTitle field (${detailedTitle?.length || 0} chars)`);
     
     // Check for potential issues with detailedTitle
     if (detailedTitle) {
@@ -288,15 +268,6 @@ class AppraisalService {
       appraisalType: appraisalType,
       detailedTitle: detailedTitle // This will be mapped to 'detailedtitle' in the WordPress service
     });
-
-    // DEBUG: Check if the detailedTitle was saved correctly in the response
-    if (updatedPost.acf && detailedTitle) {
-      if (updatedPost.acf.detailedtitle) { // Use lowercase here to match WordPress ACF field
-        this.logger.info(`DEBUG: WordPress response contains detailedtitle of length: ${updatedPost.acf.detailedtitle.length} chars`);
-      } else {
-        this.logger.warn(`DEBUG: WordPress response is missing detailedtitle field despite being sent`);
-      }
-    }
 
     return {
       postId,

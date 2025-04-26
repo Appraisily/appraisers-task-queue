@@ -54,11 +54,8 @@ class OpenAIService {
     }
     
     try {
-      this.logger.info('Merging descriptions...');
-      
-      // DEBUG: Log the input parameters
-      this.logger.info(`DEBUG: customerDescription length: ${customerDescription?.length || 0} chars`);
-      this.logger.info(`DEBUG: iaDescription length: ${iaDescription?.length || 0} chars`);
+      // Only log that we're making the API call, no data details
+      this.logger.info('Calling OpenAI to merge descriptions');
       
       const prompt = `
         You are an expert art and antiques appraiser. Your task is to merge two descriptions of an item:
@@ -101,59 +98,24 @@ class OpenAIService {
       // Get the response text
       const responseText = response.choices[0].message.content;
       
-      // DEBUG: Log the raw response
-      this.logger.info(`DEBUG: Raw OpenAI response length: ${responseText.length} chars`);
-      this.logger.info(`DEBUG: Raw OpenAI response preview: ${responseText.substring(0, 200)}...`);
-      
       // Parse the JSON response
       let parsedResponse;
       try {
         parsedResponse = JSON.parse(responseText);
-        
-        // DEBUG: Log the parsed response structure
-        this.logger.info(`DEBUG: Parsed response keys: ${Object.keys(parsedResponse).join(', ')}`);
-        Object.entries(parsedResponse).forEach(([key, value]) => {
-          const valueType = typeof value;
-          const valueLength = valueType === 'string' ? value.length : JSON.stringify(value).length;
-          this.logger.info(`DEBUG: Parsed field "${key}": [${valueType}] ${valueLength} chars`);
-        });
-        
       } catch (parseError) {
-        this.logger.error('Failed to parse OpenAI JSON response:', parseError);
-        this.logger.error('Raw response:', responseText);
+        this.logger.error('Failed to parse OpenAI JSON response');
         
         // Return a basic format to prevent complete failure
         return {
           mergedDescription: 'Error merging descriptions. Please contact support.',
-          briefTitle: 'Artwork Appraisal',
-          detailedTitle: 'Error merging descriptions. Please contact support.'
+          briefTitle: 'Artwork Appraisal'
         };
       }
       
-      // Validate the presence of all expected fields
-      const { mergedDescription, briefTitle } = parsedResponse;
-      
-      if (!mergedDescription) {
-        throw new Error('Missing mergedDescription in OpenAI response');
-      }
-      
-      // Create response object with detailedTitle set to mergedDescription
-      const result = {
-        mergedDescription: mergedDescription || 'Error generating description.',
-        briefTitle: briefTitle || 'Artwork Appraisal',
-        // Set detailedTitle to be the same as mergedDescription
-        detailedTitle: mergedDescription || 'Error generating description.'
-      };
-      
-      // DEBUG: Log the final result being returned
-      this.logger.info(`DEBUG: Final result object keys: ${Object.keys(result).join(', ')}`);
-      this.logger.info(`DEBUG: Final briefTitle: "${result.briefTitle}"`);
-      this.logger.info(`DEBUG: Final detailedTitle length: ${result.detailedTitle.length} chars`);
-      this.logger.info(`DEBUG: Final detailedTitle preview: "${result.detailedTitle.substring(0, 100)}..."`);
-      
-      return result;
+      // Just return the parsed response - let AppraisalService handle the rest
+      return parsedResponse;
     } catch (error) {
-      this.logger.error('Error merging descriptions:', error);
+      this.logger.error('Error calling OpenAI API:', error);
       throw error;
     }
   }
