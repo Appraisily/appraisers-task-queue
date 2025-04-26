@@ -73,22 +73,27 @@ class AppraisalService {
     try {
       this.logger.info(`Updating status for appraisal ${id} to: ${status}${details ? ` (${details})` : ''}`);
       
-      // Don't update the status in column F if we're in Generating phase
-      // This prevents SheetsService from changing the status and causing conflicts
-      if (status === 'Generating') {
-        this.logger.info(`Skipping sheet status update for 'Generating' phase to prevent conflicts`);
+      // Check if we should skip the sheet update for this status
+      const skipSheetUpdate = status === 'Generating';
+      
+      if (skipSheetUpdate) {
+        this.logger.info(`Skipping sheet status update for '${status}' phase (internal tracking only)`);
         // We still log the status change for internal tracking but don't modify the sheet
         return;
       }
       
-      // Update status in column F only for non-Generating statuses
+      // Update status in column F (status column) through SheetsService
+      // SheetsService should only handle the data operation without any business logic
       await this.sheetsService.updateValues(`F${id}`, [[status]], useCompletedSheet);
       
-      // REMOVED: Detailed status log in column R - not needed
+      // If we have details, we could store them in a tracking log or application database
+      // But we've removed the column R detailed status log as per previous comment
       
+      return { success: true, status };
     } catch (error) {
       this.logger.error(`Error updating status for appraisal ${id}:`, error);
       // Don't throw here to prevent status updates from breaking the main flow
+      return { success: false, error: error.message };
     }
   }
 
@@ -97,35 +102,26 @@ class AppraisalService {
   }
 
   async mergeDescriptions(id, description, useCompletedSheet = false) {
-    const values = await this.sheetsService.getValues(`H${id}`, useCompletedSheet);
+    // Get AI description from column H
+    const aiDescValues = await this.sheetsService.getValues(`H${id}`, useCompletedSheet);
+    let iaDescription = '';
     
     // Add null checking to prevent "Cannot read properties of undefined" error
-    if (!values || !values[0] || values[0][0] === undefined) {
-      this.logger.warn(`No AI description found in column H for appraisal ${id}, using fallback`);
-      // Use empty string as fallback if no AI description is available
-      const iaDescription = '';
-      const result = await this.openaiService.mergeDescriptions(description || '', iaDescription);
-      
-      // Extract the components from the result
-      const { mergedDescription, briefTitle, detailedTitle } = result;
-      
-      // Save merged description to Column L, using the correct sheet
-      await this.sheetsService.updateValues(`L${id}`, [[mergedDescription]], useCompletedSheet);
-      
-      // Log the titles for debugging
-      this.logger.info(`Generated brief title: ${briefTitle}`);
-      this.logger.info(`Generated detailed title length: ${detailedTitle?.length} characters`);
-      
-      // Return all generated content
-      return { 
-        mergedDescription,
-        briefTitle,
-        detailedTitle
-      };
+    if (aiDescValues && aiDescValues[0] && aiDescValues[0][0] !== undefined) {
+      iaDescription = aiDescValues[0][0];
+    } else {
+      this.logger.warn(`No AI description found in column H for appraisal ${id}, using empty string`);
     }
     
-    const iaDescription = values[0][0];
-    const result = await this.openaiService.mergeDescriptions(description || '', iaDescription);
+    // Ensure we have a valid description to merge (customer provided)
+    const customerDescription = description || '';
+    
+    // Log the inputs for debugging
+    this.logger.info(`Customer description length: ${customerDescription.length} chars`);
+    this.logger.info(`AI description length: ${iaDescription.length} chars`);
+    
+    // Use OpenAI to merge descriptions - pass both the customer description and AI description
+    const result = await this.openaiService.mergeDescriptions(customerDescription, iaDescription);
     
     // Extract the components from the result
     const { mergedDescription, briefTitle, detailedTitle } = result;
@@ -288,15 +284,15 @@ class AppraisalService {
       content: post.content?.rendered || '',
       value: safeValue, // Use safely formatted value
       appraisalType: appraisalType,
-      detailedTitle: detailedTitle
+      detailedtitle: detailedTitle
     });
 
     // DEBUG: Check if the detailedTitle was saved correctly in the response
     if (updatedPost.acf && detailedTitle) {
-      if (updatedPost.acf.detailedTitle) {
-        this.logger.info(`DEBUG: WordPress response contains detailedTitle of length: ${updatedPost.acf.detailedTitle.length} chars`);
+      if (updatedPost.acf.detailedtitle) {
+        this.logger.info(`DEBUG: WordPress response contains detailedtitle of length: ${updatedPost.acf.detailedtitle.length} chars`);
       } else {
-        this.logger.warn(`DEBUG: WordPress response is missing detailedTitle field despite being sent`);
+        this.logger.warn(`DEBUG: WordPress response is missing detailedtitle field despite being sent`);
       }
     }
 
@@ -343,19 +339,19 @@ class AppraisalService {
     try {
       this.logger.info(`Generating visualizations for appraisal ${id} (WordPress post ID: ${postId})`);
       
-      // Don't update status in sheets here to prevent SheetsService from updating status column
-      // We only log the status change but don't call updateStatus() method
-      this.logger.info(`Visualization status: Generating visualizations (status change not reflected in sheet)`);
+      // Use updateStatus for consistency, even though it will skip sheet updates for 'Generating'
+      await this.updateStatus(id, 'Generating', 'Building visualizations and analytics', usingCompletedSheet);
       
       // Call WordPress service to generate report
       await this.wordpressService.completeAppraisalReport(postId);
       
-      // Also skip the status update when visualizations are created
-      this.logger.info(`Visualization status: Visualizations created successfully (status change not reflected in sheet)`);
+      // Also use updateStatus for completion, even though it may skip sheet updates
+      await this.updateStatus(id, 'Generating', 'Visualizations created successfully', usingCompletedSheet);
+      
       return { success: true };
     } catch (error) {
       this.logger.error(`Error generating visualizations for appraisal ${id}:`, error);
-      // For errors, we still want to update the status
+      // For errors, we still want to update the status - this will update the sheet
       await this.updateStatus(id, 'Error', `Failed to generate visualizations: ${error.message}`, usingCompletedSheet);
       throw error;
     }

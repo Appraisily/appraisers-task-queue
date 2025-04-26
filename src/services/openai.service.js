@@ -77,10 +77,8 @@ class OpenAIService {
         
         2. A brief title (max 60 chars) that clearly identifies the item.
         
-        3. A detailed title (max 120 chars) that provides more specific information about the item.
-        
         Return your response in JSON format with these fields: 
-        mergedDescription, briefTitle, detailedTitle.
+        mergedDescription, briefTitle.
       `;
       
       const response = await this.client.chat.completions.create({
@@ -128,23 +126,23 @@ class OpenAIService {
         return {
           mergedDescription: 'Error merging descriptions. Please contact support.',
           briefTitle: 'Artwork Appraisal',
-          detailedTitle: 'Art Appraisal Report'
+          detailedTitle: 'Error merging descriptions. Please contact support.'
         };
       }
       
       // Validate the presence of all expected fields
-      const { mergedDescription, briefTitle, detailedTitle } = parsedResponse;
+      const { mergedDescription, briefTitle } = parsedResponse;
       
       if (!mergedDescription) {
         throw new Error('Missing mergedDescription in OpenAI response');
       }
       
-      // Create response object with explicit detailedTitle
+      // Create response object with detailedTitle set to mergedDescription
       const result = {
         mergedDescription: mergedDescription || 'Error generating description.',
         briefTitle: briefTitle || 'Artwork Appraisal',
-        // If detailedTitle exists in response, use it; otherwise use mergedDescription for backward compatibility
-        detailedTitle: detailedTitle || mergedDescription || 'Art Appraisal Report'
+        // Set detailedTitle to be the same as mergedDescription
+        detailedTitle: mergedDescription || 'Error generating description.'
       };
       
       // DEBUG: Log the final result being returned

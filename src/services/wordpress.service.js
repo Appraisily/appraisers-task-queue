@@ -129,7 +129,7 @@ class WordPressService {
 
       // Add detailed title to ACF if provided
       if (detailedTitle) {
-        acfData.detailedTitle = detailedTitle;
+        acfData.detailedtitle = detailedTitle;
         this.logger.info(`Adding detailed title to post ${postId}`);
       }
 
@@ -198,13 +198,13 @@ class WordPressService {
         this.logger.info(`Response ACF fields for post ${postId}: ${Object.keys(updatedPost.acf).join(', ')}`);
         
         // Check if detailedTitle was saved correctly
-        if (detailedTitle && updatedPost.acf.detailedTitle) {
-          const responseDetailedTitle = updatedPost.acf.detailedTitle;
+        if (detailedTitle && updatedPost.acf.detailedtitle) {
+          const responseDetailedTitle = updatedPost.acf.detailedtitle;
           const detailedTitleLength = responseDetailedTitle.length;
           const isTruncated = detailedTitleLength < detailedTitle.length;
           
-          this.logger.info(`detailedTitle in response: ${detailedTitleLength} chars${isTruncated ? ' (TRUNCATED)' : ''}`);
-        } else if (detailedTitle && !updatedPost.acf.detailedTitle) {
+          this.logger.info(`detailedtitle in response: ${detailedTitleLength} chars${isTruncated ? ' (TRUNCATED)' : ''}`);
+        } else if (detailedTitle && !updatedPost.acf.detailedtitle) {
           this.logger.warn(`detailedTitle was sent but is missing from WordPress response!`);
         }
       } else {

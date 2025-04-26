@@ -9,6 +9,22 @@ class SheetsService {
     this.pendingSheetName = 'Pending Appraisals';
     this.completedSheetName = 'Completed Appraisals';
     this.initialized = false;
+    this.debugMode = process.env.DEBUG_SHEETS === 'true';
+  }
+
+  /**
+   * Debug logging method that only logs when debug mode is enabled
+   * @param {string} message - Debug message
+   * @param {any} data - Optional data to log
+   */
+  debug(message, data = null) {
+    if (this.debugMode) {
+      if (data) {
+        this.logger.info(`[DEBUG] ${message}`, data);
+      } else {
+        this.logger.info(`[DEBUG] ${message}`);
+      }
+    }
   }
 
   async initialize(config) {
@@ -185,8 +201,8 @@ class SheetsService {
           }
         }
         
-        // Log the actual values being sent
-        this.logger.info(`Sending values to API: ${JSON.stringify(values)}`);
+        // Generic data-focused logging without mentioning specific business concepts
+        this.debug(`Updating ${values.length} row(s) in ${sheetToUse}`);
         
         await this.sheets.spreadsheets.values.update({
           spreadsheetId: this.spreadsheetId,
@@ -194,6 +210,8 @@ class SheetsService {
           valueInputOption: 'RAW',
           resource: { values }
         });
+        
+        this.logger.info(`Update to ${fullRange} completed successfully`);
       } else {
         this.logger.info(`Skipping update for range: ${fullRange} - values unchanged`);
       }

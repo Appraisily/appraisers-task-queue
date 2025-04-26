@@ -179,7 +179,7 @@ class Worker {
               // Use the merged description as the detailed title
               await this.appraisalService.wordpressService.updateAppraisalPost(postId, {
                 title: analysisResult.briefTitle,
-                detailedTitle: analysisResult.mergedDescription
+                detailedtitle: analysisResult.mergedDescription
               });
               
               this.logger.info(`WordPress post ${postId} updated successfully`);
