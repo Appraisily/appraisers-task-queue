@@ -1,5 +1,6 @@
 const { createLogger } = require('../utils/logger');
 const AppraisalFinder = require('../utils/appraisal-finder');
+const fetch = require('node-fetch');
 
 class AppraisalService {
   constructor(sheetsService, wordpressService, openaiService, emailService, pdfService) {
@@ -45,10 +46,8 @@ class AppraisalService {
       // Store public URL
       await this.sheetsService.updateValues(`P${id}`, [[publicUrl]], wpUsingCompletedSheet);
       
-      // Generate visualization
-      // We no longer update status to "Generating" in the sheets
-      // Just log the status change internally
-      this.logger.info(`Generating visualizations for appraisal ${id} - Building full appraisal report`);
+      // Generate complete appraisal report (which includes visualizations, statistics, etc.)
+      await this.updateStatus(id, 'Generating', 'Building complete appraisal report', wpUsingCompletedSheet);
       await this.visualize(id, postId, wpUsingCompletedSheet);
       
       // Create PDF
@@ -310,10 +309,10 @@ class AppraisalService {
 
   async visualize(id, postId, usingCompletedSheet = false) {
     try {
-      this.logger.info(`Generating visualizations for appraisal ${id} (WordPress post ID: ${postId})`);
+      this.logger.info(`Generating complete appraisal report for appraisal ${id} (WordPress post ID: ${postId})`);
       
       // Update status - internal logging only, no sheet updates for 'Generating'
-      await this.updateStatus(id, 'Generating', 'Building full appraisal report', usingCompletedSheet);
+      await this.updateStatus(id, 'Generating', 'Building complete appraisal report', usingCompletedSheet);
       
       // Use runtime environment variable for backend URL
       let appraisalsBackendUrl = process.env.APPRAISALS_BACKEND_URL;
@@ -324,12 +323,13 @@ class AppraisalService {
         appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
       }
       
-      // Directly call the backend API instead of going through WordPress service
+      // Directly call the backend API to generate the complete appraisal report
+      // This performs all steps: Vision API image processing, metadata processing,
+      // statistics generation, and visualization generation in a single call
       const response = await fetch(`${appraisalsBackendUrl}/complete-appraisal-report`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          // Use the same authorization header as WordPress service
           'Authorization': this.wordpressService.authHeader
         },
         body: JSON.stringify({ postId: postId })
@@ -340,13 +340,13 @@ class AppraisalService {
         throw new Error(`Report generation failed: ${response.status} ${response.statusText} - ${errorText}`);
       }
       
-      this.logger.info(`Successfully generated full appraisal report for post ${postId}`);
+      this.logger.info(`Successfully generated complete appraisal report for post ${postId}`);
       
       return { success: true };
     } catch (error) {
-      this.logger.error(`Error generating visualizations for appraisal ${id}:`, error);
+      this.logger.error(`Error generating complete appraisal report for appraisal ${id}:`, error);
       // For errors, we still want to update the status - this will update the sheet
-      await this.updateStatus(id, 'Error', `Failed to generate visualizations: ${error.message}`, usingCompletedSheet);
+      await this.updateStatus(id, 'Error', `Failed to generate report: ${error.message}`, usingCompletedSheet);
       throw error;
     }
   }
