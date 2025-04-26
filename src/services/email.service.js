@@ -71,29 +71,27 @@ class EmailService {
         throw new Error('Invalid PDF link - cannot send email with placeholder URL');
       }
       
+      const currentYear = new Date().getFullYear();
+      
       const msg = {
         to,
         from: this.fromEmail,
         templateId: this.completedTemplateId,
         dynamicTemplateData: {
-          name: name || 'Customer',
-          pdfLink,
-          appraisalUrl,
-          date: new Date().toLocaleDateString('en-US', {
-            month: 'long',
-            day: 'numeric',
-            year: 'numeric'
-          })
+          customer_name: name || 'Customer',
+          pdf_link: pdfLink,
+          wp_link: appraisalUrl,
+          current_year: currentYear,
         }
       };
       
       this.logger.info(`Sending appraisal completed email to ${to} with PDF link: ${pdfLink}`);
       const [response] = await sgMail.send(msg);
       
-      this.logger.info(`Email sent successfully, ID: ${response.messageId}`);
+      this.logger.info(`Email sent successfully, ID: ${response?.messageId}`);
       
       return {
-        messageId: response.messageId,
+        messageId: response?.messageId || 'success',
         timestamp: new Date().toISOString()
       };
     } catch (error) {

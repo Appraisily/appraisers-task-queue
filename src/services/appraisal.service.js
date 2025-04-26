@@ -383,13 +383,13 @@ class AppraisalService {
           customerData.email,
           customerData.name,
           { 
-            pdfLink,
+            pdfLink: pdfLink,
             appraisalUrl: publicUrl
           }
         );
 
         // Save email delivery status to Column Q
-        const emailStatus = `Email sent on ${emailResult.timestamp} (ID: ${emailResult.messageId})`;
+        const emailStatus = `Email sent on ${emailResult.timestamp} (ID: ${emailResult.messageId || 'success'})`;
         await this.sheetsService.updateValues(`Q${id}`, [[emailStatus]], usingCompletedSheet);
         
         this.logger.info(`Email delivery status saved for appraisal ${id}`);
