@@ -36,10 +36,11 @@ class AppraisalService {
       await this.updateStatus(id, 'Processing', 'Merging description with AI analysis', usingCompletedSheet);
       
       // Merge descriptions - pass along which sheet to use
-      await this.mergeDescriptions(id, description, usingCompletedSheet);
+      const mergeResult = await this.mergeDescriptions(id, description, usingCompletedSheet);
       
       // Update WordPress with the raw value (no formatting needed)
-      const { postId, publicUrl, usingCompletedSheet: wpUsingCompletedSheet } = await this.updateWordPress(id, value, description, appraisalType, usingCompletedSheet);
+      // Pass the mergeResult object instead of the original description
+      const { postId, publicUrl, usingCompletedSheet: wpUsingCompletedSheet } = await this.updateWordPress(id, value, mergeResult, appraisalType, usingCompletedSheet);
       
       // Store public URL
       await this.sheetsService.updateValues(`P${id}`, [[publicUrl]], wpUsingCompletedSheet);
@@ -170,7 +171,7 @@ class AppraisalService {
     }
   }
 
-  async updateWordPress(id, value, mergedDescription, appraisalType, usingCompletedSheet = false) {
+  async updateWordPress(id, value, mergedDescriptionObj, appraisalType, usingCompletedSheet = false) {
     // Pass the usingCompletedSheet parameter to getWordPressPostId
     const { postId } = await this.getWordPressPostId(id, usingCompletedSheet);
     
@@ -204,33 +205,34 @@ class AppraisalService {
     let description = '';
     
     // DEBUG: Log the incoming mergedDescription type and structure
-    this.logger.info(`DEBUG: mergedDescription is type: ${typeof mergedDescription}`);
-    if (typeof mergedDescription === 'object') {
-      this.logger.info(`DEBUG: mergedDescription object keys: ${Object.keys(mergedDescription).join(', ')}`);
-    } else if (typeof mergedDescription === 'string') {
-      this.logger.info(`DEBUG: mergedDescription string length: ${mergedDescription.length} chars`);
+    this.logger.info(`DEBUG: mergedDescriptionObj is type: ${typeof mergedDescriptionObj}`);
+    if (typeof mergedDescriptionObj === 'object') {
+      this.logger.info(`DEBUG: mergedDescriptionObj object keys: ${Object.keys(mergedDescriptionObj).join(', ')}`);
+    } else if (typeof mergedDescriptionObj === 'string') {
+      this.logger.info(`DEBUG: mergedDescriptionObj string length: ${mergedDescriptionObj.length} chars`);
     } else {
-      this.logger.info(`DEBUG: mergedDescription unexpected type value: ${String(mergedDescription)}`);
+      this.logger.info(`DEBUG: mergedDescriptionObj unexpected type value: ${String(mergedDescriptionObj)}`);
     }
     
-    if (typeof mergedDescription === 'object' && mergedDescription !== null && !Array.isArray(mergedDescription)) {
+    if (typeof mergedDescriptionObj === 'object' && mergedDescriptionObj !== null && !Array.isArray(mergedDescriptionObj)) {
       // New structure with brief and detailed titles
-      briefTitle = mergedDescription.briefTitle;
-      detailedTitle = mergedDescription.detailedTitle;
-      description = mergedDescription.mergedDescription;
+      briefTitle = mergedDescriptionObj.briefTitle;
+      detailedTitle = mergedDescriptionObj.detailedTitle || mergedDescriptionObj.mergedDescription;
+      description = mergedDescriptionObj.mergedDescription;
       
       // DEBUG: Log the extracted values
       this.logger.info(`DEBUG: Extracted from object - briefTitle (${typeof briefTitle}): ${briefTitle ? briefTitle.substring(0, 50) + '...' : 'undefined'}`);
       this.logger.info(`DEBUG: Extracted from object - detailedTitle (${typeof detailedTitle}): ${detailedTitle ? `${detailedTitle.substring(0, 50)}... (${detailedTitle.length} chars)` : 'undefined'}`);
+      this.logger.info(`DEBUG: Extracted from object - mergedDescription (${typeof description}): ${description ? `${description.substring(0, 50)}... (${description.length} chars)` : 'undefined'}`);
     } else {
       // Legacy format (just a string)
       // Don't truncate the title if it's the only one we have
-      briefTitle = mergedDescription;
-      detailedTitle = mergedDescription;
-      description = mergedDescription;
+      briefTitle = mergedDescriptionObj;
+      detailedTitle = mergedDescriptionObj;
+      description = mergedDescriptionObj;
       
       // DEBUG: Log legacy format handling
-      this.logger.info(`DEBUG: Using legacy format - all fields assigned same string value (${typeof mergedDescription}) of length ${mergedDescription ? mergedDescription.length : 0} chars`);
+      this.logger.info(`DEBUG: Using legacy format - all fields assigned same string value (${typeof mergedDescriptionObj}) of length ${mergedDescriptionObj ? mergedDescriptionObj.length : 0} chars`);
     }
     
     // Ensure the brief title doesn't appear truncated in the UI
@@ -284,12 +286,12 @@ class AppraisalService {
       content: post.content?.rendered || '',
       value: safeValue, // Use safely formatted value
       appraisalType: appraisalType,
-      detailedtitle: detailedTitle
+      detailedTitle: detailedTitle // This will be mapped to 'detailedtitle' in the WordPress service
     });
 
     // DEBUG: Check if the detailedTitle was saved correctly in the response
     if (updatedPost.acf && detailedTitle) {
-      if (updatedPost.acf.detailedtitle) {
+      if (updatedPost.acf.detailedtitle) { // Use lowercase here to match WordPress ACF field
         this.logger.info(`DEBUG: WordPress response contains detailedtitle of length: ${updatedPost.acf.detailedtitle.length} chars`);
       } else {
         this.logger.warn(`DEBUG: WordPress response is missing detailedtitle field despite being sent`);

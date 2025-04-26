@@ -212,7 +212,15 @@ class Worker {
             
             // Update WordPress
             await this.appraisalService.updateStatus(id, 'Updating', 'Setting titles and metadata in WordPress', usingCompletedSheetForWP);
-            await this.appraisalService.updateWordPress(id, valueToUse, descriptionToUse, typeToUse, usingCompletedSheetForWP); // Pass usingCompletedSheetForWP flag
+            
+            // Create a proper structure for the merged description to match what mergeDescriptions returns
+            const mergeResult = {
+              mergedDescription: descriptionToUse,
+              briefTitle: '', // This will be extracted from the description in updateWordPress
+              detailedTitle: descriptionToUse // Keep detailed title same as merged description
+            };
+            
+            await this.appraisalService.updateWordPress(id, valueToUse, mergeResult, typeToUse, usingCompletedSheetForWP); // Pass the structured mergeResult
           } catch (error) {
              this.logger.error(`Error in STEP_UPDATE_WORDPRESS for appraisal ${id} on ${usingCompletedSheetForWP ? 'Completed' : 'Pending'} sheet:`, error);
              await this.appraisalService.updateStatus(id, 'Failed', `UPDATE_WP Error: ${error.message}`, usingCompletedSheetForWP);
