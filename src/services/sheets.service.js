@@ -20,9 +20,9 @@ class SheetsService {
   debug(message, data = null) {
     if (this.debugMode) {
       if (data) {
-        this.logger.info(`[DEBUG] ${message}`, data);
+        this.logger.debug(`${message}`, data);
       } else {
-        this.logger.info(`[DEBUG] ${message}`);
+        this.logger.debug(`${message}`);
       }
     }
   }
@@ -61,7 +61,7 @@ class SheetsService {
       });
 
       // Test connection
-      this.logger.info(`Testing connection to spreadsheet ${this.spreadsheetId}`);
+      this.logger.debug(`Testing connection to spreadsheet ${this.spreadsheetId}`);
       
       try {
         const response = await this.sheets.spreadsheets.get({
@@ -97,7 +97,7 @@ class SheetsService {
     try {
       const sheetToUse = checkCompletedSheet ? this.completedSheetName : this.pendingSheetName;
       const fullRange = `'${sheetToUse}'!${range}`;
-      this.logger.info(`Getting values from range: ${fullRange}`);
+      this.logger.debug(`Getting values from range: ${fullRange}`);
 
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
@@ -152,7 +152,7 @@ class SheetsService {
       
       // Only update if the values are different
       if (needsUpdate) {
-        this.logger.info(`Updating values in range: ${fullRange}`);
+        this.logger.debug(`Updating values in range: ${fullRange}`);
         
         // Pre-process all values to ensure they're compatible with Sheets API
         for (let i = 0; i < values.length; i++) {
@@ -176,7 +176,7 @@ class SheetsService {
                 try {
                   // Try to stringify the object if possible
                   const stringified = JSON.stringify(originalValue);
-                  this.logger.warn(`Converting object at position [${i}][${j}] to string: ${stringified}`);
+                  this.logger.debug(`Converting object at position [${i}][${j}] to string: ${stringified}`);
                   values[i][j] = stringified;
                 } catch (stringifyError) {
                   // If stringify fails, use a simple string representation
@@ -195,7 +195,7 @@ class SheetsService {
             
             // No need to convert strings or numbers, they're already supported
             if (typeof originalValue !== 'string' && typeof originalValue !== 'number' && originalValue !== null) {
-              this.logger.warn(`Converting ${typeof originalValue} value at [${i}][${j}] to string: ${originalValue}`);
+              this.logger.debug(`Converting ${typeof originalValue} value at [${i}][${j}] to string: ${originalValue}`);
               values[i][j] = String(originalValue);
             }
           }
@@ -211,9 +211,9 @@ class SheetsService {
           resource: { values }
         });
         
-        this.logger.info(`Update to ${fullRange} completed successfully`);
+        this.logger.debug(`Update to ${fullRange} completed successfully`);
       } else {
-        this.logger.info(`Skipping update for range: ${fullRange} - values unchanged`);
+        this.logger.debug(`Skipping update for range: ${fullRange} - values unchanged`);
       }
     } catch (error) {
       this.logger.error(`Error updating values in range ${range}:`, error);

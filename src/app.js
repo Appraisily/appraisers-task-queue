@@ -3,6 +3,10 @@ const cors = require('cors');
 const { createLogger } = require('./utils/logger');
 const worker = require('./worker');
 
+// Configure logging level
+// LOG_LEVEL can be: error, warn, info, debug, trace (from least to most verbose)
+// Example: LOG_LEVEL=warn only shows warnings and errors
+// Default: info
 const logger = createLogger('App');
 const app = express();
 
@@ -37,6 +41,15 @@ const API_DOCUMENTATION = {
         postId: 'String - WordPress post ID',
         description: 'String - Customer description (optional)',
         options: 'Object - Additional options for processing'
+      }
+    }
+  },
+  configuration: {
+    environment_variables: {
+      LOG_LEVEL: {
+        description: 'Controls logging verbosity',
+        values: ['error', 'warn', 'info', 'debug', 'trace'],
+        default: 'info'
       }
     }
   }
@@ -85,7 +98,7 @@ app.post('/api/process-step', async (req, res) => {
       });
     }
     
-    logger.info(`Appraisal ${id} found in ${usingCompletedSheet ? 'Completed' : 'Pending'} sheet. Starting process...`);
+    logger.debug(`Appraisal ${id} found in ${usingCompletedSheet ? 'Completed' : 'Pending'} sheet. Starting process...`);
 
     // Pass the determined sheet flag to the worker method
     await worker.processFromStep(id, startStep, usingCompletedSheet, options);

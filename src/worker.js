@@ -31,7 +31,7 @@ class Worker {
         throw new Error('Failed to get spreadsheet ID from Secret Manager');
       }
 
-      this.logger.info(`Using spreadsheet ID: ${spreadsheetId}`);
+      this.logger.debug(`Using spreadsheet ID: ${spreadsheetId}`);
       
       // Initialize all services
       await this.sheetsService.initialize({ PENDING_APPRAISALS_SPREADSHEET_ID: spreadsheetId });
@@ -41,7 +41,7 @@ class Worker {
       const pdfService = new PDFService();
       
       // Initialize services concurrently
-      this.logger.info('Initializing dependent services...');
+      this.logger.debug('Initializing dependent services...');
       await Promise.all([
         wordpressService.initialize(),
         openaiService.initialize(),
@@ -61,7 +61,7 @@ class Worker {
         pdfService
       );
       
-      this.logger.info('Worker initialized successfully - appraisal service is ready for immediate use');
+      this.logger.info('Worker initialized successfully');
     } catch (error) {
       this.logger.error('Failed to initialize worker:', error);
       throw error;
@@ -96,7 +96,7 @@ class Worker {
       
       // Log user information if available
       if (username || timestamp) {
-        this.logger.info(`Request initiated by ${username || 'Unknown User'} at ${timestamp || new Date().toISOString()}`);
+        this.logger.debug(`Request initiated by ${username || 'Unknown User'} at ${timestamp || new Date().toISOString()}`);
       }
       
       // Process based on step
@@ -124,7 +124,7 @@ class Worker {
             await this.appraisalService.processAppraisal(id, valueToUse, descToUse, appraisalType, usingCompletedSheet);
           } catch (error) {
             // Log the error and use the determined sheet context for status update
-            this.logger.error(`Error in STEP_SET_VALUE for appraisal ${id} on ${usingCompletedSheet ? 'Completed' : 'Pending'} sheet:`, error);
+            this.logger.error(`Error in STEP_SET_VALUE for appraisal ${id}:`, error);
             await this.appraisalService.updateStatus(id, 'Failed', `STEP_SET_VALUE Error: ${error.message}`, usingCompletedSheet);
             throw error; // Re-throw after logging and status update
           }

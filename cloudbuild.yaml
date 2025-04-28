@@ -18,7 +18,8 @@ steps:
       '--image', 'gcr.io/$PROJECT_ID/appraisers-task-queue',
       '--region', 'us-central1',
       '--platform', 'managed',
-      '--allow-unauthenticated'
+      '--allow-unauthenticated',
+      '--set-env-vars', 'LOG_LEVEL=info'
     ]
 
 images:
