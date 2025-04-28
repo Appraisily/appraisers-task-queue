@@ -10,6 +10,8 @@ class SheetsService {
     this.completedSheetName = 'Completed Appraisals';
     this.initialized = false;
     this.debugMode = process.env.DEBUG_SHEETS === 'true';
+    // Track previous operations to reduce identical log messages
+    this.lastOperations = new Map();
   }
 
   /**
@@ -40,7 +42,7 @@ class SheetsService {
         throw new Error('Spreadsheet ID not found in config');
       }
 
-      this.logger.info('Creating Google Auth client with ADC...');
+      this.logger.info('Creating Google Auth client...');
       
       // Initialize with Application Default Credentials
       const auth = new google.auth.GoogleAuth({
@@ -61,27 +63,13 @@ class SheetsService {
       });
 
       // Test connection
-      this.logger.debug(`Testing connection to spreadsheet ${this.spreadsheetId}`);
-      
-      try {
-        const response = await this.sheets.spreadsheets.get({
-          spreadsheetId: this.spreadsheetId,
-          fields: 'properties.title'
-        });
+      const response = await this.sheets.spreadsheets.get({
+        spreadsheetId: this.spreadsheetId,
+        fields: 'properties.title'
+      });
 
-        this.logger.info(`Connected to spreadsheet: ${response.data.properties.title}`);
-      } catch (error) {
-        if (error.code === 404) {
-          throw new Error(`Spreadsheet ${this.spreadsheetId} not found. Please verify the ID is correct.`);
-        }
-        if (error.code === 403) {
-          throw new Error(`Permission denied. Please ensure the service account has access to the spreadsheet.`);
-        }
-        throw error;
-      }
-
+      this.logger.info(`Connected to spreadsheet: ${response.data.properties.title}`);
       this.initialized = true;
-      this.logger.info('Sheets service initialized successfully');
     } catch (error) {
       this.logger.error('Sheets initialization failed:', error.message);
       if (error.response?.data?.error) {
@@ -91,13 +79,32 @@ class SheetsService {
     }
   }
 
+  // Checks if we've recently performed this operation
+  _shouldSkipLogging(operation, range) {
+    const key = `${operation}:${range}`;
+    const now = Date.now();
+    const lastTime = this.lastOperations.get(key) || 0;
+    
+    // If we've done this operation on this range in the last 5 seconds, don't log
+    if (now - lastTime < 5000) {
+      return true;
+    }
+    
+    this.lastOperations.set(key, now);
+    return false;
+  }
+
   async getValues(range, checkCompletedSheet = false) {
     if (!this.initialized) throw new Error('Sheets service not initialized');
 
     try {
       const sheetToUse = checkCompletedSheet ? this.completedSheetName : this.pendingSheetName;
       const fullRange = `'${sheetToUse}'!${range}`;
-      this.logger.debug(`Getting values from range: ${fullRange}`);
+      
+      // Only log if this isn't a repetitive call
+      if (!this._shouldSkipLogging('get', fullRange)) {
+        this.logger.debug(`Getting values from range: ${fullRange}`);
+      }
 
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
@@ -152,7 +159,10 @@ class SheetsService {
       
       // Only update if the values are different
       if (needsUpdate) {
-        this.logger.debug(`Updating values in range: ${fullRange}`);
+        // Only log if this isn't a repetitive update
+        if (!this._shouldSkipLogging('update', fullRange)) {
+          this.logger.debug(`Updating values in range: ${fullRange}`);
+        }
         
         // Pre-process all values to ensure they're compatible with Sheets API
         for (let i = 0; i < values.length; i++) {
@@ -161,7 +171,6 @@ class SheetsService {
             
             // Handle undefined values
             if (originalValue === undefined) {
-              this.logger.warn(`Found undefined value at position [${i}][${j}], replacing with empty string`);
               values[i][j] = '';
               continue;
             }
@@ -169,18 +178,13 @@ class SheetsService {
             // Handle object values - convert Promise objects to strings
             if (originalValue !== null && typeof originalValue === 'object') {
               if (originalValue instanceof Promise) {
-                this.logger.warn(`Found Promise at position [${i}][${j}], converting to string`);
-                // Ensure Promise is not directly used - convert to '[object Promise]' instead of attempting to use it
                 values[i][j] = '[object Promise]';
               } else {
                 try {
                   // Try to stringify the object if possible
-                  const stringified = JSON.stringify(originalValue);
-                  this.logger.debug(`Converting object at position [${i}][${j}] to string: ${stringified}`);
-                  values[i][j] = stringified;
+                  values[i][j] = JSON.stringify(originalValue);
                 } catch (stringifyError) {
                   // If stringify fails, use a simple string representation
-                  this.logger.error(`Error stringifying object at [${i}][${j}]:`, stringifyError);
                   values[i][j] = '[object Object]';
                 }
               }
@@ -195,14 +199,10 @@ class SheetsService {
             
             // No need to convert strings or numbers, they're already supported
             if (typeof originalValue !== 'string' && typeof originalValue !== 'number' && originalValue !== null) {
-              this.logger.debug(`Converting ${typeof originalValue} value at [${i}][${j}] to string: ${originalValue}`);
               values[i][j] = String(originalValue);
             }
           }
         }
-        
-        // Generic data-focused logging without mentioning specific business concepts
-        this.debug(`Updating ${values.length} row(s) in ${sheetToUse}`);
         
         await this.sheets.spreadsheets.values.update({
           spreadsheetId: this.spreadsheetId,
@@ -211,20 +211,12 @@ class SheetsService {
           resource: { values }
         });
         
-        this.logger.debug(`Update to ${fullRange} completed successfully`);
+        this.logger.debug(`Updated ${fullRange}`);
       } else {
         this.logger.debug(`Skipping update for range: ${fullRange} - values unchanged`);
       }
     } catch (error) {
       this.logger.error(`Error updating values in range ${range}:`, error);
-      
-      // Enhanced error logging
-      if (error.message && error.message.includes('struct_value')) {
-        this.logger.error(`Received struct_value error. This is likely due to an invalid data format.`);
-        this.logger.error(`Values being sent: ${JSON.stringify(values)}`);
-        this.logger.error(`Value types: ${JSON.stringify(values.map(row => row.map(cell => typeof cell)))}`);
-      }
-      
       throw new Error(`Failed to update values in range ${range}: ${error.message}`);
     }
   }
@@ -290,7 +282,7 @@ class SheetsService {
         }
       });
 
-      this.logger.info(`Successfully moved appraisal ${rowId} to Completed Appraisals`);
+      this.logger.info(`Completed move of appraisal ${rowId}`);
     } catch (error) {
       this.logger.error(`Error moving appraisal ${rowId} to Completed:`, error);
       throw error;

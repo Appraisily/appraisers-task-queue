@@ -22,13 +22,12 @@ class AppraisalFinder {
    * @throws {Error} If the appraisal cannot be found in either sheet
    */
   async findAppraisalData(id, range) {
-    this.logger.info(`Searching for appraisal ${id} in range ${range}`);
+    this.logger.debug(`Searching for appraisal ${id} in range ${range}`);
     
     // Check cache first
     const cacheKey = `appraisal-${id}`;
     if (this.appraisalLocationCache.has(cacheKey)) {
       const usingCompletedSheet = this.appraisalLocationCache.get(cacheKey);
-      this.logger.info(`Using cached location for appraisal ${id}: ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
       
       try {
         const data = await this.sheetsService.getValues(`${range.replace(/\d+/g, id)}`, usingCompletedSheet);
@@ -36,10 +35,10 @@ class AppraisalFinder {
           return { data, usingCompletedSheet };
         }
         // If we get here, the cache is stale
-        this.logger.warn(`Cached location for appraisal ${id} is stale, refreshing`);
+        this.logger.debug(`Refreshing stale cache for appraisal ${id}`);
         this.appraisalLocationCache.delete(cacheKey);
       } catch (error) {
-        this.logger.error(`Error fetching from cached location: ${error.message}`);
+        this.logger.error(`Error fetching from cached location`, error);
         this.appraisalLocationCache.delete(cacheKey);
       }
     }
@@ -50,29 +49,23 @@ class AppraisalFinder {
     
     // If data not found in pending sheet, check completed sheet
     if (!data || !data[0]) {
-      this.logger.info(`No data found in pending sheet for appraisal ${id}, checking completed sheet`);
       try {
         data = await this.sheetsService.getValues(`${range.replace(/\d+/g, id)}`, true); // true = check completed sheet
         if (data && data[0]) {
           usingCompletedSheet = true;
-          this.logger.info(`Found appraisal ${id} in completed sheet for range ${range}`);
           this.appraisalLocationCache.set(cacheKey, true); // Cache the location
         }
       } catch (error) {
-        this.logger.error(`Error checking completed sheet: ${error.message}`);
+        this.logger.error(`Error checking completed sheet`, error);
         // Continue execution even if completed sheet check fails
       }
     } else {
-      this.logger.info(`Found appraisal ${id} in pending sheet for range ${range}`);
       this.appraisalLocationCache.set(cacheKey, false); // Cache the location
     }
     
     if (!data || !data[0]) {
       throw new Error(`No data found for appraisal ${id} in range ${range} in either sheet`);
     }
-    
-    // Log which sheet is being used
-    this.logger.info(`Using ${usingCompletedSheet ? 'completed' : 'pending'} sheet for appraisal ${id}`);
     
     return { data, usingCompletedSheet };
   }
@@ -113,7 +106,7 @@ class AppraisalFinder {
    
       return { exists: false, usingCompletedSheet: false };
     } catch (error) {
-      this.logger.error(`Error checking if appraisal ${id} exists:`, error);
+      this.logger.error(`Error checking if appraisal exists`, error);
       return { exists: false, usingCompletedSheet: false };
     }
   }
@@ -137,11 +130,6 @@ class AppraisalFinder {
    * @throws {Error} If the appraisal data cannot be found in the specified sheet
    */
   async getMultipleFields(id, columns, usingCompletedSheet) {
-    // We trust the caller to provide the correct sheet flag
-    this.logger.info(`Getting multiple fields (${columns.join(', ')}) for appraisal ${id} from ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
-
-    // Removed the internal call to this.appraisalExists(id) as the sheet is provided.
-    
     // Create a full range (A:Z) to fetch the entire potential row data efficiently
     const fullRange = `A${id}:Z${id}`;
     
@@ -153,14 +141,14 @@ class AppraisalFinder {
     try {
       data = await this.sheetsService.getValues(fullRange, usingCompletedSheet);
     } catch (error) {
-        this.logger.error(`Error fetching range ${fullRange} for appraisal ${id} from ${usingCompletedSheet ? 'completed' : 'pending'} sheet: ${error.message}`);
+        this.logger.error(`Error fetching range ${fullRange}`, error);
         throw new Error(`Failed to fetch data for appraisal ${id} from the specified sheet.`);
     }
     
     if (!data || !data[0]) {
       // This case should ideally not happen if appraisalExists passed before calling this function,
       // but could occur due to race conditions or delays.
-      this.logger.error(`No data found for appraisal ${id} in range ${fullRange} on ${usingCompletedSheet ? 'completed' : 'pending'} sheet, despite prior existence check.`);
+      this.logger.error(`No data found for appraisal ${id} despite prior existence check`);
       throw new Error(`No data found for appraisal ${id} in the specified sheet.`);
     }
     
@@ -200,7 +188,7 @@ class AppraisalFinder {
           result[column] = row[idx] !== undefined ? row[idx] : null;
         }
       } catch (parseError) {
-         this.logger.error(`Error processing column/range "${column}" for appraisal ${id}: ${parseError.message}`);
+         this.logger.error(`Error processing column/range "${column}"`, parseError);
          // Assign null or re-throw depending on desired behavior for invalid columns
          result[column] = null; 
       }

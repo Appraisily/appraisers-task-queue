@@ -115,25 +115,19 @@ class WordPressService {
       } = updateData;
       
       // Prepare the update payload
-      const payload = {
-        title,
-        content
-      };
+      const payload = {};
+      
+      // Only add fields that are provided
+      if (title) payload.title = title;
+      if (content) payload.content = content;
 
-      // Prepare ACF fields update
-      const acfData = {
-        value: value ? Number(value) : null,
-        appraisaltype: appraisalType || 'Regular',
-        shortcodes_inserted: true
-      };
-
-      // Add detailed title to ACF if provided
-      if (detailedTitle) {
-        acfData.detailedtitle = detailedTitle;
-        this.logger.info(`Adding detailed title to post ${postId}`);
-      }
-
-      // Add metadata fields if provided
+      // Prepare ACF fields update if any ACF fields are provided
+      const acfData = {};
+      
+      // Only add ACF fields if they're provided
+      if (value !== undefined) acfData.value = value ? Number(value) : null;
+      if (appraisalType) acfData.appraisaltype = appraisalType || 'Regular';
+      if (detailedTitle) acfData.detailedtitle = detailedTitle;
       if (object_type) acfData.object_type = object_type;
       if (creator) acfData.creator = creator;
       if (estimated_age) acfData.estimated_age = estimated_age;
@@ -141,6 +135,11 @@ class WordPressService {
       if (medium) acfData.medium = medium;
       if (condition_summary) acfData.condition_summary = condition_summary;
       if (condition) acfData.condition = condition;
+      
+      // Only add the acf field to payload if we have ACF data
+      if (Object.keys(acfData).length > 0) {
+        payload.acf = acfData;
+      }
       
       // Check for potential issues with detailedTitle
       if (detailedTitle) {
@@ -152,10 +151,7 @@ class WordPressService {
         }
       }
       
-      const requestBody = JSON.stringify({
-        ...payload,
-        acf: acfData
-      });
+      const requestBody = JSON.stringify(payload);
       
       this.logger.info(`Updating WordPress post ${postId}`);
 

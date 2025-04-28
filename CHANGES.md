@@ -222,3 +222,30 @@ Updated the implementation to use the merged description as the detailed title i
 3. **Prioritization Logic**: If contradictions exist between sources, the AI prioritizes expert analysis information
 4. **Better SEO**: More detailed and keyword-rich content improves search engine visibility
 5. **Higher Quality Appraisals**: More thorough descriptions lead to higher quality appraisal documents
+
+## 2025-04-28: Added WordPress Template Pattern Application
+
+### Summary
+
+Added a new step in the appraisal processing flow to apply a WordPress template pattern before generating the complete appraisal report.
+
+### Changes Made
+
+1. Added a new `applyWordPressTemplate` method to the `AppraisalService` class
+2. Modified the `processAppraisal` method to call this new step before the visualization step
+3. Updated the `updateAppraisalPost` method in `WordPressService` to properly handle content-only updates
+4. Added proper error handling to prevent blocking the appraisal workflow if template application fails
+
+### Key Features
+
+1. **WordPress Block Pattern**: Applies block pattern ID 142384 to each appraisal post
+2. **Content Preservation**: Maintains existing post content while adding the template
+3. **Duplicate Prevention**: Checks if pattern already exists to prevent duplicate applications
+4. **Graceful Error Handling**: Continues with the appraisal process even if template application fails
+
+### Benefits
+
+1. Consistent formatting across all appraisal reports
+2. Enhanced visual presentation of appraisals in WordPress
+3. Streamlined workflow with automatic template application
+4. Improved user experience with professionally formatted reports

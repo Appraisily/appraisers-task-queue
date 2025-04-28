@@ -11,6 +11,8 @@ class AppraisalService {
     this.emailService = emailService;
     this.pdfService = pdfService;
     this.appraisalFinder = new AppraisalFinder(sheetsService);
+    // Track important status events to avoid duplication
+    this.statusEvents = new Map();
   }
 
   async processAppraisal(id, value, description, appraisalType = 'Regular', usingCompletedSheet = null) {
@@ -36,9 +38,6 @@ class AppraisalService {
       // Skip value formatting and J column update since value from sheets is already correctly formatted
       // The input value will be used as-is for WordPress updates later
       
-      // Update status
-      await this.updateStatus(id, 'Processing', 'Merging description with AI analysis', usingCompletedSheet);
-      
       // Merge descriptions - pass along which sheet to use AND the postId
       const mergeResult = await this.mergeDescriptions(id, description, postId, usingCompletedSheet);
       
@@ -48,6 +47,9 @@ class AppraisalService {
       
       // Store public URL
       await this.sheetsService.updateValues(`P${id}`, [[publicUrl]], wpUsingCompletedSheet);
+
+      // Apply WordPress template pattern before generating report
+      await this.applyWordPressTemplate(id, postId, wpUsingCompletedSheet);
       
       // Generate complete appraisal report (which includes visualizations, statistics, etc.)
       await this.updateStatus(id, 'Generating', 'Building complete appraisal report', wpUsingCompletedSheet);
@@ -56,7 +58,6 @@ class AppraisalService {
       // Create PDF
       await this.updateStatus(id, 'Finalizing', 'Creating PDF document', wpUsingCompletedSheet);
       const pdfResult = await this.finalize(id, postId, publicUrl, wpUsingCompletedSheet);
-      await this.updateStatus(id, 'Finalizing', `PDF created: ${pdfResult.pdfLink}`, wpUsingCompletedSheet);
       
       // Mark as complete only if not from completed sheet
       if (!usingCompletedSheet) {
@@ -74,23 +75,27 @@ class AppraisalService {
 
   async updateStatus(id, status, details = null, useCompletedSheet = false) {
     try {
-      this.logger.info(`Updating status for appraisal ${id} to: ${status}${details ? ` (${details})` : ''}`);
+      // Create a key to avoid duplicate status updates for the same appraisal/status
+      const statusKey = `${id}:${status}`;
+      const now = Date.now();
+      const lastUpdate = this.statusEvents.get(statusKey) || 0;
+      
+      // Only log status changes that haven't happened in the last 5 seconds
+      if (now - lastUpdate > 5000) {
+        this.logger.debug(`Status update: ${id} -> ${status}${details ? ` (${details})` : ''}`);
+        this.statusEvents.set(statusKey, now);
+      }
       
       // Check if we should skip the sheet update for this status
       const skipSheetUpdate = status === 'Generating';
       
       if (skipSheetUpdate) {
-        this.logger.info(`Skipping sheet status update for '${status}' phase (internal tracking only)`);
-        // We still log the status change for internal tracking but don't modify the sheet
+        // Skip sheet updates for generating status
         return;
       }
       
       // Update status in column F (status column) through SheetsService
-      // SheetsService should only handle the data operation without any business logic
       await this.sheetsService.updateValues(`F${id}`, [[status]], useCompletedSheet);
-      
-      // If we have details, we could store them in a tracking log or application database
-      // But we've removed the column R detailed status log as per previous comment
       
       return { success: true, status };
     } catch (error) {
@@ -112,9 +117,9 @@ class AppraisalService {
     // Add null checking to prevent "Cannot read properties of undefined" error
     if (aiDescValues && aiDescValues[0] && aiDescValues[0][0]) {
       iaDescription = aiDescValues[0][0];
-      this.logger.info(`Found existing AI description in column H for appraisal ${id}`);
+      this.logger.debug(`Found existing AI description for appraisal ${id}`);
     } else {
-      this.logger.warn(`No AI description found in column H for appraisal ${id}. Attempting to generate one.`);
+      this.logger.debug(`No AI description found for appraisal ${id}. Generating one.`);
       try {
         // 1. Get WordPress post data to find the featured image ID
         const postData = await this.wordpressService.getPost(postId);
@@ -125,25 +130,22 @@ class AppraisalService {
            const imageUrl = await this.wordpressService.getImageUrl(featuredMediaId);
            
            if (imageUrl) {
-             this.logger.info(`Found image URL for generation: ${imageUrl}`);
              // 3. Call OpenAI to generate the description
              const generationPrompt = `Analyze this image of an artwork or antique. Provide a detailed description covering aspects like style, period, materials, condition, subject matter, and potential artist or origin. Focus on objective observations.`;
              iaDescription = await this.openaiService.analyzeImageWithGPT4o(imageUrl, generationPrompt);
              
              // 4. Save the newly generated description back to column H
-             this.logger.info(`Saving newly generated AI description (${iaDescription.length} chars) to column H for appraisal ${id}`);
              await this.sheetsService.updateValues(`H${id}`, [[iaDescription]], useCompletedSheet);
-             
            } else {
-             this.logger.warn(`Could not retrieve image URL for media ID ${featuredMediaId}. Skipping AI description generation.`);
+             this.logger.warn(`Could not retrieve image URL for media ID ${featuredMediaId}`);
              iaDescription = ''; // Ensure it's empty if generation failed
            }
         } else {
-          this.logger.warn(`No featured media ID found for post ${postId}. Skipping AI description generation.`);
+          this.logger.warn(`No featured media ID found for post ${postId}`);
           iaDescription = ''; // Ensure it's empty if generation failed
         }
       } catch (genError) {
-        this.logger.error(`Error during AI description generation for appraisal ${id}:`, genError);
+        this.logger.error(`Error during AI description generation:`, genError);
         iaDescription = ''; // Ensure it's empty if generation failed
       }
     }
@@ -151,6 +153,7 @@ class AppraisalService {
     // Ensure we have a valid description to merge (customer provided)
     const customerDescription = description || '';
     
+    this.logger.debug(`Calling OpenAI to merge descriptions`);
     // Use OpenAI service to make the API call - this now only returns the raw response
     const openaiResponse = await this.openaiService.mergeDescriptions(customerDescription, iaDescription);
     
@@ -159,7 +162,7 @@ class AppraisalService {
     const { mergedDescription, briefTitle } = openaiResponse;
     
     if (!mergedDescription) {
-      this.logger.warn(`Missing mergedDescription in OpenAI response for appraisal ${id}`);
+      this.logger.warn(`Missing mergedDescription in OpenAI response`);
     }
     
     // Create the complete response with required fields
@@ -173,7 +176,7 @@ class AppraisalService {
     // Save merged description to Column L, using the correct sheet
     await this.sheetsService.updateValues(`L${id}`, [[result.mergedDescription]], useCompletedSheet);
     
-    this.logger.info(`Generated and saved merged description for appraisal ${id}`);
+    this.logger.debug(`Generated and saved merged description`);
     
     // Return all generated content
     return result;
@@ -184,7 +187,7 @@ class AppraisalService {
       const { data, usingCompletedSheet } = await this.appraisalFinder.findAppraisalData(id, `B${id}`);
       
       if (!data || !data[0] || !data[0][0]) {
-        this.logger.warn(`No appraisal type found for ID ${id}, using default`);
+        this.logger.debug(`No appraisal type found for ID ${id}, using default`);
         return 'Regular';
       }
       
@@ -193,14 +196,13 @@ class AppraisalService {
       // Validate and normalize appraisal type
       const validTypes = ['Regular', 'IRS', 'Insurance'];
       if (!validTypes.includes(appraisalType)) {
-        this.logger.warn(`Invalid appraisal type "${appraisalType}" found for ID ${id}, using default`);
+        this.logger.debug(`Invalid appraisal type "${appraisalType}" found for ID ${id}, using default`);
         appraisalType = 'Regular';
       }
       
-      this.logger.info(`Appraisal type for ID ${id}: ${appraisalType}`);
       return appraisalType;
     } catch (error) {
-      this.logger.error(`Error getting appraisal type for ${id}:`, error);
+      this.logger.error(`Error getting appraisal type:`, error);
       return 'Regular'; // Default fallback
     }
   }
@@ -220,11 +222,11 @@ class AppraisalService {
     if (typeof value === 'object' && value !== null) {
       if (value.then && typeof value.then === 'function') {
         // This is a Promise object - this happens sometimes due to improper Promise handling
-        this.logger.warn(`Value for appraisal ${id} is a Promise object, converting to error string`);
+        this.logger.warn(`Value for appraisal ${id} is a Promise object`);
         safeValue = '[Error: Invalid value format]';
       } else if (JSON.stringify(value) === '{}') {
         // Empty object
-        this.logger.warn(`Value for appraisal ${id} is an empty object, using default value`);
+        this.logger.warn(`Value for appraisal ${id} is an empty object`);
         safeValue = 0;
       } else {
         // Try to extract a value property or convert to string
@@ -252,7 +254,7 @@ class AppraisalService {
       briefTitle = mergedDescriptionObj;
       detailedTitle = mergedDescriptionObj;
       description = mergedDescriptionObj;
-      this.logger.warn(`Legacy format detected for appraisal ${id}: using string value for all fields`);
+      this.logger.debug(`Legacy format detected: using string value for all fields`);
     }
     
     // Ensure the brief title doesn't appear truncated in the UI
@@ -272,29 +274,6 @@ class AppraisalService {
       briefTitle = description && description.length > 10 
         ? description.substring(0, 80).trim() + (description.length > 80 ? '...' : '')
         : 'Artwork Appraisal';
-      
-      this.logger.info(`Generated fallback title: ${briefTitle}`);
-    }
-    
-    // Log final selections
-    this.logger.info(`Using brief title for post title and detailedTitle field (${detailedTitle?.length || 0} chars)`);
-    
-    // Check for potential issues with detailedTitle
-    if (detailedTitle) {
-      if (typeof detailedTitle !== 'string') {
-        this.logger.error(`ERROR: detailedTitle is not a string but a ${typeof detailedTitle}`);
-        detailedTitle = String(detailedTitle);
-      }
-      
-      if (detailedTitle.length === 0) {
-        this.logger.warn(`WARNING: detailedTitle is an empty string`);
-      }
-      
-      if (detailedTitle.length > 10000) {
-        this.logger.warn(`WARNING: detailedTitle is very long (${detailedTitle.length} chars) - may exceed WordPress limits`);
-      }
-    } else {
-      this.logger.warn(`WARNING: detailedTitle is null or undefined before WordPress update`);
     }
     
     // Simplified WordPress update with only essential fields
@@ -315,14 +294,11 @@ class AppraisalService {
 
   async getWordPressPostId(id, usingCompletedSheet = false) {
     try {
-      // Use the provided sheet information instead of finding it again
-      this.logger.info(`Getting WordPress post ID for appraisal ${id} from ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
-      
       // Get the WordPress URL directly from the specified sheet
       const data = await this.sheetsService.getValues(`G${id}`, usingCompletedSheet);
       
       if (!data || !data[0] || !data[0][0]) {
-        throw new Error(`No WordPress URL found for appraisal ${id} in ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
+        throw new Error(`No WordPress URL found for appraisal ${id}`);
       }
 
       const wpUrl = data[0][0];
@@ -333,24 +309,21 @@ class AppraisalService {
         throw new Error(`Could not extract post ID from WordPress URL: ${wpUrl}`);
       }
 
-      this.logger.info(`Extracted WordPress post ID: ${postId} from URL: ${wpUrl}`);
+      this.logger.debug(`Extracted WordPress post ID: ${postId}`);
       
       return {
         postId,
         usingCompletedSheet
       };
     } catch (error) {
-      this.logger.error(`Error getting WordPress post ID for appraisal ${id}:`, error);
+      this.logger.error(`Error getting WordPress post ID:`, error);
       throw error;
     }
   }
 
   async visualize(id, postId, usingCompletedSheet = false) {
     try {
-      this.logger.info(`Generating complete appraisal report for appraisal ${id} (WordPress post ID: ${postId})`);
-      
-      // Update status - internal logging only, no sheet updates for 'Generating'
-      await this.updateStatus(id, 'Generating', 'Building complete appraisal report', usingCompletedSheet);
+      this.logger.info(`Generating appraisal report for post ID: ${postId}`);
       
       // Use runtime environment variable for backend URL
       let appraisalsBackendUrl = process.env.APPRAISALS_BACKEND_URL;
@@ -362,8 +335,6 @@ class AppraisalService {
       }
       
       // Directly call the backend API to generate the complete appraisal report
-      // This performs all steps: Vision API image processing, metadata processing,
-      // statistics generation, and visualization generation in a single call
       const response = await fetch(`${appraisalsBackendUrl}/complete-appraisal-report`, {
         method: 'POST',
         headers: {
@@ -378,21 +349,19 @@ class AppraisalService {
         throw new Error(`Report generation failed: ${response.status} ${response.statusText} - ${errorText}`);
       }
       
-      this.logger.info(`Successfully generated complete appraisal report for post ${postId}`);
+      this.logger.debug(`Generated report for post ${postId}`);
       
       return { success: true };
     } catch (error) {
-      this.logger.error(`Error generating complete appraisal report for appraisal ${id}:`, error);
+      this.logger.error(`Error generating report:`, error);
       // For errors, we still want to update the status - this will update the sheet
-      await this.updateStatus(id, 'Error', `Failed to generate report: ${error.message}`, usingCompletedSheet);
+      await this.updateStatus(id, 'Error', `Failed to generate report`, usingCompletedSheet);
       throw error;
     }
   }
 
   async finalize(id, postId, publicUrl, usingCompletedSheet = false) {
     try {
-      this.logger.info(`Finalizing appraisal ${id} (post ID: ${postId}) using ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
-      
       // Generate PDF with proper waiting
       const { pdfLink, docLink } = await this.pdfService.generatePDF(postId);
       
@@ -402,20 +371,16 @@ class AppraisalService {
       }
       
       // Save PDF links to Google Sheets
-      this.logger.info(`Saving PDF links to ${usingCompletedSheet ? 'Completed' : 'Pending'} Appraisals sheet`);
       await this.sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]], usingCompletedSheet);
-      this.logger.info(`PDF generated successfully: ${pdfLink}`);
+      this.logger.info(`PDF generated: ${pdfLink}`);
       
       // Get customer data directly using the known sheet information
-      this.logger.info(`Retrieving customer data for appraisal ${id} from ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
       const customerData = await this.getCustomerData(id, usingCompletedSheet);
-      this.logger.info(`Customer data for appraisal ${id}: email=${customerData.email}, name=${customerData.name}`);
       
       // Only send email if we have a valid PDF URL
       if (pdfLink && !pdfLink.includes('placeholder')) {
         // Send email notification and track delivery
         this.logger.info(`Sending completion email to ${customerData.email}`);
-        await this.updateStatus(id, 'Finalizing', `Sending email notification to ${customerData.email}`, usingCompletedSheet);
         
         const emailResult = await this.emailService.sendAppraisalCompletedEmail(
           customerData.email,
@@ -429,17 +394,15 @@ class AppraisalService {
         // Save email delivery status to Column Q
         const emailStatus = `Email sent on ${emailResult.timestamp} (ID: ${emailResult.messageId || 'success'})`;
         await this.sheetsService.updateValues(`Q${id}`, [[emailStatus]], usingCompletedSheet);
-        
-        this.logger.info(`Email delivery status saved for appraisal ${id}`);
       } else {
-        this.logger.warn(`Skipping email for appraisal ${id} due to invalid PDF URL`);
+        this.logger.warn(`Skipping email due to invalid PDF URL`);
         await this.updateStatus(id, 'Warning', `Email not sent - invalid PDF URL`, usingCompletedSheet);
       }
       
       return { pdfLink, docLink, emailResult: {} };
     } catch (error) {
-      this.logger.error(`Error finalizing appraisal ${id}:`, error);
-      await this.updateStatus(id, 'Failed', `PDF generation failed: ${error.message}`, usingCompletedSheet);
+      this.logger.error(`Error finalizing appraisal:`, error);
+      await this.updateStatus(id, 'Failed', `PDF generation failed`, usingCompletedSheet);
       throw error;
     }
   }
@@ -467,7 +430,7 @@ class AppraisalService {
       
       return { email, name };
     } catch (error) {
-      this.logger.error(`Error fetching customer data for appraisal ${id}:`, error);
+      this.logger.error(`Error fetching customer data:`, error);
       // Return default values in case of error
       return { email: 'NA', name: 'NA' };
     }
@@ -481,9 +444,9 @@ class AppraisalService {
       // Then move to completed sheet
       await this.sheetsService.moveToCompleted(id);
       
-      this.logger.info(`Appraisal ${id} marked as complete and moved to Completed Appraisals`);
+      this.logger.info(`Appraisal ${id} marked as complete`);
     } catch (error) {
-      this.logger.error(`Error completing appraisal ${id}:`, error);
+      this.logger.error(`Error completing appraisal:`, error);
       throw error;
     }
   }
@@ -520,6 +483,41 @@ class AppraisalService {
     const result = numValue.toString();
     this.logger.info(`Formatted appraisal value: "${value}" -> "${result}"`);
     return result;
+  }
+
+  async applyWordPressTemplate(id, postId, usingCompletedSheet = false) {
+    try {
+      this.logger.info(`Applying WordPress template pattern to post ${postId} for appraisal ${id}`);
+      
+      // Get the current post content
+      const post = await this.wordpressService.getPost(postId);
+      let content = post.content?.rendered || '';
+      
+      // The WordPress block pattern ID is 142384
+      const blockPatternCode = `<!-- wp:block {"ref":142384} /-->`;
+      
+      // Check if the block pattern is already in the content
+      if (!content.includes(blockPatternCode)) {
+        // Add the block pattern to the beginning of the content
+        const updatedContent = blockPatternCode + content;
+        
+        // Update the WordPress post with the new content
+        await this.wordpressService.updateAppraisalPost(postId, {
+          content: updatedContent
+        });
+        
+        this.logger.info(`Successfully applied WordPress template pattern to post ${postId}`);
+      } else {
+        this.logger.info(`WordPress template pattern already exists in post ${postId}`);
+      }
+      
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`Error applying WordPress template to post ${postId}:`, error);
+      await this.updateStatus(id, 'Warning', `Failed to apply WordPress template`, usingCompletedSheet);
+      // Don't throw the error, allow the process to continue
+      return { success: false, error: error.message };
+    }
   }
 }
 
