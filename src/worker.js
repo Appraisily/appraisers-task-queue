@@ -106,6 +106,13 @@ class Worker {
             // Update status with the correct sheet (passed as parameter)
             await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
             
+            // Save appraisal value to column J and appraisal type to column B
+            await this.sheetsService.updateValues(`J${id}`, [[valueToUse]], usingCompletedSheet);
+            if (appraisalType) {
+              await this.sheetsService.updateValues(`B${id}`, [[appraisalType]], usingCompletedSheet);
+              this.logger.info(`Saved appraisal type '${appraisalType}' to column B for appraisal ${id}`);
+            }
+            
             // Start full processing, passing the sheet context
             await this.appraisalService.processAppraisal(id, valueToUse, descToUse, appraisalType, usingCompletedSheet);
           } catch (error) {

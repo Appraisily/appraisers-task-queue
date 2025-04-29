@@ -32,6 +32,11 @@ class AppraisalService {
       // Update status (keep this - it's important to set the initial status)
       await this.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
       
+      // Explicitly save value to column J and appraisal type to column B
+      await this.sheetsService.updateValues(`J${id}`, [[value]], usingCompletedSheet);
+      await this.sheetsService.updateValues(`B${id}`, [[appraisalType]], usingCompletedSheet);
+      this.logger.info(`Saved appraisal value ${value} to column J and type ${appraisalType} to column B`);
+      
       // Get WordPress Post ID early - needed for potentially generating AI description
       const { postId } = await this.getWordPressPostId(id, usingCompletedSheet);
       
@@ -105,8 +110,15 @@ class AppraisalService {
     }
   }
 
-  async setAppraisalValue(id, value, description) {
-    await this.sheetsService.updateValues(`J${id}:K${id}`, [[value, description]]);
+  async setAppraisalValue(id, value, description, appraisalType = null, useCompletedSheet = false) {
+    // Save value and description to columns J and K
+    await this.sheetsService.updateValues(`J${id}:K${id}`, [[value, description]], useCompletedSheet);
+    
+    // If appraisal type is provided, save it to column B
+    if (appraisalType) {
+      await this.sheetsService.updateValues(`B${id}`, [[appraisalType]], useCompletedSheet);
+      this.logger.debug(`Updated appraisal type ${appraisalType} in column B for appraisal ${id}`);
+    }
   }
 
   async mergeDescriptions(id, description, postId, useCompletedSheet = false) {
