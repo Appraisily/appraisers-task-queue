@@ -66,7 +66,7 @@ class Worker {
   }
 
   /**
-   * Process an appraisal from a specific step directly without using PubSub
+   * Process an appraisal from a specific step via direct API call
    * @param {string|number} id - Appraisal ID
    * @param {string} startStep - Step to start processing from
    * @param {boolean} usingCompletedSheet - Flag indicating which sheet the appraisal is in
