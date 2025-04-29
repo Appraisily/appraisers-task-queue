@@ -391,24 +391,29 @@ class Worker {
           throw new Error('No main image found in the WordPress post');
         }
         
-        // 2. Analyze the image with GPT-4o
-        await this.appraisalService.updateStatus(id, 'Analyzing', 'Generating AI image analysis with GPT-4o', usingCompletedSheet);
+        // 2. Analyze the image with o3
+        await this.appraisalService.updateStatus(id, 'Analyzing', 'Generating AI image analysis with o3', usingCompletedSheet);
         const openaiService = this.appraisalService.openaiService;
         
         const imageAnalysisPrompt = 
           "You are an expert art and antiquity appraiser with decades of experience. " +
-          "Please analyze this image thoroughly and provide a detailed, professional description of what you see. " +
-          "Focus on all aspects including: style, period, materials, condition, craftsmanship, artistic significance, " +
-          "and any notable features. If it's an antiquity, describe its historical context and significance. " +
+          "Please analyze this image thoroughly and provide a highly detailed, professional description of what you see. " +
+          "Focus extensively on ALL aspects including: style, period, materials, condition, craftsmanship, artistic significance, " +
+          "provenance if evident, color palette, composition, dimensions (if estimable), cultural or historical context, " +
+          "decorative elements, patterns, iconography, techniques used, age indicators, " +
+          "any signatures or markings, quality assessment, rarity indicators, and all other notable features. " +
+          "If it's an antiquity, describe its historical context, original purpose, and cultural significance in detail. " +
+          "Be extremely thorough and maximize the amount of information extracted from visual examination. " +
+          "Do not omit any details visible in the image. " +
           "End with a brief title (3-7 words) that captures the essence of the item.";
         
-        // Call GPT-4o to analyze the image
-        this.logger.debug(`Calling GPT-4o Vision API for image analysis`);
+        // Call o3 to analyze the image
+        this.logger.debug(`Calling o3 Vision API for image analysis`);
         aiImageDescription = await openaiService.analyzeImageWithGPT4o(mainImageUrl, imageAnalysisPrompt);
         
         if (!aiImageDescription) {
-          this.logger.error(`GPT-4o vision API returned empty result`);
-          throw new Error('Image analysis failed - empty result from GPT-4o');
+          this.logger.error(`o3 vision API returned empty result`);
+          throw new Error('Image analysis failed - empty result from o3');
         }
         
         // Save the AI description to column H

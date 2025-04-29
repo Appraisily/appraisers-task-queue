@@ -66,33 +66,34 @@ class OpenAIService {
         
         Please create:
         
-        1. A comprehensive merged description that combines all relevant elements from both inputs.
-           This should be detailed to ensure all important information is included.
+        1. A comprehensive merged description that combines ALL relevant elements from both inputs.
+           This should be extremely detailed to ensure all available information is included.
            THE APPRAISER'S DESCRIPTION IS AUTHORITATIVE. In case of ANY contradictions between descriptions, 
            ALWAYS prioritize the Appraiser's Description information.
-           Include all relevant details about style, period, materials, condition, artist background, and other significant attributes.
+           Include all relevant details about style, period, materials, condition, artist background, provenance,
+           artistic significance, historical context, craftsmanship, dimensions, color palette, composition, 
+           and any other significant attributes. Do not omit any information from either source unless it 
+           explicitly contradicts the appraiser's description.
         
-        2. A brief title (max 60 chars) that clearly identifies the item.
+        2. A brief title (up to 18 words) that clearly identifies the item with its key features.
         
         Return your response in JSON format with these fields: 
         mergedDescription, briefTitle.
       `;
       
       const response = await this.client.chat.completions.create({
-        model: 'gpt-4-turbo',
+        model: 'o3',
         messages: [
           { 
-            role: 'system', 
-            content: 'You are an expert art appraiser assistant that creates comprehensive appraisal descriptions. Always prioritize the appraiser\'s description over AI analysis when there are any contradictions. The appraiser\'s input is authoritative and should be considered the most reliable source of information.'
+            role: 'assistant', 
+            content: 'You are an expert art appraiser assistant that creates comprehensive appraisal descriptions. Always prioritize the appraiser\'s description over AI analysis when there are any contradictions. The appraiser\'s input is authoritative and should be considered the most reliable source of information. Your goal is to be extremely thorough and include as much detailed information as possible.'
           },
           { 
             role: 'user', 
             content: prompt
           }
         ],
-        temperature: 0.3,
-        response_format: { type: 'json_object' },
-        max_tokens: 2500
+        response_format: { type: 'json_object' }
       });
       
       // Get the response text
@@ -132,7 +133,7 @@ class OpenAIService {
     }
     
     try {
-      this.logger.info(`Analyzing image with GPT-4o: ${imageUrl}`);
+      this.logger.info(`Analyzing image with o3: ${imageUrl}`);
       
       // First, fetch the image and encode as base64
       let imageData;
@@ -149,12 +150,12 @@ class OpenAIService {
         throw new Error(`Failed to fetch image: ${fetchError.message}`);
       }
       
-      // Call GPT-4o with the image
+      // Call o3 with the image
       const response = await this.client.chat.completions.create({
-        model: 'gpt-4o',
+        model: 'o3',
         messages: [
           { 
-            role: 'system', 
+            role: 'assistant', 
             content: 'You are an expert art and antiquity appraiser with extensive knowledge of art history, styles, periods, materials, and valuation techniques.'
           },
           { 
@@ -172,19 +173,17 @@ class OpenAIService {
               }
             ]
           }
-        ],
-        temperature: 0.2,
-        max_tokens: 1500
+        ]
       });
       
       // Get the response text
       const description = response.choices[0].message.content;
       
-      this.logger.info(`GPT-4o analysis complete, generated ${description.length} characters`);
+      this.logger.info(`o3 analysis complete, generated ${description.length} characters`);
       
       return description;
     } catch (error) {
-      this.logger.error('Error analyzing image with GPT-4o:', error);
+      this.logger.error('Error analyzing image with o3:', error);
       throw error;
     }
   }
