@@ -511,9 +511,11 @@ class AppraisalService {
       // Check if the block pattern is already in the content
       if (!content.includes(blockPatternCode)) {
         // Add the block pattern to the beginning of the content
-        const updatedContent = blockPatternCode + content;
+        const updatedContent = blockPatternCode;
         
         // Update the WordPress post with the new content
+        // We're only sending the block reference, not the original content
+        // This prevents duplication of content when WordPress expands the block
         await this.wordpressService.updateAppraisalPost(postId, {
           content: updatedContent
         });
@@ -521,6 +523,15 @@ class AppraisalService {
         this.logger.info(`Successfully applied WordPress template pattern to post ${postId}`);
       } else {
         this.logger.info(`WordPress template pattern already exists in post ${postId}`);
+        
+        // If the pattern exists but we see expanded content, fix it
+        // We need to clean up any expanded block content to prevent duplications
+        if (content.includes(blockPatternCode) && content.length > blockPatternCode.length + 100) {
+          this.logger.info(`Found expanded block content, cleaning up to prevent duplication`);
+          await this.wordpressService.updateAppraisalPost(postId, {
+            content: blockPatternCode
+          });
+        }
       }
       
       return { success: true };

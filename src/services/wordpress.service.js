@@ -119,7 +119,31 @@ class WordPressService {
       
       // Only add fields that are provided
       if (title) payload.title = title;
-      if (content) payload.content = content;
+      
+      // Special handling for content with block references
+      if (content) {
+        // Check if content contains only a block reference
+        if (content.trim().startsWith('<!-- wp:block {"ref":') && 
+            content.trim().endsWith('/-->') && 
+            !content.includes('<div')) {
+          // This is a clean block reference - keep it as is
+          payload.content = content;
+          this.logger.info(`Updating post ${postId} with clean block reference`);
+        } else if (content.includes('<!-- wp:block {"ref":')) {
+          // Content contains a block reference mixed with rendered content
+          // Extract just the block reference to prevent duplication
+          const blockRefMatch = content.match(/<!-- wp:block {"ref":[0-9]+} \/-->/);
+          if (blockRefMatch && blockRefMatch[0]) {
+            payload.content = blockRefMatch[0];
+            this.logger.info(`Extracted block reference from mixed content for post ${postId}`);
+          } else {
+            payload.content = content;
+          }
+        } else {
+          // Regular content without block references
+          payload.content = content;
+        }
+      }
 
       // Prepare ACF fields update if any ACF fields are provided
       const acfData = {};
