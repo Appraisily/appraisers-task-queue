@@ -92,22 +92,23 @@ class Worker {
       switch (startStep) {
         case 'STEP_SET_VALUE':
           try {
-            // Fetch all required data in a single operation
-            const { data: appraisalData } = await this.appraisalFinder.getMultipleFields(id, ['J', 'K'], usingCompletedSheet);
+            // Use provided values directly from options as the source of truth.
+            const valueToUse = appraisalValue;
+            const descToUse = description;
             
-            // Use provided values, or values from sheet if they exist
-            const valueToUse = appraisalValue || (appraisalData.J || null);
-            const descToUse = description || (appraisalData.K || null);
-            
-            if (!valueToUse && !descToUse) {
-              throw new Error('Missing required fields for STEP_SET_VALUE: appraisalValue or description');
+            if (valueToUse === undefined || valueToUse === null || descToUse === undefined || descToUse === null) {
+              this.logger.error(`Missing required fields from backend for STEP_SET_VALUE: appraisalValue (${appraisalValue}), description (${description}) for ID ${id}`);
+              throw new Error('Missing required fields from backend for STEP_SET_VALUE: appraisalValue or description must be provided.');
             }
             
             // Update status with the correct sheet (passed as parameter)
             await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
             
-            // Save appraisal value to column J and appraisal type to column B
+            // Save appraisal value to column J, appraiser's description to column K, and appraisal type to column B
             await this.sheetsService.updateValues(`J${id}`, [[valueToUse]], usingCompletedSheet);
+            await this.sheetsService.updateValues(`K${id}`, [[descToUse]], usingCompletedSheet);
+            this.logger.info(`Saved appraiser's description to column K for appraisal ${id}`);
+
             if (appraisalType) {
               await this.sheetsService.updateValues(`B${id}`, [[appraisalType]], usingCompletedSheet);
               this.logger.info(`Saved appraisal type '${appraisalType}' to column B for appraisal ${id}`);

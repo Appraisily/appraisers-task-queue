@@ -265,24 +265,11 @@ class SheetsService {
         }
       });
 
-      // Delete the row from Pending Appraisals
-      await this.sheets.spreadsheets.batchUpdate({
-        spreadsheetId: this.spreadsheetId,
-        resource: {
-          requests: [{
-            deleteDimension: {
-              range: {
-                sheetId: await this.getSheetId(this.pendingSheetName),
-                dimension: 'ROWS',
-                startIndex: rowId - 1,
-                endIndex: rowId
-              }
-            }
-          }]
-        }
-      });
+      // Instead of deleting, update the status in the Pending Appraisals sheet
+      const statusUpdateRange = `F${rowId}`;
+      await this.updateValues(statusUpdateRange, [['Moved to Completed']], false); // false for pendingSheetName
 
-      this.logger.info(`Completed move of appraisal ${rowId}`);
+      this.logger.info(`Completed move of appraisal ${rowId}. Status set to 'Moved to Completed' in pending sheet.`);
     } catch (error) {
       this.logger.error(`Error moving appraisal ${rowId} to Completed:`, error);
       throw error;
