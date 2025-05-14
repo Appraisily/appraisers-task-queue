@@ -54,36 +54,44 @@ class GeminiService {
       this.logger.info('Calling Gemini to process appraisal data');
       
       const prompt = `
-        You are an expert art and antiques appraiser. You are analyzing data extracted from an existing appraisal to migrate it to a new format.
+        You are an expert art and antiques appraiser tasked with analyzing WordPress post data to extract structured information for an appraisal process.
         
-        Here is the extracted data:
+        Here is the extracted data from a WordPress post:
         
-        ${JSON.stringify(appraisalData, null, 2)}
+        Title: ${appraisalData.title}
+        Content: ${appraisalData.content.substring(0, 2000)}${appraisalData.content.length > 2000 ? '... (content truncated)' : ''}
+        Appraisal Type: ${appraisalData.appraisalType || 'Not specified'}
+        Current Value: ${appraisalData.appraisalValue || 'Not specified'}
         
-        Please analyze this data and create a structured response that includes:
+        Image URLs: ${JSON.stringify(appraisalData.imageUrls.map(img => img.url).slice(0, 5))}
         
-        1. A comprehensive merged description that combines all relevant elements from all descriptions.
-           This should be extremely detailed to ensure all available information is included.
-           Include all relevant details about style, period, materials, condition, artist background, provenance,
-           artistic significance, historical context, craftsmanship, dimensions, color palette, composition, 
-           and any other significant attributes. Do not omit any information.
+        Metadata fields: ${Object.keys(appraisalData.metadata).join(', ')}
         
-        2. A brief title (up to 10 words) that clearly identifies the item with its key features.
+        Your task is to extract and organize all relevant information needed to begin processing this appraisal. 
         
-        3. Structure all metadata into clear categories.
+        Please analyze the data and provide:
         
-        Return your response in JSON format with these fields: 
+        1. A comprehensive description of the item being appraised, combining all available information.
+        2. A clear appraisal value (in USD) if you can determine it from the content.
+        3. The type/category of the item (painting, sculpture, jewelry, etc.).
+        4. Creator/artist name if available.
+        5. Age or period of creation.
+        6. Materials and techniques used.
+        7. Condition assessment.
+        8. Size/dimensions if available.
+        
+        Return your analysis as a structured JSON with the following fields:
         {
-          "title": "Brief title of the item",
-          "detailedTitle": "Longer, more descriptive title",
-          "objectType": "Type of object (painting, sculpture, etc.)",
-          "creator": "Artist or creator name",
+          "title": "Brief, accurate title for the item (max 10 words)",
+          "detailedTitle": "More descriptive title with key details",
+          "objectType": "Category of object",
+          "creator": "Artist or creator",
           "age": "Estimated age or period",
           "materials": "Materials used",
-          "dimensions": "Size information",
+          "dimensions": "Size information if available",
           "condition": "Condition assessment",
-          "provenance": "History of ownership if available",
-          "mergedDescription": "Comprehensive description combining all sources"
+          "recommendedValue": "Your professional assessment of value in USD (numbers only, no currency symbol)",
+          "mergedDescription": "Comprehensive description combining all relevant details"
         }
       `;
       
@@ -106,20 +114,35 @@ class GeminiService {
         
         // Return a basic format to prevent complete failure
         return {
-          title: 'Artwork Appraisal',
-          detailedTitle: 'Artwork Appraisal - Migration Error',
+          title: appraisalData.title || 'Artwork Appraisal',
+          detailedTitle: appraisalData.title || 'Artwork Appraisal - Processing Error',
           objectType: 'Unknown',
           creator: 'Unknown',
           age: 'Unknown',
           materials: 'Unknown',
           dimensions: 'Unknown',
           condition: 'Unknown',
-          provenance: 'Unknown',
-          mergedDescription: 'Error processing appraisal data. Please contact support.'
+          recommendedValue: appraisalData.appraisalValue || '',
+          mergedDescription: appraisalData.content || 'Error processing appraisal data. Please contact support.'
         };
       }
       
-      return parsedResponse;
+      // Ensure the response has all expected fields
+      const defaultResponse = {
+        title: appraisalData.title || 'Artwork Appraisal',
+        detailedTitle: appraisalData.title || 'Artwork Appraisal',
+        objectType: 'Unknown',
+        creator: 'Unknown',
+        age: 'Unknown',
+        materials: 'Unknown',
+        dimensions: 'Unknown',
+        condition: 'Unknown',
+        recommendedValue: appraisalData.appraisalValue || '',
+        mergedDescription: appraisalData.content || ''
+      };
+      
+      // Merge the parsed response with defaults for any missing fields
+      return { ...defaultResponse, ...parsedResponse };
     } catch (error) {
       this.logger.error('Error calling Gemini API:', error);
       throw error;

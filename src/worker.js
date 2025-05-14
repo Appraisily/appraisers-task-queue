@@ -95,18 +95,26 @@ class Worker {
       this.logger.info(`Processing appraisal ${id} from step ${startStep} (Sheet: ${usingCompletedSheet ? 'Completed' : 'Pending'})`);
       
       // Extract any additional data from options that might be needed
-      const { appraisalValue, description, appraisalType, postId } = options;
+      const { 
+        appraisalValue, 
+        description, 
+        appraisalType, 
+        postId,
+        geminiAnalysis // New field containing the Gemini AI analysis
+      } = options;
       
       // Process based on step
       switch (startStep) {
         case 'STEP_SET_VALUE':
           try {
             // Use provided values directly from options as the source of truth.
-            const valueToUse = appraisalValue;
-            const descToUse = description;
+            // If we have geminiAnalysis, extract values from it
+            const valueToUse = this.extractAppraisalValue(appraisalValue, geminiAnalysis);
+            const descToUse = this.extractDescription(description, geminiAnalysis);
+            const typeToUse = this.extractAppraisalType(appraisalType, geminiAnalysis);
             
             if (valueToUse === undefined || valueToUse === null || descToUse === undefined || descToUse === null) {
-              this.logger.error(`Missing required fields from backend for STEP_SET_VALUE: appraisalValue (${appraisalValue}), description (${description}) for ID ${id}`);
+              this.logger.error(`Missing required fields from backend for STEP_SET_VALUE: appraisalValue (${valueToUse}), description (${descToUse}) for ID ${id}`);
               throw new Error('Missing required fields from backend for STEP_SET_VALUE: appraisalValue or description must be provided.');
             }
             
@@ -118,13 +126,13 @@ class Worker {
             await this.sheetsService.updateValues(`K${id}`, [[descToUse]], usingCompletedSheet);
             this.logger.info(`Saved appraiser's description to column K for appraisal ${id}`);
 
-            if (appraisalType) {
-              await this.sheetsService.updateValues(`B${id}`, [[appraisalType]], usingCompletedSheet);
-              this.logger.info(`Saved appraisal type '${appraisalType}' to column B for appraisal ${id}`);
+            if (typeToUse) {
+              await this.sheetsService.updateValues(`B${id}`, [[typeToUse]], usingCompletedSheet);
+              this.logger.info(`Saved appraisal type '${typeToUse}' to column B for appraisal ${id}`);
             }
             
             // Start full processing, passing the sheet context
-            await this.appraisalService.processAppraisal(id, valueToUse, descToUse, appraisalType, usingCompletedSheet);
+            await this.appraisalService.processAppraisal(id, valueToUse, descToUse, typeToUse, usingCompletedSheet);
           } catch (error) {
             this.logger.error(`Error in STEP_SET_VALUE:`, error);
             await this.appraisalService.updateStatus(id, 'Failed', `STEP_SET_VALUE Error: ${error.message}`, usingCompletedSheet);
@@ -530,6 +538,86 @@ class Worker {
     } finally {
       this.activeProcesses.delete(processId);
     }
+  }
+
+  /**
+   * Extract appraisal value from options or Gemini analysis
+   * @param {string|number} providedValue - Value provided directly in options
+   * @param {object} geminiAnalysis - Gemini AI analysis object
+   * @returns {string} - The appraisal value to use
+   */
+  extractAppraisalValue(providedValue, geminiAnalysis) {
+    // Direct value has highest priority
+    if (providedValue !== undefined && providedValue !== null && providedValue !== '') {
+      return providedValue;
+    }
+    
+    // Try to get value from Gemini analysis
+    if (geminiAnalysis && geminiAnalysis.recommendedValue) {
+      return geminiAnalysis.recommendedValue;
+    }
+    
+    return providedValue || '';
+  }
+  
+  /**
+   * Extract description from options or Gemini analysis
+   * @param {string} providedDescription - Description provided directly in options
+   * @param {object} geminiAnalysis - Gemini AI analysis object
+   * @returns {string} - The description to use
+   */
+  extractDescription(providedDescription, geminiAnalysis) {
+    // Direct description has highest priority
+    if (providedDescription && providedDescription.trim()) {
+      return providedDescription;
+    }
+    
+    // Try to get merged description from Gemini analysis
+    if (geminiAnalysis && geminiAnalysis.mergedDescription) {
+      return geminiAnalysis.mergedDescription;
+    }
+    
+    return providedDescription || '';
+  }
+  
+  /**
+   * Extract appraisal type from options or Gemini analysis
+   * @param {string} providedType - Type provided directly in options
+   * @param {object} geminiAnalysis - Gemini AI analysis object
+   * @returns {string} - The appraisal type to use
+   */
+  extractAppraisalType(providedType, geminiAnalysis) {
+    // Direct type has highest priority
+    if (providedType && providedType.trim()) {
+      return providedType;
+    }
+    
+    // Map object type to appraisal type if available
+    if (geminiAnalysis && geminiAnalysis.objectType) {
+      // Map common object types to appraisal types
+      const objectType = geminiAnalysis.objectType.toLowerCase();
+      
+      if (objectType.includes('painting') || 
+          objectType.includes('artwork') || 
+          objectType.includes('drawing')) {
+        return 'Art';
+      } else if (objectType.includes('jewelry') || 
+                 objectType.includes('gold') || 
+                 objectType.includes('silver') ||
+                 objectType.includes('gem')) {
+        return 'Jewelry';
+      } else if (objectType.includes('furniture') || 
+                 objectType.includes('chair') || 
+                 objectType.includes('table')) {
+        return 'Furniture';
+      } else if (objectType.includes('collectible') || 
+                 objectType.includes('memorabilia')) {
+        return 'Collectible';
+      }
+    }
+    
+    // Default to Regular if nothing else is available
+    return providedType || 'Regular';
   }
 }
 

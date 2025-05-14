@@ -12,23 +12,23 @@ The appraisal system follows a microservices architecture with the following com
 
 ### Service Responsibilities
 
-```
-┌─────────────────────┐        ┌─────────────────────┐        ┌─────────────────────┐
-│                     │        │                     │  HTTP  │                     │
-│  Appraisers         │  HTTP  │  Appraisers         │───────►│  Appraisers         │
-│  Frontend           │───────►│  Backend            │◄───────│  Task Queue         │
-│                     │◄───────│                     │        │                     │
-│                     │        │                     │        │                     │
-└─────────────────────┘        └─────────────────────┘        └─────────────────────┘
-                                        │                              │
-                                        │                              │
-                                        ▼                              ▼
-                               ┌─────────────────────┐       ┌─────────────────────┐
-                               │                     │       │                     │
-                               │  Database           │       │  External Services  │
-                               │  (Google Sheets)    │       │  (OpenAI, etc.)     │
-                               │                     │       │                     │
-                               └─────────────────────┘       └─────────────────────┘
+```mermaid
+graph LR
+    A[Appraisers Frontend] <-->|HTTP| B[Appraisers Backend]
+    B <-->|HTTP| C[Appraisers Task Queue]
+    B -->|Read/Write| D[(Database - Google Sheets)]
+    C -->|Read/Write| D
+    C -->|API Calls| E[External Services]
+    
+    subgraph External Services
+        E1[OpenAI]
+        E2[WordPress]
+        E3[SendGrid]
+    end
+    
+    E --> E1
+    E --> E2
+    E --> E3
 ```
 
 #### Appraisers Backend Responsibilities
@@ -46,122 +46,43 @@ The appraisal system follows a microservices architecture with the following com
 - Email notifications
 - Error handling and retry logic
 
-## Appraisal Processing Flow
-
-The appraisal processing follows a step-by-step workflow:
-
-```
-┌─────────────────┐
-│ User triggers   │
-│ appraisal       │
-│ processing      │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│ Backend routes  │     │ Task Queue      │     │ Task Queue      │
-│ request to      │────►│ receives        │────►│ processes       │
-│ Task Queue      │     │ HTTP request    │     │ appraisal       │
-└─────────────────┘     └─────────────────┘     └────────┬────────┘
-                                                         │
-                                                         ▼
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│ Task Queue      │     │ Task Queue      │     │ Task Queue      │
-│ updates status  │◄────│ generates       │◄────│ merges          │
-│ in database     │     │ reports & PDFs  │     │ descriptions    │
-└────────┬────────┘     └─────────────────┘     └─────────────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Backend serves  │
-│ updated status  │
-│ to Frontend     │
-└─────────────────┘
-```
-
-### Appraisal Processing Steps
-
-1. **STEP_SET_VALUE**: Set the appraisal value and store initial description
-2. **STEP_MERGE_DESCRIPTIONS**: Combine customer and AI-generated descriptions
-3. **STEP_UPDATE_WORDPRESS**: Update the WordPress post with metadata
-4. **STEP_GENERATE_VISUALIZATION**: Create charts and visualizations
-5. **STEP_BUILD_REPORT**: Build the complete appraisal report
-6. **STEP_GENERATE_PDF**: Create the PDF document and send email notification
-
-## Image Analysis and Description Merging
-
-A specialized endpoint is available for AI image analysis and description merging:
-
-```
-┌─────────────────┐
-│ Backend sends   │
-│ image analysis  │
-│ request         │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│ Task Queue      │     │ Task Queue      │     │ Task Queue      │
-│ fetches image   │────►│ sends to GPT-4o │────►│ gets AI image   │
-│ from WordPress  │     │ for analysis    │     │ description     │
-└─────────────────┘     └─────────────────┘     └────────┬────────┘
-                                                         │
-                                                         ▼
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│ Backend gets    │     │ Task Queue      │     │ Task Queue      │
-│ merged result   │◄────│ returns merged  │◄────│ merges all      │
-│ with metadata   │     │ descriptions    │     │ descriptions    │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-```
-
-This specialized flow handles:
-1. Retrieving the main image from WordPress
-2. Analyzing the image using GPT-4o
-3. Extracting expert descriptions from the AI
-4. Merging with customer-provided descriptions
-5. Extracting structured metadata
-6. Storing all results in Google Sheets
-
-## Important Implementation Notes
-
-### 1. Processing Responsibility
-
-**IMPORTANT**: The Appraisers Backend should NEVER execute appraisal processing steps directly. All processing must be delegated to the Task Queue service.
-
-The backend's responsibility is limited to:
-- Receiving requests from the frontend
-- Validating request parameters
-- Forwarding requests to the Task Queue service
-- Returning success/failure responses to the frontend
-
-The Task Queue service is responsible for:
-- Executing all appraisal processing steps
-- Handling errors
-- Updating the appraisal status
-- Generating files and sending notifications
-
-### 2. Step-by-Step Processing
-
-The system supports processing appraisals from specific steps. This is useful for:
-- Reprocessing failed steps
-- Manually triggering specific parts of the workflow
-- Testing individual steps
-
-To process from a specific step, the backend sends a request to the Task Queue service with:
-- Appraisal ID
-- Starting step
-- Any additional options required
-
 ## API Endpoints
 
-### Task Queue Service
-
-- **GET /health**: Health check endpoint
-- **GET /api/docs**: API documentation
-- **POST /api/process-step**: Process an appraisal from a specific step
-- **POST /api/analyze-image-and-merge**: Analyze an image with GPT-4o and merge descriptions
+| Endpoint | Method | Description | Request Parameters | Response |
+|----------|--------|-------------|-------------------|----------|
+| `/health` | GET | Health check endpoint | None | `{ status: "ok", timestamp: "ISO date" }` |
+| `/api/docs` | GET | API documentation | None | Documentation object |
+| `/api/process-step` | POST | Process an appraisal from a specific step | `id`, `startStep`, `options` | Success/error response |
+| `/api/analyze-image-and-merge` | POST | Analyze image and merge descriptions | `id`, `postId`, `description`, `options` | Analysis result |
+| `/api/fetch-appraisal/:postId` | GET | Fetch appraisal data from WordPress | `postId` (URL parameter) | Appraisal data |
+| `/api/migrate-appraisal` | POST | Migrate existing appraisal to new format | `url`, `sessionId`, `customerEmail`, `options` | Migration data |
 
 ### Endpoint Details
+
+#### POST /api/process-step
+
+Processes an appraisal from a specific workflow step.
+
+```json
+// Request
+{
+  "id": "140",                   // Appraisal ID (row in spreadsheet)
+  "startStep": "STEP_SET_VALUE", // Step to start processing from
+  "options": {                   // Optional parameters
+    "appraisalValue": "1500",    // Value for STEP_SET_VALUE
+    "description": "Antique oil painting...",
+    "appraisalType": "Regular",
+    "postId": "145911"           // WordPress post ID
+  }
+}
+
+// Response
+{
+  "success": true,
+  "message": "Appraisal 140 has been processed from step STEP_SET_VALUE",
+  "timestamp": "2025-04-25T09:30:15.123Z"
+}
+```
 
 #### POST /api/analyze-image-and-merge
 
@@ -200,43 +121,338 @@ Specialized endpoint for AI image analysis and description merging.
 }
 ```
 
+#### GET /api/fetch-appraisal/:postId
+
+Fetches appraisal data from WordPress by post ID.
+
+```json
+// Response
+{
+  "success": true,
+  "message": "Appraisal data for post 145911 successfully retrieved and logged to console",
+  "data": {
+    "title": "Antique Oil Painting",
+    "type": "Regular",
+    "status": "Processing",
+    "value": "1500"
+  }
+}
+```
+
+#### POST /api/migrate-appraisal
+
+Migrates an existing appraisal to the new format.
+
+```json
+// Request
+{
+  "url": "https://example.com/appraisal/123",  // Existing appraisal URL
+  "sessionId": "user_session_456",             // Current user session
+  "customerEmail": "customer@example.com",     // Customer email
+  "options": {}                                // Additional options
+}
+
+// Response
+{
+  "success": true,
+  "message": "Appraisal migration data prepared successfully",
+  "data": {
+    // Migration data...
+  },
+  "timestamp": "2025-04-25T09:30:15.123Z"
+}
+```
+
+## Class Structure
+
+```mermaid
+classDiagram
+    class Worker {
+        +SheetsService sheetsService
+        +AppraisalService appraisalService
+        +AppraisalFinder appraisalFinder
+        +MigrationService migrationService
+        +GeminiDocsService geminiDocsService
+        +Set activeProcesses
+        +boolean isShuttingDown
+        +initialize()
+        +processFromStep(id, startStep, usingCompletedSheet, options)
+        +analyzeImageAndMergeDescriptions(id, postId, customerDescription, options)
+        +migrateAppraisal(params)
+        +shutdown()
+    }
+    
+    class AppraisalService {
+        +SheetsService sheetsService
+        +WordPressService wordpressService
+        +OpenAIService openaiService
+        +EmailService emailService
+        +PDFService pdfService
+        +processAppraisal(id, value, description, type, usingCompletedSheet)
+        +updateStatus(id, status, message, usingCompletedSheet)
+        +updateWordPress(id, value, mergeResult, type, usingCompletedSheet)
+        +finalize(id, postId, publicUrl, usingCompletedSheet)
+    }
+    
+    class SheetsService {
+        +Object auth
+        +String pendingSpreadsheetId
+        +String completedSpreadsheetId
+        +initialize(config)
+        +getValues(range, useCompletedSheet)
+        +updateValues(range, values, useCompletedSheet)
+        +getMultipleRanges(ranges, useCompletedSheet)
+    }
+    
+    class WordPressService {
+        +String apiUrl
+        +String username
+        +String password
+        +initialize()
+        +getPost(postId)
+        +updateAppraisalPost(postId, data)
+        +completeAppraisalReport(postId)
+        +getImageUrl(imageId)
+        +getPermalink(postId)
+    }
+    
+    class OpenAIService {
+        +Object openaiClient
+        +String apiKey
+        +initialize()
+        +analyzeImageWithGPT4o(imageUrl, prompt)
+        +mergeDescriptions(customerDesc, aiDesc)
+    }
+    
+    class EmailService {
+        +Object sendgridClient
+        +String apiKey
+        +String fromEmail
+        +initialize()
+        +sendAppraisalEmail(to, subject, data)
+    }
+    
+    class PDFService {
+        +initialize()
+        +generatePDF(html, options)
+    }
+    
+    class AppraisalFinder {
+        +SheetsService sheetsService
+        +appraisalExists(id)
+        +getMultipleFields(id, columns, useCompletedSheet)
+    }
+    
+    Worker --> AppraisalService
+    Worker --> SheetsService
+    Worker --> AppraisalFinder
+    Worker --> MigrationService
+    Worker --> GeminiDocsService
+    AppraisalService --> SheetsService
+    AppraisalService --> WordPressService
+    AppraisalService --> OpenAIService
+    AppraisalService --> EmailService
+    AppraisalService --> PDFService
+    AppraisalFinder --> SheetsService
+```
+
+## Appraisal Processing Flow
+
+The appraisal processing follows a step-by-step workflow:
+
+```mermaid
+flowchart TD
+    A[User triggers appraisal processing] --> B[Backend routes request to Task Queue]
+    B --> C[Task Queue receives HTTP request]
+    C --> D[Task Queue processes appraisal]
+    D --> E[Task Queue merges descriptions]
+    E --> F[Task Queue generates reports & PDFs]
+    F --> G[Task Queue updates status in database]
+    G --> H[Backend serves updated status to Frontend]
+```
+
+### Appraisal Processing Steps
+
+1. **STEP_SET_VALUE**: 
+   - Set the appraisal value in column J
+   - Store initial description in column K
+   - Set appraisal type in column B
+   - Update status to "Processing"
+
+2. **STEP_MERGE_DESCRIPTIONS**: 
+   - Extract WordPress post ID from URL in column G
+   - Retrieve existing description from column K
+   - Analyze image using GPT-4o Vision
+   - Store AI-generated description in column H
+   - Merge customer and AI descriptions
+   - Store merged description in column T
+   - Store brief title in column S
+   - Update WordPress post with new titles
+   - Update status to "Ready"
+
+3. **STEP_UPDATE_WORDPRESS**:
+   - Fetch appraisal data from columns B, J, and L
+   - Update WordPress post with value, description, and type
+   - Update status to "Updating"
+
+4. **STEP_GENERATE_VISUALIZATION**:
+   - Get WordPress post ID from URL in column G
+   - Call WordPress service to generate visualizations
+   - Complete the appraisal report on WordPress
+
+5. **STEP_BUILD_REPORT**:
+   - Process appraisal with existing data
+   - Generate full appraisal report
+
+6. **STEP_GENERATE_PDF**:
+   - Create PDF version of the appraisal
+   - Get public permalink from WordPress
+   - Send email notification to customer
+   - Update appraisal status to "Completed"
+
+## Image Analysis and Description Merging
+
+A specialized flow for AI image analysis and description merging:
+
+```mermaid
+flowchart TD
+    A[Backend sends image analysis request] --> B[Task Queue fetches image from WordPress]
+    B --> C[Task Queue sends to GPT-4o for analysis]
+    C --> D[Task Queue gets AI image description]
+    D --> E[Task Queue merges all descriptions]
+    E --> F[Task Queue returns merged descriptions]
+    F --> G[Backend gets merged result with metadata]
+```
+
+## Environment Variables and Secrets
+
+The service uses Google Secret Manager to securely access credentials and configuration:
+
+| Secret Name | Description | Used By |
+|-------------|-------------|---------|
+| `PENDING_APPRAISALS_SPREADSHEET_ID` | Google Sheets ID for pending appraisals | SheetsService |
+| `COMPLETED_APPRAISALS_SPREADSHEET_ID` | Google Sheets ID for completed appraisals | SheetsService |
+| `OPENAI_API_KEY` | API key for OpenAI services | OpenAIService |
+| `WORDPRESS_API_URL` | WordPress API endpoint URL | WordPressService |
+| `WORDPRESS_USERNAME` | WordPress API username | WordPressService |
+| `WORDPRESS_PASSWORD` | WordPress API password | WordPressService |
+| `SENDGRID_API_KEY` | SendGrid API key for email sending | EmailService |
+| `SENDGRID_FROM_EMAIL` | Email address used as sender | EmailService |
+
+## File Structure
+
+```
+appraisers-task-queue/
+├── src/
+│   ├── app.js                   # Main Express application
+│   ├── worker.js                # Core processing worker
+│   ├── processor.js             # Processing orchestration
+│   ├── local-app.js             # Local development server
+│   ├── services/
+│   │   ├── appraisal.service.js # Appraisal processing logic
+│   │   ├── sheets.service.js    # Google Sheets integration
+│   │   ├── wordpress.service.js # WordPress API integration
+│   │   ├── openai.service.js    # OpenAI API integration
+│   │   ├── email.service.js     # Email sending via SendGrid
+│   │   ├── pdf.service.js       # PDF generation service
+│   │   ├── gemini.service.js    # Google Gemini AI integration
+│   │   ├── gemini-docs.service.js # Gemini for document processing
+│   │   ├── google-docs.service.js # Google Docs integration
+│   │   ├── migration.service.js # Migration utilities
+│   │   ├── content-extraction.service.js # Content extraction tools
+│   │   └── taskQueueService.js  # Task queue management
+│   ├── utils/
+│   │   ├── logger.js            # Logging utilities
+│   │   ├── secrets.js           # Secret Manager integration
+│   │   ├── appraisal-finder.js  # Appraisal lookup utilities
+│   │   ├── template-loader.js   # Handlebars template loading
+│   │   └── local-dev.js         # Local development utilities
+│   └── templates/               # Handlebars templates for reports
+├── scripts/                     # Build and testing scripts
+├── Dockerfile                   # Container definition
+├── cloudbuild.yaml              # Google Cloud Build configuration
+├── package.json                 # Dependencies and scripts
+└── README.md                    # Project documentation
+```
+
 ## Development
 
 ### Prerequisites
 
-- Node.js 16+
+- Node.js 20+
 - Google Cloud SDK
 - Access to Google Secret Manager
 
 ### Environment Setup
 
-The following environment variables need to be available through Google Secret Manager:
+The following environment variables need to be available through Google Secret Manager for production deployment:
 
-- `PENDING_APPRAISALS_SPREADSHEET_ID`: Google Sheets spreadsheet ID
-- `OPENAI_API_KEY`: OpenAI API key
-- Other service-specific secrets
+- `PENDING_APPRAISALS_SPREADSHEET_ID`
+- `COMPLETED_APPRAISALS_SPREADSHEET_ID`
+- `OPENAI_API_KEY`
+- `WORDPRESS_API_URL`
+- `WORDPRESS_USERNAME`
+- `WORDPRESS_PASSWORD`
+- `SENDGRID_API_KEY`
+- `SENDGRID_FROM_EMAIL`
 
 ### Running Locally
 
 ```bash
+# Install dependencies
 npm install
-npm start
+
+# Start local development server
+npm run start:local
+```
+
+### Running Tests
+
+```bash
+# Test appraisal document generation
+npm run test-doc
+
+# Test Gemini document handling
+npm run test-gemini-doc
 ```
 
 ### Deployment
 
-The service is deployed to Google Cloud Run using the provided cloudbuild.yaml configuration.
+The service is deployed to Google Cloud Run using Cloud Build:
 
 ```bash
+# Deploy via Cloud Build
 gcloud builds submit --config cloudbuild.yaml
 ```
+
+The deployment:
+1. Builds a Docker container based on Node.js 20
+2. Pushes the image to Google Container Registry
+3. Deploys to Cloud Run with public access
 
 ## Error Handling
 
 Errors during processing are:
-1. Logged for debugging
-2. Reflected in the appraisal status with detailed error messages
+1. Logged with detailed information
+2. Updated in the Google Sheets status column
+3. Returned in the HTTP response
 
-## Monitoring
+All processing steps are wrapped in try/catch blocks with specific error handling for each step.
 
-The service includes logging for all major operations and errors. Logs are available in Google Cloud Logging.
+## Monitoring and Logging
+
+The service includes structured logging for all operations:
+
+- Log levels: DEBUG, INFO, WARN, ERROR
+- Log context: component name, appraisal ID, process step
+- Error details: error message, stack trace, relevant data
+
+Logs are available in Google Cloud Logging with proper filtering by severity and component.
+
+## Graceful Shutdown
+
+The service implements graceful shutdown:
+1. Captures SIGTERM and SIGINT signals
+2. Waits for in-progress tasks to complete (up to 60 seconds)
+3. Forcibly terminates if tasks don't complete in time
+4. Logs shutdown status
