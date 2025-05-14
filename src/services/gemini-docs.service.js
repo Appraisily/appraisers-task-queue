@@ -8,13 +8,12 @@ const path = require('path');
  * Service for converting appraisal data to formatted markdown using Gemini 2.5 Pro
  */
 class GeminiDocsService {
-  constructor(googleDocsService) {
+  constructor() {
     this.logger = createLogger('GeminiDocsService');
     this.client = null;
     this.model = null;
     this.initialized = false;
     this.templatePath = path.join(__dirname, '../templates/appraisal/master-template.md');
-    this.googleDocsService = googleDocsService;
   }
 
   /**
@@ -89,19 +88,18 @@ FORMAT INSTRUCTIONS:
   }
 
   /**
-   * Generate a document from WordPress post using Gemini
+   * Generate formatted markdown for an appraisal
    * @param {string} postId - The WordPress post ID
    * @param {Object} wordpressService - The WordPress service instance
-   * @param {Object} options - Options for conversion
-   * @returns {Promise<Object>} - The result with docUrl and optional fileContent
+   * @returns {Promise<string>} - The formatted markdown
    */
-  async generateDocFromWordPressPost(postId, wordpressService, options = {}) {
+  async generateFormattedMarkdown(postId, wordpressService) {
     if (!this.isInitialized()) {
       await this.initialize();
     }
 
     try {
-      this.logger.info(`Generating Gemini-powered document for WordPress post ${postId}`);
+      this.logger.info(`Generating formatted markdown for WordPress post ${postId}`);
       
       // Get WordPress data with all metadata
       const postData = await wordpressService.getPostWithMetadata(postId);
@@ -117,16 +115,10 @@ FORMAT INSTRUCTIONS:
       const result = await this.model.generateContent(prompt);
       const filledMarkdown = result.response.text();
       
-      // Use the Google Docs service to convert the filled markdown to a Google Doc
-      const docResult = await this.googleDocsService.markdownToGoogleDoc(filledMarkdown, {
-        filename: `Gemini-Appraisal-${postId}-${Date.now()}`,
-        ...options
-      });
-      
-      this.logger.info(`Gemini document generated successfully for post ${postId}`);
-      return docResult;
+      this.logger.info(`Markdown generated successfully for post ${postId}`);
+      return filledMarkdown;
     } catch (error) {
-      this.logger.error(`Error generating Gemini document for post ${postId}:`, error);
+      this.logger.error(`Error generating markdown for post ${postId}:`, error);
       throw error;
     }
   }

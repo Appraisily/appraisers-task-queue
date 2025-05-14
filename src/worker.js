@@ -7,7 +7,6 @@ const EmailService = require('./services/email.service');
 const PDFService = require('./services/pdf.service');
 const AppraisalService = require('./services/appraisal.service');
 const AppraisalFinder = require('./utils/appraisal-finder');
-const GoogleDocsService = require('./services/google-docs.service');
 const MigrationService = require('./services/migration.service');
 const GeminiDocsService = require('./services/gemini-docs.service');
 
@@ -20,8 +19,7 @@ class Worker {
     this.activeProcesses = new Set();
     this.isShuttingDown = false;
     this.appraisalFinder = null;
-    this.googleDocsService = new GoogleDocsService();
-    this.geminiDocsService = new GeminiDocsService(this.googleDocsService);
+    this.geminiDocsService = new GeminiDocsService();
   }
 
   async initialize() {
@@ -50,7 +48,6 @@ class Worker {
         openaiService.initialize(),
         emailService.initialize(),
         pdfService.initialize(),
-        this.googleDocsService.initialize(),
         this.geminiDocsService.initialize()
       ]);
       
@@ -489,53 +486,6 @@ class Worker {
   }
 
   /**
-   * Generate an appraisal document (Google Doc/PDF) from a WordPress post ID
-   * @param {string} postId - WordPress post ID
-   * @param {Object} options - Options for document generation
-   * @returns {Promise<Object>} - Result object with docUrl, docId and optional fileContent
-   */
-  async generateAppraisalDocument(postId, options = {}) {
-    if (this.isShuttingDown) {
-      this.logger.warn('Worker is shutting down, rejecting new document generation request');
-      throw new Error('Service is shutting down, try again later');
-    }
-
-    const processId = `generate-doc-${postId}-${Date.now()}`;
-    this.activeProcesses.add(processId);
-
-    try {
-      this.logger.info(`Generating appraisal document for WordPress post ${postId}`);
-      
-      // Get WordPress service from AppraisalService
-      const wordpressService = this.appraisalService.wordpressService;
-      
-      // Set default options
-      const defaultOptions = {
-        convertToPdf: false,
-        filename: `Appraisal-${postId}-${Date.now()}`
-      };
-      
-      const mergedOptions = { ...defaultOptions, ...options };
-      
-      // Generate the document
-      const result = await this.googleDocsService.generateDocFromWordPressPost(
-        postId,
-        mergedOptions,
-        wordpressService
-      );
-      
-      this.logger.info(`Document generated successfully for post ${postId}`);
-      
-      return result;
-    } catch (error) {
-      this.logger.error(`Error generating document for post ${postId}:`, error);
-      throw error;
-    } finally {
-      this.activeProcesses.delete(processId);
-    }
-  }
-
-  /**
    * Migrate an appraisal from an existing URL to the new format
    * @param {object} params - Migration parameters
    * @param {string} params.url - The URL of the existing appraisal
@@ -576,53 +526,6 @@ class Worker {
       return migrationData;
     } catch (error) {
       this.logger.error(`Error migrating appraisal:`, error);
-      throw error;
-    } finally {
-      this.activeProcesses.delete(processId);
-    }
-  }
-
-  /**
-   * Generate an appraisal document using Gemini for formatting
-   * @param {string} postId - WordPress post ID
-   * @param {Object} options - Options for document generation
-   * @returns {Promise<Object>} - Result object with docUrl, docId and optional fileContent
-   */
-  async generateGeminiDocument(postId, options = {}) {
-    if (this.isShuttingDown) {
-      this.logger.warn('Worker is shutting down, rejecting new Gemini document generation request');
-      throw new Error('Service is shutting down, try again later');
-    }
-
-    const processId = `generate-gemini-doc-${postId}-${Date.now()}`;
-    this.activeProcesses.add(processId);
-
-    try {
-      this.logger.info(`Generating Gemini-powered document for WordPress post ${postId}`);
-      
-      // Get WordPress service from AppraisalService
-      const wordpressService = this.appraisalService.wordpressService;
-      
-      // Set default options
-      const defaultOptions = {
-        convertToPdf: false,
-        filename: `Gemini-Appraisal-${postId}-${Date.now()}`
-      };
-      
-      const mergedOptions = { ...defaultOptions, ...options };
-      
-      // Generate the document using the GeminiDocsService
-      const result = await this.geminiDocsService.generateDocFromWordPressPost(
-        postId,
-        wordpressService,
-        mergedOptions
-      );
-      
-      this.logger.info(`Gemini document generated successfully for post ${postId}`);
-      
-      return result;
-    } catch (error) {
-      this.logger.error(`Error generating Gemini document for post ${postId}:`, error);
       throw error;
     } finally {
       this.activeProcesses.delete(processId);

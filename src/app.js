@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const { createLogger } = require('./utils/logger');
 const worker = require('./worker');
-const helmet = require('helmet');
 const path = require('path');
 const templateLoader = require('./utils/template-loader');
 
@@ -42,14 +41,6 @@ const API_DOCUMENTATION = {
         options: 'Object - Additional options for processing'
       }
     },
-    '/api/generate-appraisal-doc': {
-      methods: ['POST', 'GET'],
-      description: 'Generate Google Doc and optionally PDF from WordPress post using Markdown template',
-      requestFormat: {
-        postId: 'String - WordPress post ID',
-        outputFormat: 'String - Output format: docs or pdf (default: docs)'
-      }
-    },
     '/api/fetch-appraisal/:postId': {
       methods: ['GET'],
       description: 'Fetch and log appraisal data from WordPress post to console',
@@ -70,15 +61,6 @@ const API_DOCUMENTATION = {
         sessionId: 'String - The session ID for the new appraisal process',
         customerEmail: 'String - The customer\'s email address',
         options: 'Object - Additional options for processing (optional)'
-      }
-    },
-    '/api/generate-gemini-doc': {
-      methods: ['POST', 'GET'],
-      description: 'Generate Google Doc and optionally PDF from WordPress post using Gemini AI for formatting',
-      requestFormat: {
-        postId: 'String - WordPress post ID',
-        outputFormat: 'String - Output format: docs or pdf (default: docs)',
-        testMode: 'Boolean - Whether to run in test mode (optional, default: false)'
       }
     }
   }
@@ -171,82 +153,6 @@ app.post('/api/analyze-image-and-merge', async (req, res) => {
     });
   } catch (error) {
     logger.error(`Error analyzing image and merging descriptions for appraisal ${id}:`, error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Internal server error'
-    });
-  }
-});
-
-// Generate appraisal document (Google Doc/PDF) from WordPress post
-app.post('/api/generate-appraisal-doc', async (req, res) => {
-  try {
-    const { postId, outputFormat = 'docs' } = req.body;
-    
-    if (!postId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing required parameter: postId is required'
-      });
-    }
-    
-    logger.info(`Received request to generate ${outputFormat} for WordPress post ${postId}`);
-    
-    // Generate the document
-    const result = await worker.generateAppraisalDocument(postId, {
-      convertToPdf: outputFormat === 'pdf'
-    });
-    
-    // Return appropriate response based on format
-    if (outputFormat === 'pdf') {
-      res.contentType('application/pdf');
-      res.send(result.fileContent);
-    } else {
-      res.json({
-        success: true,
-        docUrl: result.docUrl,
-        docId: result.docId,
-        message: 'Google Doc created successfully',
-        timestamp: new Date().toISOString()
-      });
-    }
-  } catch (error) {
-    logger.error('Error generating appraisal document:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Internal server error'
-    });
-  }
-});
-
-// RESTful endpoint to generate document directly by ID in URL
-app.get('/api/generate-appraisal-doc/:postId', async (req, res) => {
-  try {
-    const { postId } = req.params;
-    const outputFormat = req.query.format || 'docs'; // Get format from query string
-    
-    logger.info(`Received request to generate ${outputFormat} for WordPress post ${postId} (via GET)`);
-    
-    // Generate the document
-    const result = await worker.generateAppraisalDocument(postId, {
-      convertToPdf: outputFormat === 'pdf'
-    });
-    
-    // Return appropriate response based on format
-    if (outputFormat === 'pdf') {
-      res.contentType('application/pdf');
-      res.send(result.fileContent);
-    } else {
-      res.json({
-        success: true,
-        docUrl: result.docUrl,
-        docId: result.docId,
-        message: 'Google Doc created successfully',
-        timestamp: new Date().toISOString()
-      });
-    }
-  } catch (error) {
-    logger.error('Error generating appraisal document:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Internal server error'
@@ -360,91 +266,6 @@ app.get('/api/fetch-appraisal/:postId', async (req, res) => {
     });
   } catch (error) {
     logger.error('Error fetching appraisal data:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Internal server error'
-    });
-  }
-});
-
-// Generate appraisal document using Gemini for formatting
-app.post('/api/generate-gemini-doc', async (req, res) => {
-  try {
-    const { postId, outputFormat = 'docs', testMode = false } = req.body;
-    
-    if (!postId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing required parameter: postId is required'
-      });
-    }
-    
-    logger.info(`Received request to generate ${outputFormat} using Gemini for WordPress post ${postId}`);
-    
-    if (testMode) {
-      logger.info('Running in test mode');
-    }
-    
-    // Generate the document using Gemini
-    const result = await worker.generateGeminiDocument(postId, {
-      convertToPdf: outputFormat === 'pdf'
-    });
-    
-    // Return appropriate response based on format
-    if (outputFormat === 'pdf') {
-      res.contentType('application/pdf');
-      res.send(result.fileContent);
-    } else {
-      res.json({
-        success: true,
-        docUrl: result.docUrl,
-        docId: result.docId,
-        message: 'Gemini-powered Google Doc created successfully',
-        timestamp: new Date().toISOString()
-      });
-    }
-  } catch (error) {
-    logger.error('Error generating Gemini-powered document:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Internal server error'
-    });
-  }
-});
-
-// RESTful endpoint to generate Gemini document directly by ID in URL
-app.get('/api/generate-gemini-doc/:postId', async (req, res) => {
-  try {
-    const { postId } = req.params;
-    const outputFormat = req.query.format || 'docs'; // Get format from query string
-    const testMode = req.query.test === 'true'; // Get test mode from query string
-    
-    logger.info(`Received request to generate ${outputFormat} using Gemini for WordPress post ${postId} (via GET)`);
-    
-    if (testMode) {
-      logger.info('Running in test mode');
-    }
-    
-    // Generate the document using Gemini
-    const result = await worker.generateGeminiDocument(postId, {
-      convertToPdf: outputFormat === 'pdf'
-    });
-    
-    // Return appropriate response based on format
-    if (outputFormat === 'pdf') {
-      res.contentType('application/pdf');
-      res.send(result.fileContent);
-    } else {
-      res.json({
-        success: true,
-        docUrl: result.docUrl,
-        docId: result.docId,
-        message: 'Gemini-powered Google Doc created successfully',
-        timestamp: new Date().toISOString()
-      });
-    }
-  } catch (error) {
-    logger.error('Error generating Gemini-powered document:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Internal server error'
