@@ -47,6 +47,18 @@ const API_DOCUMENTATION = {
         outputFormat: 'String - Output format: docs or pdf (default: docs)'
       }
     },
+    '/api/fetch-appraisal/:postId': {
+      methods: ['GET'],
+      description: 'Fetch and log appraisal data from WordPress post to console',
+      requestFormat: {
+        postId: 'String - WordPress post ID in URL path'
+      },
+      response: {
+        success: 'Boolean indicating success status',
+        message: 'String indicating operation result',
+        data: 'Object with simplified appraisal information'
+      }
+    },
     '/api/migrate-appraisal': {
       methods: ['POST'],
       description: 'Migrate an existing appraisal to the new format',
@@ -285,6 +297,58 @@ app.post('/api/migrate-appraisal', async (req, res) => {
     }
     
     res.status(statusCode).json({
+      success: false,
+      message: error.message || 'Internal server error'
+    });
+  }
+});
+
+// Get appraisal data and log to console
+app.get('/api/fetch-appraisal/:postId', async (req, res) => {
+  try {
+    const { postId } = req.params;
+    
+    if (!postId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required parameter: postId is required'
+      });
+    }
+    
+    logger.info(`Received request to fetch data for WordPress post ${postId}`);
+    
+    // Make sure worker and wordpressService are initialized
+    if (!worker.appraisalService || !worker.appraisalService.wordpressService) {
+      throw new Error('Worker or WordPress service not properly initialized');
+    }
+    
+    // Get WordPress data directly from the service
+    const wordpressService = worker.appraisalService.wordpressService;
+    const postData = await wordpressService.getPost(postId);
+    
+    if (!postData) {
+      throw new Error(`Failed to retrieve post data for post ID ${postId}`);
+    }
+    
+    // Log the complete data to console
+    logger.info(`===== WORDPRESS POST ${postId} DATA =====`);
+    logger.info(JSON.stringify(postData, null, 2));
+    logger.info(`===== END POST ${postId} DATA =====`);
+    
+    // Return simplified data to client
+    res.status(200).json({
+      success: true,
+      message: `Appraisal data for post ${postId} successfully retrieved and logged to console`,
+      data: {
+        title: postData.title?.rendered || '',
+        type: postData.acf?.appraisaltype || '',
+        status: postData.acf?.status || '',
+        value: postData.acf?.appraisal_value || ''
+      }
+    });
+  } catch (error) {
+    logger.error('Error fetching appraisal data:', error);
+    res.status(500).json({
       success: false,
       message: error.message || 'Internal server error'
     });
