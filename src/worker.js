@@ -7,15 +7,19 @@ const EmailService = require('./services/email.service');
 const PDFService = require('./services/pdf.service');
 const AppraisalService = require('./services/appraisal.service');
 const AppraisalFinder = require('./utils/appraisal-finder');
+const GoogleDocsService = require('./services/google-docs.service');
+const MigrationService = require('./services/migration.service');
 
 class Worker {
   constructor() {
     this.logger = createLogger('Worker');
     this.sheetsService = new SheetsService();
     this.appraisalService = null;
+    this.migrationService = null;
     this.activeProcesses = new Set();
     this.isShuttingDown = false;
     this.appraisalFinder = null;
+    this.googleDocsService = new GoogleDocsService();
   }
 
   async initialize() {
@@ -43,7 +47,8 @@ class Worker {
         wordpressService.initialize(),
         openaiService.initialize(),
         emailService.initialize(),
-        pdfService.initialize()
+        pdfService.initialize(),
+        this.googleDocsService.initialize()
       ]);
       
       // Initialize appraisal finder
@@ -57,6 +62,10 @@ class Worker {
         emailService,
         pdfService
       );
+      
+      // Initialize MigrationService
+      this.migrationService = new MigrationService(wordpressService);
+      await this.migrationService.initialize();
       
       this.logger.info('Worker initialized successfully');
     } catch (error) {
@@ -474,6 +483,100 @@ class Worker {
     }
     
     this.logger.info('Worker shutdown complete');
+  }
+
+  /**
+   * Generate an appraisal document (Google Doc/PDF) from a WordPress post ID
+   * @param {string} postId - WordPress post ID
+   * @param {Object} options - Options for document generation
+   * @returns {Promise<Object>} - Result object with docUrl, docId and optional fileContent
+   */
+  async generateAppraisalDocument(postId, options = {}) {
+    if (this.isShuttingDown) {
+      this.logger.warn('Worker is shutting down, rejecting new document generation request');
+      throw new Error('Service is shutting down, try again later');
+    }
+
+    const processId = `generate-doc-${postId}-${Date.now()}`;
+    this.activeProcesses.add(processId);
+
+    try {
+      this.logger.info(`Generating appraisal document for WordPress post ${postId}`);
+      
+      // Get WordPress service from AppraisalService
+      const wordpressService = this.appraisalService.wordpressService;
+      
+      // Set default options
+      const defaultOptions = {
+        convertToPdf: false,
+        filename: `Appraisal-${postId}-${Date.now()}`
+      };
+      
+      const mergedOptions = { ...defaultOptions, ...options };
+      
+      // Generate the document
+      const result = await this.googleDocsService.generateDocFromWordPressPost(
+        postId,
+        mergedOptions,
+        wordpressService
+      );
+      
+      this.logger.info(`Document generated successfully for post ${postId}`);
+      
+      return result;
+    } catch (error) {
+      this.logger.error(`Error generating document for post ${postId}:`, error);
+      throw error;
+    } finally {
+      this.activeProcesses.delete(processId);
+    }
+  }
+
+  /**
+   * Migrate an appraisal from an existing URL to the new format
+   * @param {object} params - Migration parameters
+   * @param {string} params.url - The URL of the existing appraisal
+   * @param {string} params.sessionId - The session ID for the new appraisal
+   * @param {string} params.customerEmail - The customer's email address
+   * @param {object} params.options - Additional options
+   * @returns {Promise<object>} - The migration data
+   */
+  async migrateAppraisal(params) {
+    if (this.isShuttingDown) {
+      this.logger.warn('Worker is shutting down, rejecting new migration request');
+      throw new Error('Service is shutting down, try again later');
+    }
+
+    const processId = `migrate-${params.sessionId}-${Date.now()}`;
+    this.activeProcesses.add(processId);
+
+    try {
+      this.logger.info(`Starting appraisal migration from URL: ${params.url}`);
+      
+      // Validate required parameters
+      if (!params.url) {
+        throw new Error('URL is required');
+      }
+      
+      if (!params.sessionId) {
+        throw new Error('Session ID is required');
+      }
+      
+      if (!params.customerEmail) {
+        throw new Error('Customer email is required');
+      }
+      
+      // Use the migration service to migrate the appraisal
+      const migrationData = await this.migrationService.migrateAppraisal(params);
+      
+      this.logger.info(`Migration completed successfully for session ID: ${params.sessionId}`);
+      return migrationData;
+    } catch (error) {
+      this.logger.error(`Error migrating appraisal:`, error);
+      throw error;
+    } finally {
+      this.activeProcesses.delete(processId);
+    }
   }
 }
 

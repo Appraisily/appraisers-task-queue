@@ -38,6 +38,24 @@ const API_DOCUMENTATION = {
         description: 'String - Customer description (optional)',
         options: 'Object - Additional options for processing'
       }
+    },
+    '/api/generate-appraisal-doc': {
+      methods: ['POST', 'GET'],
+      description: 'Generate Google Doc and optionally PDF from WordPress post using Markdown template',
+      requestFormat: {
+        postId: 'String - WordPress post ID',
+        outputFormat: 'String - Output format: docs or pdf (default: docs)'
+      }
+    },
+    '/api/migrate-appraisal': {
+      methods: ['POST'],
+      description: 'Migrate an existing appraisal to the new format',
+      requestFormat: {
+        url: 'String - The URL of the existing appraisal to migrate',
+        sessionId: 'String - The session ID for the new appraisal process',
+        customerEmail: 'String - The customer\'s email address',
+        options: 'Object - Additional options for processing (optional)'
+      }
     }
   }
 };
@@ -130,6 +148,143 @@ app.post('/api/analyze-image-and-merge', async (req, res) => {
   } catch (error) {
     logger.error(`Error analyzing image and merging descriptions for appraisal ${id}:`, error);
     res.status(500).json({
+      success: false,
+      message: error.message || 'Internal server error'
+    });
+  }
+});
+
+// Generate appraisal document (Google Doc/PDF) from WordPress post
+app.post('/api/generate-appraisal-doc', async (req, res) => {
+  try {
+    const { postId, outputFormat = 'docs' } = req.body;
+    
+    if (!postId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required parameter: postId is required'
+      });
+    }
+    
+    logger.info(`Received request to generate ${outputFormat} for WordPress post ${postId}`);
+    
+    // Generate the document
+    const result = await worker.generateAppraisalDocument(postId, {
+      convertToPdf: outputFormat === 'pdf'
+    });
+    
+    // Return appropriate response based on format
+    if (outputFormat === 'pdf') {
+      res.contentType('application/pdf');
+      res.send(result.fileContent);
+    } else {
+      res.json({
+        success: true,
+        docUrl: result.docUrl,
+        docId: result.docId,
+        message: 'Google Doc created successfully',
+        timestamp: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    logger.error('Error generating appraisal document:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Internal server error'
+    });
+  }
+});
+
+// RESTful endpoint to generate document directly by ID in URL
+app.get('/api/generate-appraisal-doc/:postId', async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const outputFormat = req.query.format || 'docs'; // Get format from query string
+    
+    logger.info(`Received request to generate ${outputFormat} for WordPress post ${postId} (via GET)`);
+    
+    // Generate the document
+    const result = await worker.generateAppraisalDocument(postId, {
+      convertToPdf: outputFormat === 'pdf'
+    });
+    
+    // Return appropriate response based on format
+    if (outputFormat === 'pdf') {
+      res.contentType('application/pdf');
+      res.send(result.fileContent);
+    } else {
+      res.json({
+        success: true,
+        docUrl: result.docUrl,
+        docId: result.docId,
+        message: 'Google Doc created successfully',
+        timestamp: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    logger.error('Error generating appraisal document:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Internal server error'
+    });
+  }
+});
+
+// Migration endpoint for migrating existing appraisals to new format
+app.post('/api/migrate-appraisal', async (req, res) => {
+  try {
+    const { url, sessionId, customerEmail, options = {} } = req.body;
+    
+    // Validate required parameters
+    if (!url) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required parameter: url is required'
+      });
+    }
+    
+    if (!sessionId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required parameter: sessionId is required'
+      });
+    }
+    
+    if (!customerEmail) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required parameter: customerEmail is required'
+      });
+    }
+    
+    logger.info(`Received request to migrate appraisal from URL: ${url}`);
+    
+    // Call the worker to handle the migration
+    const migrationData = await worker.migrateAppraisal({
+      url,
+      sessionId,
+      customerEmail,
+      options
+    });
+    
+    res.status(200).json({
+      success: true,
+      message: 'Appraisal migration data prepared successfully',
+      data: migrationData,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Error migrating appraisal:', error);
+    
+    // Determine appropriate status code based on error
+    let statusCode = 500;
+    if (error.message.includes('Invalid appraisal URL')) {
+      statusCode = 400;
+    } else if (error.message.includes('Failed to fetch URL')) {
+      statusCode = 404;
+    }
+    
+    res.status(statusCode).json({
       success: false,
       message: error.message || 'Internal server error'
     });
