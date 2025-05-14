@@ -2,6 +2,9 @@ const express = require('express');
 const cors = require('cors');
 const { createLogger } = require('./utils/logger');
 const worker = require('./worker');
+const helmet = require('helmet');
+const path = require('path');
+const templateLoader = require('./utils/template-loader');
 
 const logger = createLogger('App');
 const app = express();
@@ -67,6 +70,15 @@ const API_DOCUMENTATION = {
         sessionId: 'String - The session ID for the new appraisal process',
         customerEmail: 'String - The customer\'s email address',
         options: 'Object - Additional options for processing (optional)'
+      }
+    },
+    '/api/generate-gemini-doc': {
+      methods: ['POST', 'GET'],
+      description: 'Generate Google Doc and optionally PDF from WordPress post using Gemini AI for formatting',
+      requestFormat: {
+        postId: 'String - WordPress post ID',
+        outputFormat: 'String - Output format: docs or pdf (default: docs)',
+        testMode: 'Boolean - Whether to run in test mode (optional, default: false)'
       }
     }
   }
@@ -355,6 +367,91 @@ app.get('/api/fetch-appraisal/:postId', async (req, res) => {
   }
 });
 
+// Generate appraisal document using Gemini for formatting
+app.post('/api/generate-gemini-doc', async (req, res) => {
+  try {
+    const { postId, outputFormat = 'docs', testMode = false } = req.body;
+    
+    if (!postId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required parameter: postId is required'
+      });
+    }
+    
+    logger.info(`Received request to generate ${outputFormat} using Gemini for WordPress post ${postId}`);
+    
+    if (testMode) {
+      logger.info('Running in test mode');
+    }
+    
+    // Generate the document using Gemini
+    const result = await worker.generateGeminiDocument(postId, {
+      convertToPdf: outputFormat === 'pdf'
+    });
+    
+    // Return appropriate response based on format
+    if (outputFormat === 'pdf') {
+      res.contentType('application/pdf');
+      res.send(result.fileContent);
+    } else {
+      res.json({
+        success: true,
+        docUrl: result.docUrl,
+        docId: result.docId,
+        message: 'Gemini-powered Google Doc created successfully',
+        timestamp: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    logger.error('Error generating Gemini-powered document:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Internal server error'
+    });
+  }
+});
+
+// RESTful endpoint to generate Gemini document directly by ID in URL
+app.get('/api/generate-gemini-doc/:postId', async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const outputFormat = req.query.format || 'docs'; // Get format from query string
+    const testMode = req.query.test === 'true'; // Get test mode from query string
+    
+    logger.info(`Received request to generate ${outputFormat} using Gemini for WordPress post ${postId} (via GET)`);
+    
+    if (testMode) {
+      logger.info('Running in test mode');
+    }
+    
+    // Generate the document using Gemini
+    const result = await worker.generateGeminiDocument(postId, {
+      convertToPdf: outputFormat === 'pdf'
+    });
+    
+    // Return appropriate response based on format
+    if (outputFormat === 'pdf') {
+      res.contentType('application/pdf');
+      res.send(result.fileContent);
+    } else {
+      res.json({
+        success: true,
+        docUrl: result.docUrl,
+        docId: result.docId,
+        message: 'Gemini-powered Google Doc created successfully',
+        timestamp: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    logger.error('Error generating Gemini-powered document:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Internal server error'
+    });
+  }
+});
+
 // 404 handler for undefined routes
 app.use((req, res, next) => {
   logger.warn(`Not found: ${req.method} ${req.originalUrl}`);
@@ -422,16 +519,25 @@ process.on('SIGINT', () => {
   shutdown('SIGINT').finally(() => clearTimeout(shutdownTimer));
 });
 
-// Start server and initialize worker
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, async () => {
-  logger.info(`Server running on port ${PORT}`);
-  
-  try {
-    await worker.initialize();
+// Initialize the worker
+worker.initialize()
+  .then(() => {
     logger.info('Worker initialized successfully');
-  } catch (error) {
+    
+    // Configure template loader if MASTER_TEMPLATE_PATH is set
+    if (process.env.MASTER_TEMPLATE_PATH) {
+      const masterTemplatePath = process.env.MASTER_TEMPLATE_PATH;
+      logger.info(`Setting master template path to ${masterTemplatePath}`);
+      templateLoader.setMasterTemplatePath(masterTemplatePath);
+    }
+    
+    // Start the server
+    const PORT = process.env.PORT || 8080;
+    app.listen(PORT, () => {
+      logger.info(`Server running on port ${PORT}`);
+    });
+  })
+  .catch(error => {
     logger.error('Failed to initialize worker:', error);
     process.exit(1);
-  }
-});
+  });
