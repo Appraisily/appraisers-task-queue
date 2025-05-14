@@ -1,6 +1,6 @@
 const { createLogger } = require('../utils/logger');
 const secretManager = require('../utils/secrets');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenerativeAI } = require('@google/genai');
 
 /**
  * Service for interacting with Google's Gemini 2.5 Pro API
@@ -26,7 +26,7 @@ class GeminiService {
       }
       
       this.client = new GoogleGenerativeAI(apiKey);
-      this.model = this.client.getGenerativeModel({ model: "gemini-2.5-pro" });
+      this.model = this.client.getGenerativeModel({ model: "gemini-2.5-pro-preview-05-06" });
       
       this.initialized = true;
       this.logger.info('Gemini service initialized successfully');
@@ -96,8 +96,7 @@ class GeminiService {
       `;
       
       const result = await this.model.generateContent(prompt);
-      const response = result.response;
-      const responseText = response.text();
+      const responseText = result.text();
       
       // Parse the JSON response
       let parsedResponse;

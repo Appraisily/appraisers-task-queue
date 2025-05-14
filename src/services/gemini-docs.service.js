@@ -1,6 +1,6 @@
 const { createLogger } = require('../utils/logger');
 const secretManager = require('../utils/secrets');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenerativeAI } = require('@google/genai');
 const fs = require('fs');
 const path = require('path');
 
@@ -113,7 +113,7 @@ FORMAT INSTRUCTIONS:
       // Call Gemini to fill the template
       this.logger.info('Calling Gemini to fill template with appraisal data');
       const result = await this.model.generateContent(prompt);
-      const filledMarkdown = result.response.text();
+      const filledMarkdown = result.text();
       
       this.logger.info(`Markdown generated successfully for post ${postId}`);
       return filledMarkdown;
