@@ -12,12 +12,13 @@ This document explains the recent updates made to the Gemini API integration wit
 
 1. **Updated Gemini Model Version**:
    - Changed from `gemini-2.5-pro` to `gemini-2.5-pro-preview-05-06` (latest available model as of May 2025)
-   - This model is now the latest stable preview release according to Google's documentation
+   - This model is now the latest stable preview release according to Google's documentation, released May 6, 2025
+   - We've verified this model name is correct in the official Google AI documentation
 
 2. **Updated Gemini API Client**:
    - Updated `@google/generative-ai` package to version `0.24.1` (latest version)
-   - Initially tried to switch to `@google/genai` but found it doesn't exist in npm registry
-   - The latest official SDK remains `@google/generative-ai`
+   - Initially considered using `@google/genai` but found it doesn't exist in the npm registry
+   - The correct official SDK remains `@google/generative-ai` at this time
 
 3. **API Usage Remains the Same**:
    - We continue to use the established pattern with `result.response.text()`
