@@ -3,7 +3,6 @@ const secretManager = require('../utils/secrets');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const fs = require('fs');
 const path = require('path');
-const templateLoader = require('../utils/template-loader');
 
 /**
  * Service for converting appraisal data to formatted markdown using Gemini 2.5 Pro
@@ -14,6 +13,7 @@ class GeminiDocsService {
     this.client = null;
     this.model = null;
     this.initialized = false;
+    this.templatePath = path.join(__dirname, '../templates/appraisal/master-template.md');
     this.googleDocsService = googleDocsService;
   }
 
@@ -55,9 +55,9 @@ class GeminiDocsService {
    */
   async getTemplate() {
     try {
-      return await templateLoader.loadMasterTemplate();
+      return await fs.promises.readFile(this.templatePath, 'utf8');
     } catch (error) {
-      this.logger.error('Error getting template:', error);
+      this.logger.error('Error reading template file:', error);
       throw error;
     }
   }
