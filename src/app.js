@@ -31,6 +31,9 @@ const API_DOCUMENTATION = {
         id: 'String - Unique identifier for the appraisal',
         startStep: 'String - The step to start processing from',
         options: 'Object - Additional options for processing'
+      },
+      options: {
+        reprocess: 'Boolean - When set to true, skips Google Sheets operations and processes using provided data'
       }
     },
     '/api/analyze-image-and-merge': {
@@ -331,7 +334,7 @@ async function extractAppraisalData(postData, wordpressService) {
     // Main featured image
     if (postData.featured_media) {
       try {
-        const featuredUrl = postData.featured_media;
+        const featuredUrl = await wordpressService.getImageUrl(postData.featured_media);
         if (featuredUrl) {
           imageUrls.push({ type: 'featured', url: featuredUrl });
         }
@@ -343,7 +346,7 @@ async function extractAppraisalData(postData, wordpressService) {
     // ACF main image
     if (postData.acf?.main) {
       try {
-        const mainImageUrl = postData.acf.main;
+        const mainImageUrl = await wordpressService.getImageUrl(postData.acf.main);
         if (mainImageUrl) {
           imageUrls.push({ type: 'main', url: mainImageUrl });
         }
@@ -356,7 +359,7 @@ async function extractAppraisalData(postData, wordpressService) {
     if (postData.acf?.images && Array.isArray(postData.acf.images)) {
       for (const image of postData.acf.images) {
         try {
-          const galleryImageUrl = image;
+          const galleryImageUrl = await wordpressService.getImageUrl(image);
           if (galleryImageUrl) {
             imageUrls.push({ type: 'gallery', url: galleryImageUrl });
           }

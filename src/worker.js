@@ -87,9 +87,14 @@ class Worker {
 
     const processId = `${id}-${Date.now()}`;
     this.activeProcesses.add(processId);
+    const skipSheets = options.reprocess === true;
+    
+    if (skipSheets) {
+      this.logger.info(`Reprocess option enabled - skipping Google Sheets operations for appraisal ${id}`);
+    }
 
     try {
-      this.logger.info(`Processing appraisal ${id} from step ${startStep} (Sheet: ${usingCompletedSheet ? 'Completed' : 'Pending'})`);
+      this.logger.info(`Processing appraisal ${id} from step ${startStep} (Sheet: ${skipSheets ? 'Skipped' : (usingCompletedSheet ? 'Completed' : 'Pending')})`);
       
       // Extract any additional data from options that might be needed
       const { 
@@ -116,79 +121,107 @@ class Worker {
             }
             
             // Update status with the correct sheet (passed as parameter)
-            await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
-            
-            // Save appraisal value to column J, appraiser's description to column K, and appraisal type to column B
-            await this.sheetsService.updateValues(`J${id}`, [[valueToUse]], usingCompletedSheet);
-            await this.sheetsService.updateValues(`K${id}`, [[descToUse]], usingCompletedSheet);
-            this.logger.info(`Saved appraiser's description to column K for appraisal ${id}`);
+            if (!skipSheets) {
+              await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
+              
+              // Save appraisal value to column J, appraiser's description to column K, and appraisal type to column B
+              await this.sheetsService.updateValues(`J${id}`, [[valueToUse]], usingCompletedSheet);
+              await this.sheetsService.updateValues(`K${id}`, [[descToUse]], usingCompletedSheet);
+              this.logger.info(`Saved appraiser's description to column K for appraisal ${id}`);
 
-            if (typeToUse) {
-              await this.sheetsService.updateValues(`B${id}`, [[typeToUse]], usingCompletedSheet);
-              this.logger.info(`Saved appraisal type '${typeToUse}' to column B for appraisal ${id}`);
+              if (typeToUse) {
+                await this.sheetsService.updateValues(`B${id}`, [[typeToUse]], usingCompletedSheet);
+                this.logger.info(`Saved appraisal type '${typeToUse}' to column B for appraisal ${id}`);
+              }
+            } else {
+              this.logger.info(`Skipping Google Sheets updates for appraisal ${id} (reprocess mode)`);
             }
             
-            // Start full processing, passing the sheet context
-            await this.appraisalService.processAppraisal(id, valueToUse, descToUse, typeToUse, usingCompletedSheet);
+            // Start full processing, passing the sheet context and reprocess option
+            await this.appraisalService.processAppraisal(id, valueToUse, descToUse, typeToUse, usingCompletedSheet, { reprocess: skipSheets });
           } catch (error) {
             this.logger.error(`Error in STEP_SET_VALUE:`, error);
-            await this.appraisalService.updateStatus(id, 'Failed', `STEP_SET_VALUE Error: ${error.message}`, usingCompletedSheet);
+            if (!skipSheets) {
+              await this.appraisalService.updateStatus(id, 'Failed', `STEP_SET_VALUE Error: ${error.message}`, usingCompletedSheet);
+            }
             throw error;
           }
           break;
           
         case 'STEP_MERGE_DESCRIPTIONS':
           try {
-            // Get all data we need in a single call, passing the sheet flag
-            const { data: appraisalData } = await this.appraisalFinder.getMultipleFields(id, ['G', 'J', 'K'], usingCompletedSheet);
+            let wpUrl, postIdToUse, value, existingDescription;
             
-            if (!appraisalData.G) {
-              throw new Error(`No WordPress URL found for appraisal ${id}`);
+            if (!skipSheets) {
+              // Get all data we need in a single call, passing the sheet flag
+              const { data: appraisalData } = await this.appraisalFinder.getMultipleFields(id, ['G', 'J', 'K'], usingCompletedSheet);
+              
+              if (!appraisalData.G) {
+                throw new Error(`No WordPress URL found for appraisal ${id}`);
+              }
+              
+              // Extract post ID from WordPress URL
+              wpUrl = appraisalData.G;
+              const url = new URL(wpUrl);
+              postIdToUse = url.searchParams.get('post');
+              
+              if (!postIdToUse) {
+                throw new Error(`Could not extract post ID from WordPress URL`);
+              }
+              
+              // Get value and existing description directly from the fetched data
+              value = appraisalData.J;
+              existingDescription = appraisalData.K;
+            } else {
+              // When skipping sheets, use the postId from options
+              postIdToUse = postId;
+              if (!postIdToUse) {
+                throw new Error(`No postId provided in options and reprocess mode is enabled`);
+              }
+              this.logger.info(`Using provided postId ${postIdToUse} for appraisal ${id} (reprocess mode)`);
             }
-            
-            // Extract post ID from WordPress URL
-            const wpUrl = appraisalData.G;
-            const url = new URL(wpUrl);
-            const postId = url.searchParams.get('post');
-            
-            if (!postId) {
-              throw new Error(`Could not extract post ID from WordPress URL`);
-            }
-            
-            // Get value and existing description directly from the fetched data
-            const value = appraisalData.J;
-            const existingDescription = appraisalData.K;
             
             // Use provided description or existing one
             const descToUse = description || existingDescription;
             
-            // Update status in Google Sheets only (no WordPress updates)
-            await this.appraisalService.updateStatus(id, 'Analyzing', 'Analyzing image and merging descriptions', usingCompletedSheet);
+            // Update status in Google Sheets only (no WordPress updates) if not skipping
+            if (!skipSheets) {
+              await this.appraisalService.updateStatus(id, 'Analyzing', 'Analyzing image and merging descriptions', usingCompletedSheet);
+            }
             
             // Use the imageAnalysis method to analyze image and merge descriptions
-            const analysisResult = await this.analyzeImageAndMergeDescriptions(id, postId, descToUse, {
-              usingCompletedSheet: usingCompletedSheet
+            const analysisResult = await this.analyzeImageAndMergeDescriptions(id, postIdToUse, descToUse, {
+              usingCompletedSheet: usingCompletedSheet,
+              reprocess: skipSheets
             });
             
-            // Save titles to Google Sheets
-            await this.sheetsService.updateValues(`S${id}`, [[analysisResult.briefTitle]], usingCompletedSheet);
-            await this.sheetsService.updateValues(`T${id}`, [[analysisResult.mergedDescription]], usingCompletedSheet);
+            // Save titles to Google Sheets if not skipping
+            if (!skipSheets) {
+              await this.sheetsService.updateValues(`S${id}`, [[analysisResult.briefTitle]], usingCompletedSheet);
+              await this.sheetsService.updateValues(`T${id}`, [[analysisResult.mergedDescription]], usingCompletedSheet);
+            } else {
+              this.logger.info(`Skipping Google Sheets updates for descriptions and titles (reprocess mode)`);
+            }
             
             // Only update WordPress if we have new data to set
             if (analysisResult && analysisResult.briefTitle && analysisResult.mergedDescription) {
               // Use the brief title for the WordPress post title
               // Use the merged description as the detailed title
-              await this.appraisalService.wordpressService.updateAppraisalPost(postId, {
+              await this.appraisalService.wordpressService.updateAppraisalPost(postIdToUse, {
                 title: analysisResult.briefTitle,
                 detailedtitle: analysisResult.mergedDescription
               });
             }
             
-            // Final status update in Google Sheets
-            await this.appraisalService.updateStatus(id, 'Ready', 'Description merged and metadata updated', usingCompletedSheet);
+            // Final status update in Google Sheets if not skipping
+            if (!skipSheets) {
+              await this.appraisalService.updateStatus(id, 'Ready', 'Description merged and metadata updated', usingCompletedSheet);
+            }
           } catch (error) {
             this.logger.error(`Error in STEP_MERGE_DESCRIPTIONS:`, error);
-            await this.appraisalService.updateStatus(id, 'Failed', `MERGE_DESC Error: ${error.message}`, usingCompletedSheet);
+            if (!skipSheets) {
+              await this.appraisalService.updateStatus(id, 'Failed', `MERGE_DESC Error: ${error.message}`, usingCompletedSheet);
+            }
             throw error;
           }
           
@@ -196,15 +229,30 @@ class Worker {
           
         case 'STEP_UPDATE_WORDPRESS':
           try {
-            // Fetch required data using the known sheet
-            const { data: appraisalData } = await this.appraisalFinder.getMultipleFields(id, ['B', 'J', 'L'], usingCompletedSheet);
+            let valueToUse, descriptionToUse, typeToUse;
             
-            const valueToUse = appraisalValue || (appraisalData.J || 0);
-            const descriptionToUse = appraisalData.L || '';
-            const typeToUse = appraisalType || appraisalData.B || 'Regular';
-            
-            // Update WordPress
-            await this.appraisalService.updateStatus(id, 'Updating', 'Setting titles and metadata in WordPress', usingCompletedSheet);
+            if (!skipSheets) {
+              // Fetch required data using the known sheet
+              const { data: appraisalData } = await this.appraisalFinder.getMultipleFields(id, ['B', 'J', 'L'], usingCompletedSheet);
+              
+              valueToUse = appraisalValue || (appraisalData.J || 0);
+              descriptionToUse = appraisalData.L || '';
+              typeToUse = appraisalType || appraisalData.B || 'Regular';
+              
+              // Update status
+              await this.appraisalService.updateStatus(id, 'Updating', 'Setting titles and metadata in WordPress', usingCompletedSheet);
+            } else {
+              // When skipping sheets, use the values from options
+              valueToUse = appraisalValue;
+              descriptionToUse = description;
+              typeToUse = appraisalType || 'Regular';
+              
+              this.logger.info(`Using provided values for appraisal ${id} (reprocess mode): value=${valueToUse}, type=${typeToUse}`);
+              
+              if (!valueToUse || !descriptionToUse) {
+                throw new Error(`Missing required values in reprocess mode. Need appraisalValue and description.`);
+              }
+            }
             
             // Create a proper structure for the merged description to match what mergeDescriptions returns
             const mergeResult = {
@@ -213,10 +261,12 @@ class Worker {
               detailedTitle: descriptionToUse
             };
             
-            await this.appraisalService.updateWordPress(id, valueToUse, mergeResult, typeToUse, usingCompletedSheet);
+            await this.appraisalService.updateWordPress(id, valueToUse, mergeResult, typeToUse, usingCompletedSheet, { reprocess: skipSheets });
           } catch (error) {
              this.logger.error(`Error in STEP_UPDATE_WORDPRESS:`, error);
-             await this.appraisalService.updateStatus(id, 'Failed', `UPDATE_WP Error: ${error.message}`, usingCompletedSheet);
+             if (!skipSheets) {
+               await this.appraisalService.updateStatus(id, 'Failed', `UPDATE_WP Error: ${error.message}`, usingCompletedSheet);
+             }
              throw error;
           }
           break;
@@ -225,7 +275,7 @@ class Worker {
           try {
             // Get the PostID either from options or from spreadsheet (using the known sheet)
             let postIdToUse = postId;
-            if (!postIdToUse) {
+            if (!postIdToUse && !skipSheets) {
                 const { data: postData } = await this.appraisalFinder.getMultipleFields(id, ['G'], usingCompletedSheet);
                 
                 if (!postData || !postData.G) {
@@ -238,13 +288,17 @@ class Worker {
                 if (!postIdToUse) {
                   throw new Error(`Could not extract post ID from WordPress URL`);
                 }
+            } else if (!postIdToUse && skipSheets) {
+                throw new Error(`No postId provided in options and reprocess mode is enabled`);
             }
             
             // Complete the report (which includes visualizations)
             await this.appraisalService.wordpressService.completeAppraisalReport(postIdToUse);
           } catch (error) {
              this.logger.error(`Error in STEP_GENERATE_VISUALIZATION:`, error);
-             await this.appraisalService.updateStatus(id, 'Failed', `GEN_VIS Error: ${error.message}`, usingCompletedSheet);
+             if (!skipSheets) {
+               await this.appraisalService.updateStatus(id, 'Failed', `GEN_VIS Error: ${error.message}`, usingCompletedSheet);
+             }
              throw error;
           }
           break;
@@ -253,7 +307,7 @@ class Worker {
           try {
             // Get PostID using the appraisalFinder utility with the known sheet
             let pdfPostId = postId;
-            if (!pdfPostId) {
+            if (!pdfPostId && !skipSheets) {
                const { data: postData } = await this.appraisalFinder.getMultipleFields(id, ['G'], usingCompletedSheet);
                 if (!postData || !postData.G) {
                   throw new Error('WordPress URL not found');
@@ -264,56 +318,86 @@ class Worker {
                 if (!pdfPostId) {
                   throw new Error(`Could not extract post ID from WordPress URL`);
                 }
+            } else if (!pdfPostId && skipSheets) {
+                throw new Error(`No postId provided in options and reprocess mode is enabled`);
             }
             
-            // Update status
-            await this.appraisalService.updateStatus(id, 'Finalizing', 'Creating PDF document', usingCompletedSheet);
+            // Update status if not skipping sheets
+            if (!skipSheets) {
+              await this.appraisalService.updateStatus(id, 'Finalizing', 'Creating PDF document', usingCompletedSheet);
+            }
             
             // Get public URL
             const publicUrl = await this.appraisalService.wordpressService.getPermalink(pdfPostId);
             
             // Generate PDF - this will throw an error if the PDF generation fails
-            const pdfResult = await this.appraisalService.finalize(id, pdfPostId, publicUrl, usingCompletedSheet);
+            const pdfResult = await this.appraisalService.finalize(id, pdfPostId, publicUrl, usingCompletedSheet, { reprocess: skipSheets });
             
             // Validate PDF URLs
             if (!pdfResult.pdfLink || pdfResult.pdfLink.includes('placeholder')) {
               throw new Error(`PDF generation returned placeholder or invalid URLs`);
             }
             
-            // Mark as complete if it was a full process (only if in pending sheet)
-            if (!usingCompletedSheet) {
+            // Mark as complete if it was a full process (only if in pending sheet and not skipping sheets)
+            if (!usingCompletedSheet && !skipSheets) {
               await this.appraisalService.updateStatus(id, 'Completed', 'PDF created and emailed to customer', usingCompletedSheet);
+            } else if (skipSheets) {
+              this.logger.info(`Skipping final status update in Google Sheets (reprocess mode)`);
             }
             
           } catch (error) {
             this.logger.error(`Error in STEP_GENERATE_PDF:`, error);
-            await this.appraisalService.updateStatus(id, 'Failed', `GEN_PDF Error: ${error.message}`, usingCompletedSheet);
+            if (!skipSheets) {
+              await this.appraisalService.updateStatus(id, 'Failed', `GEN_PDF Error: ${error.message}`, usingCompletedSheet);
+            }
             throw error;
           }
           break;
           
         case 'STEP_BUILD_REPORT':
           try {
-            await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
-            
-            // Fetch required data using the known sheet
-            const { data: appraisalData } = await this.appraisalFinder.getMultipleFields(id, ['B', 'J', 'K'], usingCompletedSheet);
-            
-            const type = appraisalData.B || 'Regular';
-            const appraisalValueFromSheet = appraisalData.J; // Column J
-            const descriptionFromSheet = appraisalData.K; // Column K
-            
-            // Process appraisal with existing data
-            await this.appraisalService.processAppraisal(
-              id, 
-              appraisalValueFromSheet, 
-              descriptionFromSheet, 
-              type,
-              usingCompletedSheet
-            );
+            if (!skipSheets) {
+              await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
+              
+              // Fetch required data using the known sheet
+              const { data: appraisalData } = await this.appraisalFinder.getMultipleFields(id, ['B', 'J', 'K'], usingCompletedSheet);
+              
+              const type = appraisalData.B || 'Regular';
+              const appraisalValueFromSheet = appraisalData.J; // Column J
+              const descriptionFromSheet = appraisalData.K; // Column K
+              
+              // Process appraisal with existing data
+              await this.appraisalService.processAppraisal(
+                id, 
+                appraisalValueFromSheet, 
+                descriptionFromSheet, 
+                type,
+                usingCompletedSheet,
+                { reprocess: skipSheets }
+              );
+            } else {
+              // When skipping sheets, use the values from options
+              if (!appraisalValue || !description) {
+                throw new Error(`Missing required values in reprocess mode. Need appraisalValue and description.`);
+              }
+              
+              const type = appraisalType || 'Regular';
+              this.logger.info(`Using provided values for appraisal ${id} in BUILD_REPORT (reprocess mode)`);
+              
+              await this.appraisalService.processAppraisal(
+                id, 
+                appraisalValue, 
+                description, 
+                type,
+                usingCompletedSheet,
+                { reprocess: skipSheets }
+              );
+            }
            } catch (error) {
              this.logger.error(`Error in STEP_BUILD_REPORT:`, error);
-             await this.appraisalService.updateStatus(id, 'Failed', `BUILD_REPORT Error: ${error.message}`, usingCompletedSheet);
+             if (!skipSheets) {
+               await this.appraisalService.updateStatus(id, 'Failed', `BUILD_REPORT Error: ${error.message}`, usingCompletedSheet);
+             }
              throw error;
           }
           break;
@@ -322,26 +406,48 @@ class Worker {
           this.logger.warn(`Unknown step: ${startStep}. Attempting to run full process.`);
           
           try {
-             // Update status
-             await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow (default step)', usingCompletedSheet);
-             
-             // Get all necessary data from the spreadsheet using the known sheet
-             const { data: defaultData } = await this.appraisalFinder.getMultipleFields(id, ['B', 'J', 'K'], usingCompletedSheet);
-             
-             const defaultType = defaultData.B || 'Regular';
-             const defaultValue = defaultData.J; // Column J
-             const defaultDesc = defaultData.K; // Column K
-             
-             await this.appraisalService.processAppraisal(
-               id,
-               defaultValue,
-               defaultDesc,
-               defaultType,
-               usingCompletedSheet
-             );
+             if (!skipSheets) {
+               // Update status
+               await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow (default step)', usingCompletedSheet);
+               
+               // Get all necessary data from the spreadsheet using the known sheet
+               const { data: defaultData } = await this.appraisalFinder.getMultipleFields(id, ['B', 'J', 'K'], usingCompletedSheet);
+               
+               const defaultType = defaultData.B || 'Regular';
+               const defaultValue = defaultData.J; // Column J
+               const defaultDesc = defaultData.K; // Column K
+               
+               await this.appraisalService.processAppraisal(
+                 id,
+                 defaultValue,
+                 defaultDesc,
+                 defaultType,
+                 usingCompletedSheet,
+                 { reprocess: skipSheets }
+               );
+             } else {
+               // When skipping sheets, use the values from options
+               if (!appraisalValue || !description) {
+                 throw new Error(`Missing required values in reprocess mode for default step. Need appraisalValue and description.`);
+               }
+               
+               const defaultType = appraisalType || 'Regular';
+               this.logger.info(`Using provided values for appraisal ${id} in default step (reprocess mode)`);
+               
+               await this.appraisalService.processAppraisal(
+                 id,
+                 appraisalValue,
+                 description,
+                 defaultType,
+                 usingCompletedSheet,
+                 { reprocess: skipSheets }
+               );
+             }
            } catch (error) {
              this.logger.error(`Error in default processing:`, error);
-             await this.appraisalService.updateStatus(id, 'Failed', `DEFAULT Error: ${error.message}`, usingCompletedSheet);
+             if (!skipSheets) {
+               await this.appraisalService.updateStatus(id, 'Failed', `DEFAULT Error: ${error.message}`, usingCompletedSheet);
+             }
              throw error;
           }
       }
@@ -349,7 +455,9 @@ class Worker {
       this.logger.error(`Error processing appraisal ${id} from step ${startStep}:`, error.message);
       
       try {
-        await this.appraisalService.updateStatus(id, 'Failed', `Error: ${error.message}`, usingCompletedSheet);
+        if (!skipSheets) {
+          await this.appraisalService.updateStatus(id, 'Failed', `Error: ${error.message}`, usingCompletedSheet);
+        }
       } catch (statusError) {
         this.logger.error(`Error updating final status:`, statusError);
       }
