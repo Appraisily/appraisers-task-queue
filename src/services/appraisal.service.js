@@ -15,57 +15,88 @@ class AppraisalService {
     this.statusEvents = new Map();
   }
 
+  /**
+   * Process an appraisal from start to finish
+   * @param {string|number} id - Appraisal ID
+   * @param {string|number} value - Appraisal value
+   * @param {string} description - Customer description
+   * @param {string} appraisalType - Appraisal type (Regular, Insurance, IRS)
+   * @param {boolean|null} usingCompletedSheet - Which sheet to use, or null to skip all sheet operations
+   * @returns {Promise<object>} - Result
+   */
   async processAppraisal(id, value, description, appraisalType = 'Regular', usingCompletedSheet = null) {
     try {
-      // Skip sheet determination if usingCompletedSheet is provided as parameter
-      if (usingCompletedSheet === null) {
-        // Only check sheet if not explicitly provided
-        const existenceCheck = await this.appraisalFinder.appraisalExists(id);
-        if (!existenceCheck.exists) {
-          throw new Error(`Appraisal ${id} not found in either pending or completed sheets`);
+      // Check if sheet operations should be skipped
+      const skipSheetOperations = usingCompletedSheet === null;
+      
+      if (!skipSheetOperations) {
+        // Skip sheet determination if usingCompletedSheet is provided as parameter
+        if (usingCompletedSheet === null) {
+          // Only check sheet if not explicitly provided
+          const existenceCheck = await this.appraisalFinder.appraisalExists(id);
+          if (!existenceCheck.exists) {
+            throw new Error(`Appraisal ${id} not found in either pending or completed sheets`);
+          }
+          usingCompletedSheet = existenceCheck.usingCompletedSheet;
         }
-        usingCompletedSheet = existenceCheck.usingCompletedSheet;
+        
+        this.logger.info(`Processing appraisal ${id} (value: ${value}, type: ${appraisalType}) using ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
+        
+        // Update status (keep this - it's important to set the initial status)
+        await this.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
+        
+        // Explicitly save value to column J and appraisal type to column B
+        await this.sheetsService.updateValues(`J${id}`, [[value]], usingCompletedSheet);
+        await this.sheetsService.updateValues(`B${id}`, [[appraisalType]], usingCompletedSheet);
+        this.logger.info(`Saved appraisal value ${value} to column J and type ${appraisalType} to column B`);
+      } else {
+        this.logger.info(`Processing appraisal ${id} (value: ${value}, type: ${appraisalType}) - skipping sheet operations`);
       }
       
-      this.logger.info(`Processing appraisal ${id} (value: ${value}, type: ${appraisalType}) using ${usingCompletedSheet ? 'completed' : 'pending'} sheet`);
-      
-      // Update status (keep this - it's important to set the initial status)
-      await this.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
-      
-      // Explicitly save value to column J and appraisal type to column B
-      await this.sheetsService.updateValues(`J${id}`, [[value]], usingCompletedSheet);
-      await this.sheetsService.updateValues(`B${id}`, [[appraisalType]], usingCompletedSheet);
-      this.logger.info(`Saved appraisal value ${value} to column J and type ${appraisalType} to column B`);
-      
       // Get WordPress Post ID early - needed for potentially generating AI description
-      const { postId } = await this.getWordPressPostId(id, usingCompletedSheet);
+      let postId;
+      
+      if (!skipSheetOperations) {
+        const { postId: fetchedPostId } = await this.getWordPressPostId(id, usingCompletedSheet);
+        postId = fetchedPostId;
+      } else {
+        // Try to extract postId from options if provided
+        postId = id; // Fallback to using the appraisal ID as the post ID
+        this.logger.warn(`Sheet operations skipped - using ${postId} as WordPress post ID`);
+      }
       
       // Skip value formatting and J column update since value from sheets is already correctly formatted
       // The input value will be used as-is for WordPress updates later
       
       // Merge descriptions - pass along which sheet to use AND the postId
-      const mergeResult = await this.mergeDescriptions(id, description, postId, usingCompletedSheet);
+      const mergeResult = await this.mergeDescriptions(id, description, postId, skipSheetOperations ? null : usingCompletedSheet);
       
       // Update WordPress with the raw value (no formatting needed)
       // Pass the mergeResult object instead of the original description
-      const { publicUrl, usingCompletedSheet: wpUsingCompletedSheet } = await this.updateWordPress(id, value, mergeResult, appraisalType, usingCompletedSheet, postId);
+      const { publicUrl, usingCompletedSheet: wpUsingCompletedSheet } = await this.updateWordPress(id, value, mergeResult, appraisalType, skipSheetOperations ? null : usingCompletedSheet, postId);
       
-      // Store public URL
-      await this.sheetsService.updateValues(`P${id}`, [[publicUrl]], wpUsingCompletedSheet);
+      // Store public URL if not skipping sheet operations
+      if (!skipSheetOperations) {
+        await this.sheetsService.updateValues(`P${id}`, [[publicUrl]], wpUsingCompletedSheet);
+      }
 
       // Apply WordPress template pattern before generating report
-      await this.applyWordPressTemplate(id, postId, wpUsingCompletedSheet);
+      await this.applyWordPressTemplate(id, postId, skipSheetOperations ? null : wpUsingCompletedSheet);
       
       // Generate complete appraisal report (which includes visualizations, statistics, etc.)
-      await this.updateStatus(id, 'Generating', 'Building complete appraisal report', wpUsingCompletedSheet);
-      await this.visualize(id, postId, wpUsingCompletedSheet);
+      if (!skipSheetOperations) {
+        await this.updateStatus(id, 'Generating', 'Building complete appraisal report', wpUsingCompletedSheet);
+      }
+      await this.visualize(id, postId, skipSheetOperations ? null : wpUsingCompletedSheet);
       
       // Create PDF
-      await this.updateStatus(id, 'Finalizing', 'Creating PDF document', wpUsingCompletedSheet);
-      const pdfResult = await this.finalize(id, postId, publicUrl, wpUsingCompletedSheet);
+      if (!skipSheetOperations) {
+        await this.updateStatus(id, 'Finalizing', 'Creating PDF document', wpUsingCompletedSheet);
+      }
+      const pdfResult = await this.finalize(id, postId, publicUrl, skipSheetOperations ? null : wpUsingCompletedSheet);
       
-      // Mark as complete only if not from completed sheet
-      if (!usingCompletedSheet) {
+      // Mark as complete only if not from completed sheet and not skipping sheet operations
+      if (!skipSheetOperations && !usingCompletedSheet) {
         await this.complete(id);
       }
       
@@ -73,13 +104,21 @@ class AppraisalService {
       return { success: true, message: 'Appraisal processed successfully' };
     } catch (error) {
       this.logger.error(`Error processing appraisal ${id}:`, error);
-      await this.updateStatus(id, 'Failed', `Error: ${error.message}`, usingCompletedSheet);
+      if (!skipSheetOperations) {
+        await this.updateStatus(id, 'Failed', `Error: ${error.message}`, usingCompletedSheet);
+      }
       throw error;
     }
   }
 
   async updateStatus(id, status, details = null, useCompletedSheet = false) {
     try {
+      // Skip sheet operations if useCompletedSheet is null
+      if (useCompletedSheet === null) {
+        this.logger.debug(`[Skip] Status update: ${id} -> ${status}${details ? ` (${details})` : ''}`);
+        return { success: true, status, skipped: true };
+      }
+      
       // Create a key to avoid duplicate status updates for the same appraisal/status
       const statusKey = `${id}:${status}`;
       const now = Date.now();
@@ -96,7 +135,7 @@ class AppraisalService {
       
       if (skipSheetUpdate) {
         // Skip sheet updates for generating status
-        return;
+        return { success: true, status, skipped: true };
       }
       
       // Update status in column F (status column) through SheetsService
@@ -122,44 +161,52 @@ class AppraisalService {
   }
 
   async mergeDescriptions(id, description, postId, useCompletedSheet = false) {
+    // Skip sheet operations if useCompletedSheet is null
+    const skipSheetOperations = useCompletedSheet === null;
+    
     // Get AI description from column H
-    const aiDescValues = await this.sheetsService.getValues(`H${id}`, useCompletedSheet);
     let iaDescription = '';
     
-    // Add null checking to prevent "Cannot read properties of undefined" error
-    if (aiDescValues && aiDescValues[0] && aiDescValues[0][0]) {
-      iaDescription = aiDescValues[0][0];
-      this.logger.debug(`Found existing AI description for appraisal ${id}`);
-    } else {
-      this.logger.debug(`No AI description found for appraisal ${id}. Generating one.`);
-      try {
-        // 1. Get WordPress post data to find the featured image ID
-        const postData = await this.wordpressService.getPost(postId);
-        const featuredMediaId = postData?.featured_media; // Assumes featured_media holds the ID
+    if (!skipSheetOperations) {
+      const aiDescValues = await this.sheetsService.getValues(`H${id}`, useCompletedSheet);
+      
+      // Add null checking to prevent "Cannot read properties of undefined" error
+      if (aiDescValues && aiDescValues[0] && aiDescValues[0][0]) {
+        iaDescription = aiDescValues[0][0];
+        this.logger.debug(`Found existing AI description for appraisal ${id}`);
+      } else {
+        this.logger.debug(`No AI description found for appraisal ${id}. Generating one.`);
+        try {
+          // 1. Get WordPress post data to find the featured image ID
+          const postData = await this.wordpressService.getPost(postId);
+          const featuredMediaId = postData?.featured_media; // Assumes featured_media holds the ID
 
-        if (featuredMediaId) {
-           // 2. Get the image URL from the media ID
-           const imageUrl = await this.wordpressService.getImageUrl(featuredMediaId);
-           
-           if (imageUrl) {
-             // 3. Call OpenAI to generate the description
-             const generationPrompt = `Analyze this image of an artwork or antique. Provide a detailed description covering aspects like style, period, materials, condition, subject matter, and potential artist or origin. Focus on objective observations.`;
-             iaDescription = await this.openaiService.analyzeImageWithGPT4o(imageUrl, generationPrompt);
+          if (featuredMediaId) {
+             // 2. Get the image URL from the media ID
+             const imageUrl = await this.wordpressService.getImageUrl(featuredMediaId);
              
-             // 4. Save the newly generated description back to column H
-             await this.sheetsService.updateValues(`H${id}`, [[iaDescription]], useCompletedSheet);
-           } else {
-             this.logger.warn(`Could not retrieve image URL for media ID ${featuredMediaId}`);
-             iaDescription = ''; // Ensure it's empty if generation failed
-           }
-        } else {
-          this.logger.warn(`No featured media ID found for post ${postId}`);
+             if (imageUrl) {
+               // 3. Call OpenAI to generate the description
+               const generationPrompt = `Analyze this image of an artwork or antique. Provide a detailed description covering aspects like style, period, materials, condition, subject matter, and potential artist or origin. Focus on objective observations.`;
+               iaDescription = await this.openaiService.analyzeImageWithGPT4o(imageUrl, generationPrompt);
+               
+               // 4. Save the newly generated description back to column H
+               await this.sheetsService.updateValues(`H${id}`, [[iaDescription]], useCompletedSheet);
+             } else {
+               this.logger.warn(`Could not retrieve image URL for media ID ${featuredMediaId}`);
+               iaDescription = ''; // Ensure it's empty if generation failed
+             }
+          } else {
+            this.logger.warn(`No featured media ID found for post ${postId}`);
+            iaDescription = ''; // Ensure it's empty if generation failed
+          }
+        } catch (genError) {
+          this.logger.error(`Error during AI description generation:`, genError);
           iaDescription = ''; // Ensure it's empty if generation failed
         }
-      } catch (genError) {
-        this.logger.error(`Error during AI description generation:`, genError);
-        iaDescription = ''; // Ensure it's empty if generation failed
       }
+    } else {
+      this.logger.debug(`Skipping sheet operations for AI description, using empty iaDescription`);
     }
     
     // Ensure we have a valid description to merge (customer provided)
@@ -186,9 +233,12 @@ class AppraisalService {
     };
     
     // Save merged description to Column L, using the correct sheet
-    await this.sheetsService.updateValues(`L${id}`, [[result.mergedDescription]], useCompletedSheet);
-    
-    this.logger.debug(`Generated and saved merged description`);
+    if (!skipSheetOperations) {
+      await this.sheetsService.updateValues(`L${id}`, [[result.mergedDescription]], useCompletedSheet);
+      this.logger.debug(`Generated and saved merged description`);
+    } else {
+      this.logger.debug(`Generated merged description (sheet update skipped)`);
+    }
     
     // Return all generated content
     return result;

@@ -31,9 +31,6 @@ const API_DOCUMENTATION = {
         id: 'String - Unique identifier for the appraisal',
         startStep: 'String - The step to start processing from',
         options: 'Object - Additional options for processing'
-      },
-      options: {
-        reprocess: 'Boolean - When set to true, skips Google Sheets operations and processes using provided data'
       }
     },
     '/api/analyze-image-and-merge': {
@@ -105,7 +102,9 @@ app.post('/api/process-step', async (req, res) => {
     });
   }
   
-  logger.info(`Received request to process appraisal ${id} from step ${startStep}`);
+  // Log the reprocessing option if present
+  const isReprocessing = options.reprocess === true;
+  logger.info(`Received request to ${isReprocessing ? 'reprocess' : 'process'} appraisal ${id} from step ${startStep}`);
   
   try {
     // Ensure worker and finder are initialized
@@ -113,29 +112,37 @@ app.post('/api/process-step', async (req, res) => {
       throw new Error('Worker or AppraisalFinder not initialized');
     }
 
-    // Determine the correct sheet *before* calling the worker
-    const { exists, usingCompletedSheet } = await worker.appraisalFinder.appraisalExists(id);
-
-    if (!exists) {
-      logger.error(`Appraisal ${id} not found in either sheet.`);
-      return res.status(404).json({
-        success: false,
-        message: `Appraisal ${id} not found in either Pending or Completed sheets.`
-      });
-    }
+    // If reprocessing, we don't need to check sheets
+    let usingCompletedSheet = false;
     
-    logger.info(`Appraisal ${id} found in ${usingCompletedSheet ? 'Completed' : 'Pending'} sheet. Starting process...`);
+    if (!isReprocessing) {
+      // Determine the correct sheet *before* calling the worker (only if not reprocessing)
+      const { exists, usingCompletedSheet: sheetFlag } = await worker.appraisalFinder.appraisalExists(id);
 
-    // Pass the determined sheet flag to the worker method
+      if (!exists) {
+        logger.error(`Appraisal ${id} not found in either sheet.`);
+        return res.status(404).json({
+          success: false,
+          message: `Appraisal ${id} not found in either Pending or Completed sheets.`
+        });
+      }
+      
+      usingCompletedSheet = sheetFlag;
+      logger.info(`Appraisal ${id} found in ${usingCompletedSheet ? 'Completed' : 'Pending'} sheet. Starting process...`);
+    } else {
+      logger.info(`Reprocessing mode active for appraisal ${id} - skipping sheet verification`);
+    }
+
+    // Pass the determined sheet flag to the worker method along with options
     await worker.processFromStep(id, startStep, usingCompletedSheet, options);
     
     res.status(200).json({
       success: true,
-      message: `Appraisal ${id} has been processed from step ${startStep}`,
+      message: `Appraisal ${id} has been ${isReprocessing ? 're' : ''}processed from step ${startStep}`,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    logger.error(`Error processing appraisal ${id} from step ${startStep}:`, error);
+    logger.error(`Error ${isReprocessing ? 're' : ''}processing appraisal ${id} from step ${startStep}:`, error);
     res.status(500).json({
       success: false,
       message: error.message || 'Internal server error'
@@ -240,6 +247,7 @@ app.post('/api/migrate-appraisal', async (req, res) => {
 app.get('/api/fetch-appraisal/:postId', async (req, res) => {
   try {
     const { postId } = req.params;
+    const autoReprocess = req.query.autoReprocess === 'true';
     
     if (!postId) {
       return res.status(400).json({
@@ -248,7 +256,7 @@ app.get('/api/fetch-appraisal/:postId', async (req, res) => {
       });
     }
     
-    logger.info(`Received request to fetch and analyze data for WordPress post ${postId}`);
+    logger.info(`Received request to fetch and analyze data for WordPress post ${postId}${autoReprocess ? ' with auto-reprocessing' : ''}`);
     
     // Make sure worker and wordpressService are initialized
     if (!worker.appraisalService || !worker.appraisalService.wordpressService) {
@@ -289,11 +297,45 @@ app.get('/api/fetch-appraisal/:postId', async (req, res) => {
       customerEmail: analysisResult.customerEmail || '',
       detailedTitle: analysisResult.detailedTitle || ''
     };
+    
+    // Auto reprocess if requested
+    let reprocessResult = null;
+    if (autoReprocess) {
+      try {
+        logger.info(`Auto-reprocessing appraisal ${postId} with new data`);
+        
+        // Prepare reprocessing options based on Gemini analysis
+        const reprocessOptions = {
+          reprocess: true,
+          postId: postId,
+          appraisalValue: analysisResult.value,
+          description: analysisResult.detailedTitle || extractedData.content,
+          appraisalType: extractedData.appraisalType || 'Art'
+        };
+        
+        // Call the worker to reprocess from STEP_SET_VALUE
+        await worker.processFromStep(postId, 'STEP_SET_VALUE', false, reprocessOptions);
+        
+        reprocessResult = {
+          success: true,
+          message: `Appraisal ${postId} has been reprocessed with new data`
+        };
+        
+        logger.info(`Auto-reprocessing completed for appraisal ${postId}`);
+      } catch (reprocessError) {
+        logger.error(`Error during auto-reprocessing of appraisal ${postId}:`, reprocessError);
+        reprocessResult = {
+          success: false,
+          message: `Error during reprocessing: ${reprocessError.message}`
+        };
+      }
+    }
 
     res.status(200).json({
       success: true,
-      message: `Appraisal data for post ${postId} successfully analyzed and processed`,
-      data: minimalAppraisalData
+      message: `Appraisal data for post ${postId} successfully analyzed${autoReprocess ? ' and reprocessed' : ''}`,
+      data: minimalAppraisalData,
+      reprocessing: autoReprocess ? reprocessResult : undefined
     });
   } catch (error) {
     logger.error('Error fetching and analyzing appraisal data:', error);
