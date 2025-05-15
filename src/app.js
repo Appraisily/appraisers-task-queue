@@ -265,17 +265,14 @@ app.get('/api/fetch-appraisal/:postId', async (req, res) => {
     logger.info(JSON.stringify(postData, null, 2));
     logger.info(`===== END POST ${postId} DATA =====`);
     
-    // Extract all relevant data for analysis
-    const extractedData = await extractAppraisalData(postData, wordpressService);
-    
     // Initialize Gemini service if not already initialized
     if (!geminiService.isInitialized()) {
       await geminiService.initialize();
     }
     
-    // Process the extracted data with Gemini to get structured analysis
-    logger.info(`Processing appraisal data with Gemini for post ${postId}`);
-    const analysisResult = await geminiService.processAppraisalData(extractedData);
+    // Pass the raw WordPress post data directly to Gemini
+    logger.info(`Processing raw WordPress post data with Gemini for post ${postId}`);
+    const analysisResult = await geminiService.processAppraisalData(postData);
 
     // Only return the required fields in the response
     const minimalAppraisalData = {
@@ -300,136 +297,6 @@ app.get('/api/fetch-appraisal/:postId', async (req, res) => {
     });
   }
 });
-
-/**
- * Extract comprehensive appraisal data from WordPress post
- * @param {Object} postData - WordPress post data
- * @param {Object} wordpressService - WordPress service instance
- * @returns {Promise<Object>} - Extracted appraisal data
- */
-async function extractAppraisalData(postData, wordpressService) {
-  try {
-    // Extract main post data
-    const title = postData.title?.rendered || '';
-    const content = postData.content?.rendered || '';
-    const appraisalType = postData.acf?.appraisaltype || '';
-    const appraisalValue = postData.acf?.appraisal_value || postData.acf?.value || '';
-    
-    // Extract value from content if not in ACF
-    let extractedValue = '';
-    if (!appraisalValue && content) {
-      // Look for value patterns in content
-      const valueMatch = content.match(/\$([0-9,]+)/);
-      if (valueMatch && valueMatch[1]) {
-        extractedValue = valueMatch[1].replace(/,/g, '');
-      }
-    }
-    
-    // Get all image URLs
-    const imageUrls = [];
-    
-    // Main featured image
-    if (postData.featured_media) {
-      try {
-        const featuredUrl = await wordpressService.getImageUrl(postData.featured_media);
-        if (featuredUrl) {
-          imageUrls.push({ type: 'featured', url: featuredUrl });
-        }
-      } catch (error) {
-        logger.warn(`Could not retrieve featured image for post ${postData.id}:`, error);
-      }
-    }
-    
-    // ACF main image
-    if (postData.acf?.main) {
-      try {
-        const mainImageUrl = await wordpressService.getImageUrl(postData.acf.main);
-        if (mainImageUrl) {
-          imageUrls.push({ type: 'main', url: mainImageUrl });
-        }
-      } catch (error) {
-        logger.warn(`Could not retrieve ACF main image for post ${postData.id}:`, error);
-      }
-    }
-    
-    // ACF images gallery
-    if (postData.acf?.images && Array.isArray(postData.acf.images)) {
-      for (const image of postData.acf.images) {
-        try {
-          const galleryImageUrl = await wordpressService.getImageUrl(image);
-          if (galleryImageUrl) {
-            imageUrls.push({ type: 'gallery', url: galleryImageUrl });
-          }
-        } catch (error) {
-          logger.warn(`Could not retrieve gallery image for post ${postData.id}:`, error);
-        }
-      }
-    }
-    
-    // Extract all metadata from ACF fields
-    const metadata = { ...postData.acf };
-    
-    // Clean up metadata by removing large fields and image references
-    // that we've already processed
-    delete metadata.main;
-    delete metadata.images;
-    delete metadata.appraisal_content;
-    
-    // Look for customer email in metadata or author information
-    let customerEmail = metadata.customer_email || '';
-    if (!customerEmail && postData.author_info) {
-      customerEmail = postData.author_info.user_email || '';
-    }
-    
-    // Look for session ID in metadata
-    const sessionId = metadata.session_id || metadata.appraisal_id || '';
-    
-    return {
-      postId: postData.id,
-      title,
-      content,
-      appraisalType,
-      appraisalValue: appraisalValue || extractedValue,
-      imageUrls,
-      metadata,
-      customerEmail,
-      sessionId,
-      date: postData.date || '',
-      author: postData.author || '',
-      excerpt: postData.excerpt?.rendered || '',
-      link: postData.link || '',
-      status: postData.status || ''
-    };
-  } catch (error) {
-    logger.error('Error extracting appraisal data:', error);
-    throw error;
-  }
-}
-
-/**
- * Extract the appraisal value from the analysis and data
- * @param {Object} extractedData - Extracted WordPress data
- * @param {Object} analysis - Gemini analysis result
- * @returns {string} - The appraisal value
- */
-function extractAnalysisValue(extractedData, analysis) {
-  // First check if there's a value in the extracted data
-  if (extractedData.appraisalValue) {
-    return extractedData.appraisalValue;
-  }
-  
-  // Check if the analysis contains a value
-  const description = analysis.mergedDescription || '';
-  
-  // Look for currency patterns in the description
-  const valueMatch = description.match(/\$([0-9,]+)/);
-  if (valueMatch && valueMatch[1]) {
-    return valueMatch[1].replace(/,/g, '');
-  }
-  
-  // Default to empty string if no value found
-  return '';
-}
 
 // 404 handler for undefined routes
 app.use((req, res, next) => {

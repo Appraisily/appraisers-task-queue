@@ -56,16 +56,22 @@ class GeminiService {
         
         1. title (brief, max 10 words)
         2. value (appraisal value in USD, numbers only, no currency symbol)
-        3. imageURLs (array, up to 3 images, select in this order of priority: ACF main image, ACF age image, ACF signature image, or the featured image of the post)
-        4. sessionID (from the data)
-        5. customerEmail (from the data)
+        3. imageURLs (array, up to 3 images, select in this order of priority: 
+           - ACF main image (look for acf.main, which may contain an ID or URL)
+           - ACF age image (look for acf.age, which may contain an ID or URL)
+           - ACF signature image (look for acf.signature, which may contain an ID or URL)
+           - Featured image (look in _embedded['wp:featuredmedia'][0].source_url or featured_media_url)
+           - If a URL is not directly available but an ID is, the URL might be in the _embedded data
+           - If you can't find exactly these images, select any available images up to 3 total)
+        4. sessionID (from acf.session_id or acf.appraisal_id)
+        5. customerEmail (from acf.customer_email or author_info.user_email)
         6. detailedTitle (more descriptive title with key details)
         
         Here is the complete, raw WordPress post data (as a JSON object):
         
         ${JSON.stringify(wordpressPostData, null, 2)}
         
-        Your task is to extract and organize ONLY the above 6 fields. For imageURLs, select up to 3 images in this order: ACF main image, ACF age image, ACF signature image, or the featured image. If not available, leave empty. Return your analysis as a structured JSON with ONLY these fields:
+        Your task is to extract and organize ONLY the above 6 fields. Return your analysis as a structured JSON with ONLY these fields:
         {
           "title": "Brief, accurate title for the item (max 10 words)",
           "value": "Appraisal value in USD (numbers only, no currency symbol)",
