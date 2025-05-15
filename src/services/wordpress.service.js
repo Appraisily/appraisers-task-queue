@@ -51,7 +51,7 @@ class WordPressService {
    */
   async getPost(postId) {
     try {
-      const response = await fetch(`${this.apiUrl}/appraisals/${postId}?_embed=wp:featuredmedia,wp:term`, {
+      const response = await fetch(`${this.apiUrl}/appraisals/${postId}`, {
         method: 'GET',
         headers: {
           'Authorization': this.authHeader,
@@ -63,16 +63,7 @@ class WordPressService {
         throw new Error(`WordPress API error: ${response.status} ${response.statusText}`);
       }
 
-      const postData = await response.json();
-      
-      // Extract the featured media URL if available in the embedded data
-      if (postData._embedded && postData._embedded['wp:featuredmedia'] && 
-          postData._embedded['wp:featuredmedia'][0] && 
-          postData._embedded['wp:featuredmedia'][0].source_url) {
-        postData.featured_media_url = postData._embedded['wp:featuredmedia'][0].source_url;
-      }
-      
-      return postData;
+      return await response.json();
     } catch (error) {
       this.logger.error(`Error getting WordPress post ${postId}:`, error);
       throw error;
