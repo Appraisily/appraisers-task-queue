@@ -276,26 +276,21 @@ app.get('/api/fetch-appraisal/:postId', async (req, res) => {
     // Process the extracted data with Gemini to get structured analysis
     logger.info(`Processing appraisal data with Gemini for post ${postId}`);
     const analysisResult = await geminiService.processAppraisalData(extractedData);
-    
-    // Combine the extracted data with the Gemini analysis for a complete appraisal payload
-    const completeAppraisalData = {
-      ...extractedData,
-      analysis: analysisResult,
-      // Add processed fields in a format ready for STEP_SET_VALUE
-      processedData: {
-        id: extractedData.sessionId || '', // Use session ID if available as row ID
-        appraisalValue: extractAnalysisValue(extractedData, analysisResult),
-        description: analysisResult.mergedDescription || extractedData.content,
-        appraisalType: extractedData.appraisalType || 'Regular',
-        postId: postId,
-        title: analysisResult.title || extractedData.title
-      }
+
+    // Only return the required fields in the response
+    const minimalAppraisalData = {
+      title: analysisResult.title || '',
+      value: analysisResult.value || '',
+      imageURLs: analysisResult.imageURLs || [],
+      sessionID: analysisResult.sessionID || '',
+      customerEmail: analysisResult.customerEmail || '',
+      detailedTitle: analysisResult.detailedTitle || ''
     };
-    
+
     res.status(200).json({
       success: true,
       message: `Appraisal data for post ${postId} successfully analyzed and processed`,
-      data: completeAppraisalData
+      data: minimalAppraisalData
     });
   } catch (error) {
     logger.error('Error fetching and analyzing appraisal data:', error);

@@ -42,63 +42,42 @@ class GeminiService {
 
   /**
    * Process appraisal data with Gemini 2.5 Pro
-   * @param {object} appraisalData - Extracted appraisal data
+   * @param {object} wordpressPostData - Raw WordPress post data (no preprocessing)
    * @returns {Promise<object>} - Structured appraisal data
    */
-  async processAppraisalData(appraisalData) {
+  async processAppraisalData(wordpressPostData) {
     if (!this.isInitialized()) {
       throw new Error('Gemini service not initialized');
     }
-    
     try {
-      this.logger.info('Calling Gemini to process appraisal data');
-      
+      this.logger.info('Calling Gemini to process raw WordPress post data');
       const prompt = `
-        You are an expert art and antiques appraiser tasked with analyzing WordPress post data to extract structured information for an appraisal process.
+        You are an expert art and antiques appraiser. You will receive the complete, raw WordPress post data for an appraisal request. Do not expect any preprocessing or field extraction; all data is provided as-is, directly from WordPress. Your job is to analyze this raw data and extract ONLY the following fields:
         
-        Here is the extracted data from a WordPress post:
+        1. title (brief, max 10 words)
+        2. value (appraisal value in USD, numbers only, no currency symbol)
+        3. imageURLs (array, up to 3 images, select in this order of priority: ACF main image, ACF age image, ACF signature image, or the featured image of the post)
+        4. sessionID (from the data)
+        5. customerEmail (from the data)
+        6. detailedTitle (more descriptive title with key details)
         
-        Title: ${appraisalData.title}
-        Content: ${appraisalData.content.substring(0, 2000)}${appraisalData.content.length > 2000 ? '... (content truncated)' : ''}
-        Appraisal Type: ${appraisalData.appraisalType || 'Not specified'}
-        Current Value: ${appraisalData.appraisalValue || 'Not specified'}
+        Here is the complete, raw WordPress post data (as a JSON object):
         
-        Image URLs: ${JSON.stringify(appraisalData.imageUrls.map(img => img.url).slice(0, 5))}
+        ${JSON.stringify(wordpressPostData, null, 2)}
         
-        Metadata fields: ${Object.keys(appraisalData.metadata).join(', ')}
-        
-        Your task is to extract and organize all relevant information needed to begin processing this appraisal. 
-        
-        Please analyze the data and provide:
-        
-        1. A comprehensive description of the item being appraised, combining all available information.
-        2. A clear appraisal value (in USD) if you can determine it from the content.
-        3. The type/category of the item (painting, sculpture, jewelry, etc.).
-        4. Creator/artist name if available.
-        5. Age or period of creation.
-        6. Materials and techniques used.
-        7. Condition assessment.
-        8. Size/dimensions if available.
-        
-        Return your analysis as a structured JSON with the following fields:
+        Your task is to extract and organize ONLY the above 6 fields. For imageURLs, select up to 3 images in this order: ACF main image, ACF age image, ACF signature image, or the featured image. If not available, leave empty. Return your analysis as a structured JSON with ONLY these fields:
         {
           "title": "Brief, accurate title for the item (max 10 words)",
-          "detailedTitle": "More descriptive title with key details",
-          "objectType": "Category of object",
-          "creator": "Artist or creator",
-          "age": "Estimated age or period",
-          "materials": "Materials used",
-          "dimensions": "Size information if available",
-          "condition": "Condition assessment",
-          "recommendedValue": "Your professional assessment of value in USD (numbers only, no currency symbol)",
-          "mergedDescription": "Comprehensive description combining all relevant details"
+          "value": "Appraisal value in USD (numbers only, no currency symbol)",
+          "imageURLs": ["url1", "url2", "url3"],
+          "sessionID": "Session ID",
+          "customerEmail": "Customer email",
+          "detailedTitle": "More descriptive title with key details"
         }
       `;
-      
       const result = await this.model.generateContent(prompt);
       const response = result.response;
       const responseText = response.text();
-      
       // Parse the JSON response
       let parsedResponse;
       try {
@@ -106,41 +85,29 @@ class GeminiService {
         const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/) || 
                            responseText.match(/```\n([\s\S]*?)\n```/) ||
                            [null, responseText];
-        
         const jsonContent = jsonMatch[1] || responseText;
         parsedResponse = JSON.parse(jsonContent);
       } catch (parseError) {
         this.logger.error('Failed to parse Gemini JSON response', parseError);
-        
         // Return a basic format to prevent complete failure
         return {
-          title: appraisalData.title || 'Artwork Appraisal',
-          detailedTitle: appraisalData.title || 'Artwork Appraisal - Processing Error',
-          objectType: 'Unknown',
-          creator: 'Unknown',
-          age: 'Unknown',
-          materials: 'Unknown',
-          dimensions: 'Unknown',
-          condition: 'Unknown',
-          recommendedValue: appraisalData.appraisalValue || '',
-          mergedDescription: appraisalData.content || 'Error processing appraisal data. Please contact support.'
+          title: '',
+          value: '',
+          imageURLs: [],
+          sessionID: '',
+          customerEmail: '',
+          detailedTitle: ''
         };
       }
-      
       // Ensure the response has all expected fields
       const defaultResponse = {
-        title: appraisalData.title || 'Artwork Appraisal',
-        detailedTitle: appraisalData.title || 'Artwork Appraisal',
-        objectType: 'Unknown',
-        creator: 'Unknown',
-        age: 'Unknown',
-        materials: 'Unknown',
-        dimensions: 'Unknown',
-        condition: 'Unknown',
-        recommendedValue: appraisalData.appraisalValue || '',
-        mergedDescription: appraisalData.content || ''
+        title: '',
+        value: '',
+        imageURLs: [],
+        sessionID: '',
+        customerEmail: '',
+        detailedTitle: ''
       };
-      
       // Merge the parsed response with defaults for any missing fields
       return { ...defaultResponse, ...parsedResponse };
     } catch (error) {

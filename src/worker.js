@@ -8,7 +8,6 @@ const PDFService = require('./services/pdf.service');
 const AppraisalService = require('./services/appraisal.service');
 const AppraisalFinder = require('./utils/appraisal-finder');
 const MigrationService = require('./services/migration.service');
-const GeminiDocsService = require('./services/gemini-docs.service');
 
 class Worker {
   constructor() {
@@ -19,7 +18,6 @@ class Worker {
     this.activeProcesses = new Set();
     this.isShuttingDown = false;
     this.appraisalFinder = null;
-    this.geminiDocsService = new GeminiDocsService();
   }
 
   async initialize() {
@@ -47,8 +45,7 @@ class Worker {
         wordpressService.initialize(),
         openaiService.initialize(),
         emailService.initialize(),
-        pdfService.initialize(),
-        this.geminiDocsService.initialize()
+        pdfService.initialize()
       ]);
       
       // Initialize appraisal finder
