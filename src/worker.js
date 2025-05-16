@@ -8,7 +8,6 @@ const PDFService = require('./services/pdf.service');
 const AppraisalService = require('./services/appraisal.service');
 const AppraisalFinder = require('./utils/appraisal-finder');
 const MigrationService = require('./services/migration.service');
-const GeminiDocsService = require('./services/gemini-docs.service');
 
 class Worker {
   constructor() {
@@ -19,7 +18,6 @@ class Worker {
     this.activeProcesses = new Set();
     this.isShuttingDown = false;
     this.appraisalFinder = null;
-    this.geminiDocsService = new GeminiDocsService();
   }
 
   async initialize() {
@@ -47,8 +45,7 @@ class Worker {
         wordpressService.initialize(),
         openaiService.initialize(),
         emailService.initialize(),
-        pdfService.initialize(),
-        this.geminiDocsService.initialize()
+        pdfService.initialize()
       ]);
       
       // Initialize appraisal finder
@@ -90,11 +87,16 @@ class Worker {
 
     const processId = `${id}-${Date.now()}`;
     this.activeProcesses.add(processId);
+    
+    // Check if this is a reprocessing request that should skip sheet operations
+    const skipSheetOperations = options.reprocess === true;
+    if (skipSheetOperations) {
+      this.logger.info(`Reprocessing appraisal ${id} from step ${startStep} - skipping sheet operations`);
+    }
 
     try {
-      this.logger.info(`Processing appraisal ${id} from step ${startStep} (Sheet: ${usingCompletedSheet ? 'Completed' : 'Pending'})`);
+      this.logger.info(`Processing appraisal ${id} from step ${startStep} (Sheet: ${usingCompletedSheet ? 'Completed' : 'Pending'}, Reprocess: ${skipSheetOperations})`);
       
-      // Extract any additional data from options that might be needed
       const { 
         appraisalValue, 
         description, 
@@ -119,82 +121,100 @@ class Worker {
             }
             
             // Update status with the correct sheet (passed as parameter)
-            await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
-            
-            // Save appraisal value to column J, appraiser's description to column K, and appraisal type to column B
-            await this.sheetsService.updateValues(`J${id}`, [[valueToUse]], usingCompletedSheet);
-            await this.sheetsService.updateValues(`K${id}`, [[descToUse]], usingCompletedSheet);
-            this.logger.info(`Saved appraiser's description to column K for appraisal ${id}`);
-
-            if (typeToUse) {
-              await this.sheetsService.updateValues(`B${id}`, [[typeToUse]], usingCompletedSheet);
-              this.logger.info(`Saved appraisal type '${typeToUse}' to column B for appraisal ${id}`);
+            if (!skipSheetOperations) {
+              await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow', usingCompletedSheet);
             }
             
-            // Start full processing, passing the sheet context
-            await this.appraisalService.processAppraisal(id, valueToUse, descToUse, typeToUse, usingCompletedSheet);
+            // Process the appraisal
+            await this.appraisalService.processAppraisal(
+              id, 
+              valueToUse, 
+              descToUse,
+              typeToUse, 
+              skipSheetOperations ? null : usingCompletedSheet // Pass null to skip sheet operations
+            );
           } catch (error) {
             this.logger.error(`Error in STEP_SET_VALUE:`, error);
-            await this.appraisalService.updateStatus(id, 'Failed', `STEP_SET_VALUE Error: ${error.message}`, usingCompletedSheet);
+            if (!skipSheetOperations) {
+              await this.appraisalService.updateStatus(id, 'Failed', `SET_VALUE Error: ${error.message}`, usingCompletedSheet);
+            }
             throw error;
           }
           break;
           
         case 'STEP_MERGE_DESCRIPTIONS':
           try {
-            // Get all data we need in a single call, passing the sheet flag
-            const { data: appraisalData } = await this.appraisalFinder.getMultipleFields(id, ['G', 'J', 'K'], usingCompletedSheet);
-            
-            if (!appraisalData.G) {
-              throw new Error(`No WordPress URL found for appraisal ${id}`);
+            if (!skipSheetOperations) {
+              await this.appraisalService.updateStatus(id, 'Analyzing', 'Merging descriptions', usingCompletedSheet);
             }
             
-            // Extract post ID from WordPress URL
-            const wpUrl = appraisalData.G;
-            const url = new URL(wpUrl);
-            const postId = url.searchParams.get('post');
+            // Get existing descriptions if not provided in options
+            let descriptionToUse = description;
+            let postIdToUse = postId;
             
-            if (!postId) {
-              throw new Error(`Could not extract post ID from WordPress URL`);
+            if (!descriptionToUse && !skipSheetOperations) {
+              // Read customer description from column K
+              const { data: descData } = await this.appraisalFinder.getMultipleFields(id, ['K'], usingCompletedSheet);
+              if (descData && descData.K) {
+                descriptionToUse = descData.K;
+              } else {
+                this.logger.warn(`No description found in column K for appraisal ${id}`);
+              }
             }
             
-            // Get value and existing description directly from the fetched data
-            const value = appraisalData.J;
-            const existingDescription = appraisalData.K;
+            // Get WordPress post ID if not provided in options
+            if (!postIdToUse && !skipSheetOperations) {
+              try {
+                const { postId: fetchedPostId } = await this.appraisalService.getWordPressPostId(id, usingCompletedSheet);
+                postIdToUse = fetchedPostId;
+              } catch (error) {
+                this.logger.error(`Error getting WordPress post ID:`, error);
+                throw new Error(`Failed to get WordPress post ID: ${error.message}`);
+              }
+            }
             
-            // Use provided description or existing one
-            const descToUse = description || existingDescription;
+            // Ensure we have post ID
+            if (!postIdToUse) {
+              throw new Error(`No WordPress post ID available. Cannot merge descriptions.`);
+            }
             
-            // Update status in Google Sheets only (no WordPress updates)
-            await this.appraisalService.updateStatus(id, 'Analyzing', 'Analyzing image and merging descriptions', usingCompletedSheet);
+            // Call the specialized method for image analysis and description merging
+            const analysisResult = await this.analyzeImageAndMergeDescriptions(
+              id, 
+              postIdToUse, 
+              descriptionToUse || '', 
+              { usingCompletedSheet, skipSheetOperations }
+            );
             
-            // Use the imageAnalysis method to analyze image and merge descriptions
-            const analysisResult = await this.analyzeImageAndMergeDescriptions(id, postId, descToUse, {
-              usingCompletedSheet: usingCompletedSheet
-            });
+            // If we should skip sheet operations, we're done here
+            if (skipSheetOperations) {
+              this.logger.info(`Reprocessing completed for STEP_MERGE_DESCRIPTIONS`);
+              break;
+            }
             
-            // Save titles to Google Sheets
-            await this.sheetsService.updateValues(`S${id}`, [[analysisResult.briefTitle]], usingCompletedSheet);
-            await this.sheetsService.updateValues(`T${id}`, [[analysisResult.mergedDescription]], usingCompletedSheet);
+            // Save the result to columns S and T
+            await this.sheetsService.updateValues(`S${id}`, [[analysisResult.briefTitle || '']], usingCompletedSheet);
+            await this.sheetsService.updateValues(`T${id}`, [[analysisResult.detailedTitle || '']], usingCompletedSheet);
             
-            // Only update WordPress if we have new data to set
-            if (analysisResult && analysisResult.briefTitle && analysisResult.mergedDescription) {
-              // Use the brief title for the WordPress post title
-              // Use the merged description as the detailed title
-              await this.appraisalService.wordpressService.updateAppraisalPost(postId, {
+            // Update WordPress post with the new titles
+            try {
+              await this.wordpressService.updatePostTitles(postIdToUse, {
                 title: analysisResult.briefTitle,
-                detailedtitle: analysisResult.mergedDescription
+                detailedTitle: analysisResult.detailedTitle
               });
+              
+              await this.appraisalService.updateStatus(id, 'Ready', 'Descriptions merged successfully', usingCompletedSheet);
+            } catch (wpError) {
+              this.logger.error(`Error updating WordPress post titles:`, wpError);
+              await this.appraisalService.updateStatus(id, 'Warning', `Descriptions merged but WordPress update failed`, usingCompletedSheet);
             }
-            
-            // Final status update in Google Sheets
-            await this.appraisalService.updateStatus(id, 'Ready', 'Description merged and metadata updated', usingCompletedSheet);
           } catch (error) {
             this.logger.error(`Error in STEP_MERGE_DESCRIPTIONS:`, error);
-            await this.appraisalService.updateStatus(id, 'Failed', `MERGE_DESC Error: ${error.message}`, usingCompletedSheet);
+            if (!skipSheetOperations) {
+              await this.appraisalService.updateStatus(id, 'Failed', `MERGE_DESC Error: ${error.message}`, usingCompletedSheet);
+            }
             throw error;
           }
-          
           break;
           
         case 'STEP_UPDATE_WORDPRESS':
@@ -326,37 +346,44 @@ class Worker {
           
           try {
              // Update status
-             await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow (default step)', usingCompletedSheet);
+             if (!skipSheetOperations) {
+               await this.appraisalService.updateStatus(id, 'Processing', 'Starting appraisal workflow (default step)', usingCompletedSheet);
+             }
              
              // Get all necessary data from the spreadsheet using the known sheet
-             const { data: defaultData } = await this.appraisalFinder.getMultipleFields(id, ['B', 'J', 'K'], usingCompletedSheet);
+             let defaultType = 'Regular';
+             let defaultValue = '';
+             let defaultDesc = '';
              
-             const defaultType = defaultData.B || 'Regular';
-             const defaultValue = defaultData.J; // Column J
-             const defaultDesc = defaultData.K; // Column K
+             if (!skipSheetOperations) {
+               const { data: defaultData } = await this.appraisalFinder.getMultipleFields(id, ['B', 'J', 'K'], usingCompletedSheet);
+               defaultType = defaultData.B || 'Regular';
+               defaultValue = defaultData.J || ''; // Column J
+               defaultDesc = defaultData.K || ''; // Column K
+             } else {
+               // Use values from options when reprocessing
+               defaultType = appraisalType || 'Regular';
+               defaultValue = appraisalValue || '';
+               defaultDesc = description || '';
+             }
              
              await this.appraisalService.processAppraisal(
                id,
                defaultValue,
                defaultDesc,
                defaultType,
-               usingCompletedSheet
+               skipSheetOperations ? null : usingCompletedSheet
              );
-           } catch (error) {
-             this.logger.error(`Error in default processing:`, error);
-             await this.appraisalService.updateStatus(id, 'Failed', `DEFAULT Error: ${error.message}`, usingCompletedSheet);
-             throw error;
+          } catch (error) {
+            this.logger.error(`Error in default case:`, error);
+            if (!skipSheetOperations) {
+              await this.appraisalService.updateStatus(id, 'Failed', `Error: ${error.message}`, usingCompletedSheet);
+            }
+            throw error;
           }
       }
     } catch (error) {
-      this.logger.error(`Error processing appraisal ${id} from step ${startStep}:`, error.message);
-      
-      try {
-        await this.appraisalService.updateStatus(id, 'Failed', `Error: ${error.message}`, usingCompletedSheet);
-      } catch (statusError) {
-        this.logger.error(`Error updating final status:`, statusError);
-      }
-      
+      this.logger.error(`Error processing appraisal ${id} from step ${startStep}:`, error);
       throw error;
     } finally {
       this.activeProcesses.delete(processId);
@@ -375,28 +402,35 @@ class Worker {
     const processId = `image-analysis-${id}-${Date.now()}`;
     this.activeProcesses.add(processId);
 
-    // Extract usingCompletedSheet from options, default to false if not provided
-    const { usingCompletedSheet = false } = options;
+    // Extract options
+    const { usingCompletedSheet = false, skipSheetOperations = false } = options;
 
     try {
       // First check if we already have an AI description in column H
-      await this.appraisalService.updateStatus(id, 'Analyzing', 'Checking for existing AI description', usingCompletedSheet);
-      const existingAiDesc = await this.sheetsService.getValues(`H${id}`, usingCompletedSheet);
       let aiImageDescription = null;
       
-      if (existingAiDesc && existingAiDesc[0] && existingAiDesc[0][0]) {
-        // Use existing AI description if available
-        aiImageDescription = existingAiDesc[0][0];
-      } else {
+      if (!skipSheetOperations) {
+        await this.appraisalService.updateStatus(id, 'Analyzing', 'Checking for existing AI description', usingCompletedSheet);
+        const existingAiDesc = await this.sheetsService.getValues(`H${id}`, usingCompletedSheet);
+        
+        if (existingAiDesc && existingAiDesc[0] && existingAiDesc[0][0]) {
+          // Use existing AI description if available
+          aiImageDescription = existingAiDesc[0][0];
+        }
+      }
+      
+      if (!aiImageDescription) {
         // Only perform image analysis if we don't already have an AI description
-        await this.appraisalService.updateStatus(id, 'Analyzing', 'Retrieving image for AI analysis', usingCompletedSheet);
+        if (!skipSheetOperations) {
+          await this.appraisalService.updateStatus(id, 'Analyzing', 'Retrieving image for AI analysis', usingCompletedSheet);
+        }
 
         // 1. Get the main image from WordPress
         const wordpressService = this.appraisalService.wordpressService;
         const postData = await wordpressService.getPost(postId);
         
         if (!postData) {
-          throw new Error(`Failed to retrieve post data for post ID ${postId}`);
+          throw new Error(`Could not retrieve WordPress post data for ID ${postId}`);
         }
         
         // Get the main image URL from ACF fields
@@ -417,7 +451,9 @@ class Worker {
         }
         
         // 2. Analyze the image with o3
-        await this.appraisalService.updateStatus(id, 'Analyzing', 'Generating AI image analysis with o3', usingCompletedSheet);
+        if (!skipSheetOperations) {
+          await this.appraisalService.updateStatus(id, 'Analyzing', 'Generating AI image analysis with o3', usingCompletedSheet);
+        }
         const openaiService = this.appraisalService.openaiService;
         
         const imageAnalysisPrompt = 
@@ -428,7 +464,7 @@ class Worker {
           "decorative elements, patterns, iconography, techniques used, age indicators, " +
           "any signatures or markings, quality assessment, rarity indicators, and all other notable features. " +
           "If it's an antiquity, describe its historical context, original purpose, and cultural significance in detail. " +
-          "Be extremely thorough and maximize the amount of information extracted from visual examination. " +
+          "Be extremely thorough but avoid speculation when information is not visible in the image. " +
           "Do not omit any details visible in the image. " +
           "End with a brief title (3-7 words) that captures the essence of the item.";
         
@@ -441,9 +477,11 @@ class Worker {
           throw new Error('Image analysis failed - empty result from o3');
         }
         
-        // Save the AI description to column H
-        this.logger.debug(`Saving generated AI description to Google Sheets`);
-        await this.sheetsService.updateValues(`H${id}`, [[aiImageDescription]], usingCompletedSheet);
+        // Save the AI description to column H if not skipping sheet operations
+        if (!skipSheetOperations) {
+          this.logger.debug(`Saving generated AI description to Google Sheets`);
+          await this.sheetsService.updateValues(`H${id}`, [[aiImageDescription]], usingCompletedSheet);
+        }
       }
       
       // 3. Merge customer description with AI description
@@ -454,7 +492,9 @@ class Worker {
       return mergeResult;
     } catch (error) {
       this.logger.error(`Error analyzing image and merging descriptions:`, error);
-      await this.appraisalService.updateStatus(id, 'Failed', `Analysis Error: ${error.message}`, usingCompletedSheet);
+      if (!skipSheetOperations) {
+        await this.appraisalService.updateStatus(id, 'Failed', `Analysis Error: ${error.message}`, usingCompletedSheet);
+      }
       throw error;
     } finally {
       this.activeProcesses.delete(processId);
