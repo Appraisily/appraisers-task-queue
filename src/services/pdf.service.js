@@ -22,9 +22,9 @@ class PDFService {
   async generatePDF(postId, sessionId) {
     this.logger.info(`Generating PDF for post ${postId}`);
     
-    // Use a longer timeout for PDF generation (120 seconds/2 minutes)
+    // Use a longer timeout for PDF generation (900 seconds/15 minutes)
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 120000);
+    const timeout = setTimeout(() => controller.abort(), 900000);
     
     try {
       // Use timeout and better error handling
@@ -33,7 +33,7 @@ class PDFService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ postId, session_ID: sessionId }),
         signal: controller.signal,
-        timeout: 120000 // 2 minute timeout
+        timeout: 900000 // 15 minute timeout
       });
 
       // Clear the timeout if the response comes back before timeout
@@ -63,8 +63,8 @@ class PDFService {
     } catch (error) {
       // Don't swallow the error - let it propagate to stop the process
       if (error.name === 'AbortError') {
-        this.logger.error(`PDF generation for post ${postId} timed out after 120 seconds`);
-        throw new Error(`PDF generation timed out after 120 seconds`);
+        this.logger.error(`PDF generation for post ${postId} timed out after 900 seconds`);
+        throw new Error(`PDF generation timed out after 900 seconds`);
       }
       
       this.logger.error(`PDF generation failed for post ${postId}: ${error.message}`);

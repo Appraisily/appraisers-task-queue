@@ -346,24 +346,38 @@ class AppraisalService {
         appraisalsBackendUrl = 'https://appraisals-backend-856401495068.us-central1.run.app';
       }
       
-      // Directly call the backend API to generate the complete appraisal report
-      const response = await fetch(`${appraisalsBackendUrl}/complete-appraisal-report`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': this.wordpressService.authHeader
-        },
-        body: JSON.stringify({ postId: postId })
-      });
+      // Set up AbortController with a 30-minute timeout (1800000ms)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1800000); // 30 minute timeout
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Report generation failed: ${response.status} ${response.statusText} - ${errorText}`);
+      try {
+        // Directly call the backend API to generate the complete appraisal report
+        const response = await fetch(`${appraisalsBackendUrl}/complete-appraisal-report`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': this.wordpressService.authHeader
+          },
+          body: JSON.stringify({ postId: postId }),
+          signal: controller.signal
+        });
+        
+        // Clear the timeout when the response is received
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Report generation failed: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+        
+        this.logger.debug(`Generated report for post ${postId}`);
+        
+        return { success: true };
+      } catch (fetchError) {
+        // Clear timeout on error to prevent memory leaks
+        clearTimeout(timeoutId);
+        throw fetchError; // Rethrow to be caught by the outer try/catch
       }
-      
-      this.logger.debug(`Generated report for post ${postId}`);
-      
-      return { success: true };
     } catch (error) {
       this.logger.error(`Error generating report:`, error);
       // For errors, we still want to update the status - this will update the sheet

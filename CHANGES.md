@@ -2,6 +2,25 @@
 
 This document outlines the changes made to improve code quality in the Appraisers Task Queue module.
 
+## 2025-05-16: Increased Timeouts for Backend API Communication
+
+### Summary
+
+Increased the timeout values for communication with the appraisals-backend service to prevent ECONNRESET errors during long-running operations.
+
+### Changes Made
+
+1. Added AbortController with a 30-minute timeout in the `visualize` method of AppraisalService
+2. Increased the PDF generation timeout from 2 minutes to 15 minutes in PDFService
+3. Implemented proper timeout cleanup to prevent memory leaks
+
+### Benefits
+
+1. Prevents connection timeouts during report generation for complex appraisals
+2. Improves reliability of the PDF generation process
+3. Maintains system stability during long-running operations
+4. Reduces failed appraisals due to timeout issues
+
 ## 1. Service File Standardization
 
 All service files have been standardized to follow the `.service.js` naming convention:
