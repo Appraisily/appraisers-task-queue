@@ -453,8 +453,21 @@ class AppraisalService {
       // Get customer data directly using the known sheet information
       const customerData = await this.getCustomerData(id, usingCompletedSheet);
       
-      // Only send notification if we have a valid PDF URL
+      // Only send notification if we have a valid PDF URL and the CRM service is initialized
       if (pdfLink && !pdfLink.includes('placeholder')) {
+        // Check if CRM service is properly initialized
+        if (!this.crmService || !this.crmService.isInitialized) {
+          this.logger.warn(`CRM service not initialized. Skipping notification for customer ${customerData.email}`);
+          await this.updateStatus(id, 'Warning', `CRM notification skipped - service not initialized`, usingCompletedSheet);
+          
+          // Continue without failing the process
+          return { pdfLink, docLink, notificationResult: { 
+            messageId: 'SKIPPED', 
+            timestamp: new Date().toISOString(),
+            message: 'CRM service not initialized'
+          }};
+        }
+      
         // Send notification to CRM and track delivery
         this.logger.info(`Sending CRM notification for customer ${customerData.email}`);
         
@@ -472,12 +485,13 @@ class AppraisalService {
         // Save notification delivery status to Column Q
         const emailStatus = `CRM notification sent on ${notificationResult.timestamp} (ID: ${notificationResult.messageId || 'success'})`;
         await this.sheetsService.updateValues(`Q${id}`, [[emailStatus]], usingCompletedSheet);
+        
+        return { pdfLink, docLink, notificationResult };
       } else {
         this.logger.warn(`Skipping notification due to invalid PDF URL`);
         await this.updateStatus(id, 'Warning', `Notification not sent - invalid PDF URL`, usingCompletedSheet);
+        return { pdfLink, docLink, notificationResult: {} };
       }
-      
-      return { pdfLink, docLink, notificationResult: {} };
     } catch (error) {
       this.logger.error(`Error finalizing appraisal:`, error);
       await this.updateStatus(id, 'Failed', `PDF generation failed`, usingCompletedSheet);

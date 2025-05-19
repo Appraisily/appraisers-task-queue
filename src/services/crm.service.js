@@ -18,20 +18,30 @@ class CrmService {
 
   /**
    * Initialize the CRM service
-   * @returns {Promise<void>}
+   * @returns {Promise<boolean>} Success status
    */
   async initialize() {
     try {
       this.logger.info('Initializing CRM service...');
       
       // Get configuration from Secret Manager
-      const [projectId, topicName] = await Promise.all([
-        secretManager.getSecret('GOOGLE_CLOUD_PROJECT'),
-        secretManager.getSecret('PUBSUB_TOPIC_CRM_MESSAGES')
-      ]);
+      let projectId, topicName;
+      
+      try {
+        [projectId, topicName] = await Promise.all([
+          secretManager.getSecret('GOOGLE_CLOUD_PROJECT'),
+          secretManager.getSecret('PUBSUB_TOPIC_CRM_MESSAGES')
+        ]);
+      } catch (secretError) {
+        this.logger.warn(`Failed to load CRM configuration from Secret Manager: ${secretError.message}`);
+        this.logger.info('CRM service will run in limited mode (notifications disabled)');
+        return true; // Still return success, but service will be in limited mode
+      }
 
       if (!projectId || !topicName) {
-        throw new Error('Missing CRM Pub/Sub configuration in Secret Manager');
+        this.logger.warn('Missing CRM Pub/Sub configuration in Secret Manager');
+        this.logger.info('CRM service will run in limited mode (notifications disabled)');
+        return true; // Still return success, but service will be in limited mode
       }
 
       this.projectId = projectId;
@@ -45,9 +55,11 @@ class CrmService {
       this.topic = this.pubsub.topic(this.topicName);
       this.logger.info(`CRM service initialized successfully with topic: ${this.topicName}, subscription: ${this.subscriptionName}`);
       this.isInitialized = true;
+      return true;
     } catch (error) {
       this.logger.error('Failed to initialize CRM service:', error);
-      throw error;
+      this.logger.info('CRM service will run in limited mode (notifications disabled)');
+      return true; // Still return success to avoid blocking application startup
     }
   }
 
@@ -63,7 +75,12 @@ class CrmService {
   async sendAppraisalReadyNotification(customerEmail, customerName, sessionId, pdfLink, wpLink) {
     try {
       if (!this.isInitialized) {
-        throw new Error('CRM service not initialized');
+        this.logger.warn('CRM service not fully initialized, skipping notification');
+        return { 
+          messageId: 'SKIPPED', 
+          timestamp: new Date().toISOString(),
+          message: 'CRM service not initialized'
+        };
       }
       
       if (!customerEmail) {
