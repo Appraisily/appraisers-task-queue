@@ -268,3 +268,25 @@ Added a new step in the appraisal processing flow to apply a WordPress template 
 2. Enhanced visual presentation of appraisals in WordPress
 3. Streamlined workflow with automatic template application
 4. Improved user experience with professionally formatted reports
+
+# Change Log
+
+## [Unreleased]
+
+### Added
+- Integrated with CRM service for customer notifications via Google Pub/Sub
+- Added new CrmService for sending notifications through Pub/Sub
+- Added session ID tracking for improved CRM customer journey tracking
+
+### Changed
+- Replaced direct SendGrid email sending with CRM notification system
+- Updated finalize process to use CRM notifications instead of emails
+- Modified deployment configuration to include Pub/Sub topic and project ID
+
+### Removed
+- Removed EmailService and SendGrid direct integration
+- Removed SendGrid template references (now managed by CRM)
+
+## [1.3.0] - 2023-10-02
+
+// ... existing content ...

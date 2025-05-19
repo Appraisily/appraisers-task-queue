@@ -182,54 +182,53 @@ classDiagram
         +shutdown()
     }
     
+    class AppServer {
+        +express app
+        +start()
+        +stop()
+    }
+    
     class AppraisalService {
         +SheetsService sheetsService
         +WordPressService wordpressService
         +OpenAIService openaiService
-        +EmailService emailService
+        +CrmService crmService
         +PDFService pdfService
-        +processAppraisal(id, value, description, type, usingCompletedSheet)
-        +updateStatus(id, status, message, usingCompletedSheet)
-        +updateWordPress(id, value, mergeResult, type, usingCompletedSheet)
-        +finalize(id, postId, publicUrl, usingCompletedSheet)
+        +processAppraisal(id, value, description)
+        +updateStatus(id, status, message)
+        +finalize(id, postId, publicUrl)
     }
     
     class SheetsService {
-        +Object auth
-        +String pendingSpreadsheetId
-        +String completedSpreadsheetId
-        +initialize(config)
-        +getValues(range, useCompletedSheet)
-        +updateValues(range, values, useCompletedSheet)
-        +getMultipleRanges(ranges, useCompletedSheet)
+        +GoogleAuth auth
+        +sheets client
+        +initialize()
+        +getValues(range)
+        +updateValues(range, values)
+        +moveToCompleted(id)
     }
     
     class WordPressService {
-        +String apiUrl
-        +String username
-        +String password
+        +axios client
+        +restUrl
         +initialize()
-        +getPost(postId)
-        +updateAppraisalPost(postId, data)
-        +completeAppraisalReport(postId)
-        +getImageUrl(imageId)
-        +getPermalink(postId)
+        +getPost(id)
+        +updatePost(id, data)
+        +uploadMedia(file)
     }
     
     class OpenAIService {
-        +Object openaiClient
-        +String apiKey
+        +openai client
         +initialize()
         +analyzeImageWithGPT4o(imageUrl, prompt)
         +mergeDescriptions(customerDesc, aiDesc)
     }
     
-    class EmailService {
-        +Object sendgridClient
-        +String apiKey
-        +String fromEmail
+    class CrmService {
+        +PubSub pubsubClient
+        +Topic topic
         +initialize()
-        +sendAppraisalEmail(to, subject, data)
+        +sendAppraisalReadyNotification(customerEmail, customerName, sessionId, pdfLink, wpLink)
     }
     
     class PDFService {
@@ -251,7 +250,7 @@ classDiagram
     AppraisalService --> SheetsService
     AppraisalService --> WordPressService
     AppraisalService --> OpenAIService
-    AppraisalService --> EmailService
+    AppraisalService --> CrmService
     AppraisalService --> PDFService
     AppraisalFinder --> SheetsService
 ```
@@ -456,3 +455,25 @@ The service implements graceful shutdown:
 2. Waits for in-progress tasks to complete (up to 60 seconds)
 3. Forcibly terminates if tasks don't complete in time
 4. Logs shutdown status
+
+## Core Components
+
+### Services
+
+#### CrmService
+Handles sending notifications to the CRM system when appraisals are completed.
+
+- Connects to Google Cloud Pub/Sub to publish notification messages
+- Uses a standardized message format required by the CRM
+- Handles error recovery and logging for notification delivery
+
+## Required Environment Variables
+
+| Variable Name | Description |
+|---------------|-------------|
+| PENDING_APPRAISALS_SPREADSHEET_ID | ID of Google Sheet containing appraisal data |
+| WORDPRESS_REST_URL | URL to the WordPress REST API |
+| WORDPRESS_APPLICATION_PASSWORD | Authentication credentials for WordPress API |
+| OPENAI_API_KEY | API key for OpenAI services |
+| GOOGLE_CLOUD_PROJECT | GCP project ID for Pub/Sub |
+| PUBSUB_TOPIC_CRM_MESSAGES | Pub/Sub topic name for CRM notifications |

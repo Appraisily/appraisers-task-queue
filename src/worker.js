@@ -3,7 +3,7 @@ const secretManager = require('./utils/secrets');
 const SheetsService = require('./services/sheets.service');
 const WordPressService = require('./services/wordpress.service');
 const OpenAIService = require('./services/openai.service');
-const EmailService = require('./services/email.service');
+const CrmService = require('./services/crm.service');
 const PDFService = require('./services/pdf.service');
 const AppraisalService = require('./services/appraisal.service');
 const AppraisalFinder = require('./utils/appraisal-finder');
@@ -37,14 +37,14 @@ class Worker {
       await this.sheetsService.initialize({ PENDING_APPRAISALS_SPREADSHEET_ID: spreadsheetId });
       const wordpressService = new WordPressService();
       const openaiService = new OpenAIService();
-      const emailService = new EmailService();
+      const crmService = new CrmService();
       const pdfService = new PDFService();
       
       // Initialize services concurrently
       await Promise.all([
         wordpressService.initialize(),
         openaiService.initialize(),
-        emailService.initialize(),
+        crmService.initialize(),
         pdfService.initialize()
       ]);
       
@@ -56,7 +56,7 @@ class Worker {
         this.sheetsService,
         wordpressService,
         openaiService,
-        emailService,
+        crmService,
         pdfService
       );
       

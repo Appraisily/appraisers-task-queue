@@ -3,12 +3,12 @@ const AppraisalFinder = require('../utils/appraisal-finder');
 const fetch = require('node-fetch');
 
 class AppraisalService {
-  constructor(sheetsService, wordpressService, openaiService, emailService, pdfService) {
+  constructor(sheetsService, wordpressService, openaiService, crmService, pdfService) {
     this.logger = createLogger('AppraisalService');
     this.sheetsService = sheetsService;
     this.wordpressService = wordpressService;
     this.openaiService = openaiService;
-    this.emailService = emailService;
+    this.crmService = crmService;
     this.pdfService = pdfService;
     this.appraisalFinder = new AppraisalFinder(sheetsService);
     // Track important status events to avoid duplication
@@ -453,29 +453,31 @@ class AppraisalService {
       // Get customer data directly using the known sheet information
       const customerData = await this.getCustomerData(id, usingCompletedSheet);
       
-      // Only send email if we have a valid PDF URL
+      // Only send notification if we have a valid PDF URL
       if (pdfLink && !pdfLink.includes('placeholder')) {
-        // Send email notification and track delivery
-        this.logger.info(`Sending completion email to ${customerData.email}`);
+        // Send notification to CRM and track delivery
+        this.logger.info(`Sending CRM notification for customer ${customerData.email}`);
         
-        const emailResult = await this.emailService.sendAppraisalCompletedEmail(
+        // Use customer ID or create a session ID from appraisal ID
+        const sessionId = customerData.id || `appraisal_${id}`;
+        
+        const notificationResult = await this.crmService.sendAppraisalReadyNotification(
           customerData.email,
           customerData.name,
-          { 
-            pdfLink: pdfLink,
-            appraisalUrl: publicUrl
-          }
+          sessionId,
+          pdfLink,
+          publicUrl
         );
 
-        // Save email delivery status to Column Q
-        const emailStatus = `Email sent on ${emailResult.timestamp} (ID: ${emailResult.messageId || 'success'})`;
+        // Save notification delivery status to Column Q
+        const emailStatus = `CRM notification sent on ${notificationResult.timestamp} (ID: ${notificationResult.messageId || 'success'})`;
         await this.sheetsService.updateValues(`Q${id}`, [[emailStatus]], usingCompletedSheet);
       } else {
-        this.logger.warn(`Skipping email due to invalid PDF URL`);
-        await this.updateStatus(id, 'Warning', `Email not sent - invalid PDF URL`, usingCompletedSheet);
+        this.logger.warn(`Skipping notification due to invalid PDF URL`);
+        await this.updateStatus(id, 'Warning', `Notification not sent - invalid PDF URL`, usingCompletedSheet);
       }
       
-      return { pdfLink, docLink, emailResult: {} };
+      return { pdfLink, docLink, notificationResult: {} };
     } catch (error) {
       this.logger.error(`Error finalizing appraisal:`, error);
       await this.updateStatus(id, 'Failed', `PDF generation failed`, usingCompletedSheet);
