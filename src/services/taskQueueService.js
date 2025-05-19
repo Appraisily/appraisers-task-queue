@@ -20,7 +20,7 @@ function initialize(deps) {
     sheetsService: deps.sheetsService,
     wordpressService: deps.wordpressService,
     openaiService: deps.openaiService,
-    emailService: deps.emailService,
+    crmService: deps.crmService,
     pdfService: deps.pdfService,
     config: deps.config
   });

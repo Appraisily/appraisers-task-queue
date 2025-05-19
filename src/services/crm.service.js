@@ -13,6 +13,7 @@ class CrmService {
     this.isInitialized = false;
     this.projectId = null;
     this.topicName = null;
+    this.subscriptionName = process.env.PUBSUB_SUBSCRIPTION_NAME || 'CRM-tasks';
   }
 
   /**
@@ -42,9 +43,8 @@ class CrmService {
       });
       
       this.topic = this.pubsub.topic(this.topicName);
+      this.logger.info(`CRM service initialized successfully with topic: ${this.topicName}, subscription: ${this.subscriptionName}`);
       this.isInitialized = true;
-      
-      this.logger.info(`CRM service initialized successfully with topic: ${this.topicName}`);
     } catch (error) {
       this.logger.error('Failed to initialize CRM service:', error);
       throw error;
@@ -88,13 +88,14 @@ class CrmService {
         pdf_link: pdfLink,
         wp_link: wpLink || '',
         timestamp: new Date().toISOString(),
-        origin: 'appraisers-task-queue'
+        origin: 'appraisers-task-queue',
+        subscriptionName: this.subscriptionName
       };
       
       // Convert to Buffer for Pub/Sub
       const messageBuffer = Buffer.from(JSON.stringify(messageData));
       
-      this.logger.info(`Sending appraisal ready notification to CRM for ${customerEmail}`);
+      this.logger.info(`Sending appraisal ready notification to CRM for ${customerEmail} via ${this.subscriptionName}`);
       const messageId = await this.topic.publish(messageBuffer);
       
       this.logger.info(`Notification sent successfully, Message ID: ${messageId}`);

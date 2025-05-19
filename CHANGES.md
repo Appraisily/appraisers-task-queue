@@ -277,11 +277,13 @@ Added a new step in the appraisal processing flow to apply a WordPress template 
 - Integrated with CRM service for customer notifications via Google Pub/Sub
 - Added new CrmService for sending notifications through Pub/Sub
 - Added session ID tracking for improved CRM customer journey tracking
+- Added PUBSUB_SUBSCRIPTION_NAME environment variable for CRM subscription configuration
 
 ### Changed
 - Replaced direct SendGrid email sending with CRM notification system
 - Updated finalize process to use CRM notifications instead of emails
-- Modified deployment configuration to include Pub/Sub topic and project ID
+- Modified deployment configuration to include Pub/Sub topic, project ID and subscription name
+- Updated cloudbuild.yaml to include PUBSUB_SUBSCRIPTION_NAME as an environment variable
 
 ### Removed
 - Removed EmailService and SendGrid direct integration
