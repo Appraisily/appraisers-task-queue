@@ -16,8 +16,9 @@ class MockSecretManager {
       'WORDPRESS_USERNAME': 'local-dev-user',
       'WORDPRESS_PASSWORD': 'local-dev-password',
       'OPENAI_API_KEY': 'sk-mock-openai-key',
-      'SENDGRID_API_KEY': 'mock-sendgrid-key',
-      'GOOGLE_DOCS_FOLDER_ID': 'mock-folder-id'
+      'GOOGLE_DOCS_FOLDER_ID': 'mock-folder-id',
+      'GOOGLE_CLOUD_PROJECT': 'mock-gcp-project-id',
+      'PUBSUB_TOPIC_CRM_MESSAGES': 'crm-messages'
     };
   }
 

@@ -4,7 +4,7 @@
  * This script:
  * 1. Checks all JS files for syntax errors
  * 2. Verifies that required modules are installed
- * 3. Makes sure no Pub/Sub code remains in the project
+ * 3. Makes sure no banned code patterns exist in the project
  */
 
 const fs = require('fs');
@@ -22,12 +22,12 @@ const colors = {
 
 // List of module imports that should NOT be in the codebase
 const forbiddenModules = [
-  '@google-cloud/pubsub'
+  // '@google-cloud/pubsub' - No longer forbidden as we use it for CRM notifications
 ];
 
 // Files to check for forbidden code patterns
 const codePatterns = [
-  { pattern: /PubSub|pubsub|Pub\/Sub|pub-sub/i, message: 'Pub/Sub code found' }
+  // { pattern: /PubSub|pubsub|Pub\/Sub|pub-sub/i, message: 'Pub/Sub code found' } - No longer banned
 ];
 
 let foundErrors = false;
@@ -136,19 +136,7 @@ function build() {
     log('\nChecking source files...', colors.cyan);
     processDirectory(path.join(__dirname, '..', 'src'));
     
-    // Check for Pub/Sub related files
-    const rootFiles = fs.readdirSync(path.join(__dirname, '..'));
-    const pubsubFiles = rootFiles.filter(file => 
-      file.includes('processor') || file.includes('pubsub')
-    );
-    
-    if (pubsubFiles.length > 0) {
-      log(`\n✗ Potential Pub/Sub related files found in root directory:`, colors.red);
-      pubsubFiles.forEach(file => {
-        log(`  - ${file}`, colors.red);
-      });
-      foundErrors = true;
-    }
+    // Check for Pub/Sub related files - no longer needed as we're using Pub/Sub for CRM
     
     // Summary
     if (foundErrors) {
