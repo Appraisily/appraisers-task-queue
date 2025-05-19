@@ -466,17 +466,21 @@ class AppraisalService {
           // Use customer ID or create a session ID from appraisal ID
           const sessionId = customerData.id || `appraisal_${id}`;
           
-          const notificationResult = await this.crmService.sendAppraisalReadyNotification(
-          customerData.email,
-          customerData.name,
+          const notificationResult = await this.crmService.sendBulkAppraisalFinalizedNotification(
+            customerData.email,
+            customerData.name,
             sessionId,
             pdfLink,
-            publicUrl
-        );
+            publicUrl,
+            {
+              appraisal_value: customerData?.value || 'N/A',
+              description: customerData?.description || 'No description available'
+            }
+          );
 
           // Save notification delivery status to Column Q
           const emailStatus = `CRM notification sent on ${notificationResult.timestamp} (ID: ${notificationResult.messageId || 'success'})`;
-        await this.sheetsService.updateValues(`Q${id}`, [[emailStatus]], usingCompletedSheet);
+          await this.sheetsService.updateValues(`Q${id}`, [[emailStatus]], usingCompletedSheet);
         }
       } else {
         this.logger.warn(`Skipping notification due to invalid PDF URL`);

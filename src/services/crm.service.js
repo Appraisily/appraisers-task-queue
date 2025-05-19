@@ -70,15 +70,14 @@ class CrmService {
   }
 
   /**
-   * Send an appraisal ready notification to the CRM system
-   * @param {string} customerEmail - Customer's email address
-   * @param {string} customerName - Customer's name
-   * @param {string} sessionId - Session ID of the appraisal
-   * @param {string} pdfLink - URL to the PDF version of the appraisal
-   * @param {string} wpLink - URL to the WordPress page with the appraisal content
+   * Send a notification to the CRM system
+   * @param {string} processType - CRM process type (e.g., "appraisalReadyNotification")
+   * @param {object} customerData - Customer information
+   * @param {object} data - Additional data to include in the notification
+   * @param {string} sessionId - Session ID for tracking
    * @returns {Promise<Object>} - Notification result with messageId and timestamp
    */
-  async sendAppraisalReadyNotification(customerEmail, customerName, sessionId, pdfLink, wpLink) {
+  async sendNotification(processType, customerData, data, sessionId) {
     try {
       if (!this.isInitialized) {
         this.logger.warn('CRM service not initialized, skipping notification');
@@ -89,55 +88,121 @@ class CrmService {
         };
       }
       
-      if (!customerEmail) {
+      if (!customerData?.email) {
         this.logger.warn('No valid email provided, skipping notification');
         return { messageId: 'NA', timestamp: new Date().toISOString() };
       }
       
-      // Validate PDF link to prevent sending notifications with placeholder or invalid URLs
-      if (!pdfLink || pdfLink.includes('placeholder')) {
-        this.logger.error(`Cannot send notification with invalid PDF link: ${pdfLink}`);
-        throw new Error('Invalid PDF link - cannot send notification with placeholder URL');
-      }
-      
-      // Prepare message data structure according to CRM requirements
+      // Create message according to CRM requirements
       const messageData = {
-        processType: 'appraisalReadyNotification',
+        crmProcess: processType,
         customer: {
-          email: customerEmail,
-          name: customerName || 'Customer'
+          email: customerData.email,
+          name: customerData.name || 'Customer'
         },
-        sessionId: sessionId || `appraisal_${Date.now()}`,
-        pdf_link: pdfLink,
-        wp_link: wpLink || '',
-        timestamp: new Date().toISOString(),
-        origin: 'appraisers-task-queue',
-        subscriptionName: this.subscriptionName
+        metadata: {
+          origin: "appraisers-task-queue",
+          sessionId: sessionId || `appraisal_${Date.now()}`,
+          environment: process.env.NODE_ENV || "production",
+          timestamp: Date.now()
+        },
+        ...data
       };
       
       // Convert to Buffer for Pub/Sub
       const messageBuffer = Buffer.from(JSON.stringify(messageData));
       
-      this.logger.info(`Sending appraisal ready notification to CRM for ${customerEmail} via ${this.subscriptionName}`);
+      this.logger.info(`Sending ${processType} notification to CRM for ${customerData.email}`);
       const messageId = await this.topic.publish(messageBuffer);
       
       this.logger.info(`Notification sent successfully, Message ID: ${messageId}`);
       
       return {
         messageId: messageId || 'success',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        processType
       };
     } catch (error) {
-      this.logger.error(`Error sending notification to CRM for ${customerEmail}:`, error);
+      this.logger.error(`Error sending ${processType} notification to CRM for ${customerData?.email}:`, error);
       
       // Return a special error status instead of throwing
       // This allows the process to continue even if notification fails
       return {
         messageId: 'ERROR',
         timestamp: new Date().toISOString(),
-        error: error.message
+        error: error.message,
+        processType
       };
     }
+  }
+
+  /**
+   * Send an appraisal ready notification to the CRM system
+   * @param {string} customerEmail - Customer's email address
+   * @param {string} customerName - Customer's name
+   * @param {string} sessionId - Session ID of the appraisal
+   * @param {string} pdfLink - URL to the PDF version of the appraisal
+   * @param {string} wpLink - URL to the WordPress page with the appraisal content
+   * @returns {Promise<Object>} - Notification result with messageId and timestamp
+   */
+  async sendAppraisalReadyNotification(customerEmail, customerName, sessionId, pdfLink, wpLink) {
+    // Validate PDF link to prevent sending notifications with placeholder or invalid URLs
+    if (!pdfLink || pdfLink.includes('placeholder')) {
+      this.logger.error(`Cannot send notification with invalid PDF link: ${pdfLink}`);
+      return {
+        messageId: 'ERROR',
+        timestamp: new Date().toISOString(),
+        error: 'Invalid PDF link - cannot send notification with placeholder URL'
+      };
+    }
+    
+    const customerData = {
+      email: customerEmail,
+      name: customerName
+    };
+    
+    const notificationData = {
+      pdf_link: pdfLink,
+      wp_link: wpLink || ''
+    };
+    
+    return this.sendNotification("appraisalReadyNotification", customerData, notificationData, sessionId);
+  }
+
+  /**
+   * Send bulk appraisal finalized notification 
+   * This is the notification type used by the CRM system to notify customers their appraisal is ready
+   * @param {string} customerEmail - Customer's email address
+   * @param {string} customerName - Customer's name
+   * @param {string} sessionId - Session ID of the appraisal
+   * @param {string} pdfLink - URL to the PDF version of the appraisal
+   * @param {string} wpLink - URL to the WordPress page with the appraisal content
+   * @param {object} additionalData - Additional data to include (value, description, etc.)
+   * @returns {Promise<Object>} - Notification result
+   */
+  async sendBulkAppraisalFinalizedNotification(customerEmail, customerName, sessionId, pdfLink, wpLink, additionalData = {}) {
+    // Validate PDF link to prevent sending notifications with placeholder or invalid URLs
+    if (!pdfLink || pdfLink.includes('placeholder')) {
+      this.logger.error(`Cannot send notification with invalid PDF link: ${pdfLink}`);
+      return {
+        messageId: 'ERROR',
+        timestamp: new Date().toISOString(),
+        error: 'Invalid PDF link - cannot send notification with placeholder URL'
+      };
+    }
+    
+    const customerData = {
+      email: customerEmail,
+      name: customerName
+    };
+    
+    const notificationData = {
+      pdf_link: pdfLink,
+      wp_link: wpLink || '',
+      ...additionalData
+    };
+    
+    return this.sendNotification("bulkAppraisalFinalized", customerData, notificationData, sessionId);
   }
 }
 
