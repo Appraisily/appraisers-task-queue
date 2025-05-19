@@ -18,7 +18,7 @@ class CrmService {
 
   /**
    * Initialize the CRM service
-   * @returns {Promise<boolean>} Success status
+   * @returns {Promise<void>}
    */
   async initialize() {
     try {
@@ -33,33 +33,39 @@ class CrmService {
           secretManager.getSecret('PUBSUB_TOPIC_CRM_MESSAGES')
         ]);
       } catch (secretError) {
-        this.logger.warn(`Failed to load CRM configuration from Secret Manager: ${secretError.message}`);
-        this.logger.info('CRM service will run in limited mode (notifications disabled)');
-        return true; // Still return success, but service will be in limited mode
+        this.logger.warn(`Unable to fetch CRM secrets: ${secretError.message}`);
+        this.logger.warn('CRM notification service will be disabled');
+        return false;
       }
 
       if (!projectId || !topicName) {
         this.logger.warn('Missing CRM Pub/Sub configuration in Secret Manager');
-        this.logger.info('CRM service will run in limited mode (notifications disabled)');
-        return true; // Still return success, but service will be in limited mode
+        this.logger.warn('CRM notification service will be disabled');
+        return false;
       }
 
       this.projectId = projectId;
       this.topicName = topicName;
 
       // Initialize PubSub client
-      this.pubsub = new PubSub({
-        projectId: this.projectId
-      });
-      
-      this.topic = this.pubsub.topic(this.topicName);
-      this.logger.info(`CRM service initialized successfully with topic: ${this.topicName}, subscription: ${this.subscriptionName}`);
-      this.isInitialized = true;
-      return true;
+      try {
+        this.pubsub = new PubSub({
+          projectId: this.projectId
+        });
+        
+        this.topic = this.pubsub.topic(this.topicName);
+        this.logger.info(`CRM service initialized successfully with topic: ${this.topicName}, subscription: ${this.subscriptionName}`);
+        this.isInitialized = true;
+        return true;
+      } catch (pubsubError) {
+        this.logger.warn(`Failed to initialize PubSub client: ${pubsubError.message}`);
+        this.logger.warn('CRM notification service will be disabled');
+        return false;
+      }
     } catch (error) {
-      this.logger.error('Failed to initialize CRM service:', error);
-      this.logger.info('CRM service will run in limited mode (notifications disabled)');
-      return true; // Still return success to avoid blocking application startup
+      this.logger.warn(`Failed to initialize CRM service: ${error.message}`);
+      this.logger.warn('CRM notification service will be disabled, but application will continue to function');
+      return false;
     }
   }
 
@@ -75,11 +81,11 @@ class CrmService {
   async sendAppraisalReadyNotification(customerEmail, customerName, sessionId, pdfLink, wpLink) {
     try {
       if (!this.isInitialized) {
-        this.logger.warn('CRM service not fully initialized, skipping notification');
+        this.logger.warn('CRM service not initialized, skipping notification');
         return { 
-          messageId: 'SKIPPED', 
+          messageId: 'DISABLED', 
           timestamp: new Date().toISOString(),
-          message: 'CRM service not initialized'
+          status: 'CRM notifications disabled'
         };
       }
       

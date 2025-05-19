@@ -40,13 +40,22 @@ class Worker {
       const crmService = new CrmService();
       const pdfService = new PDFService();
       
-      // Initialize services concurrently
-      await Promise.all([
-        wordpressService.initialize(),
-        openaiService.initialize(),
-        crmService.initialize(),
-        pdfService.initialize()
-      ]);
+      // Initialize core services concurrently - CRM service is allowed to fail
+      try {
+        await Promise.all([
+          wordpressService.initialize(),
+          openaiService.initialize(),
+          crmService.initialize().catch(error => {
+            this.logger.warn(`CRM service initialization failed: ${error.message}`);
+            this.logger.warn('Continuing without CRM notification capabilities');
+            return false;
+          }),
+          pdfService.initialize()
+        ]);
+      } catch (serviceError) {
+        // If any critical service fails to initialize, throw the error
+        throw new Error(`Failed to initialize core services: ${serviceError.message}`);
+      }
       
       // Initialize appraisal finder
       this.appraisalFinder = new AppraisalFinder(this.sheetsService);
@@ -56,7 +65,7 @@ class Worker {
         this.sheetsService,
         wordpressService,
         openaiService,
-        crmService,
+        crmService, // Pass CRM service even if initialization failed
         pdfService
       );
       
