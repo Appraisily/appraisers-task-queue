@@ -305,7 +305,7 @@ class Worker {
             const publicUrl = await this.appraisalService.wordpressService.getPermalink(pdfPostId);
             
             // Generate PDF - this will throw an error if the PDF generation fails
-            const pdfResult = await this.appraisalService.finalize(id, pdfPostId, publicUrl, usingCompletedSheet);
+            const pdfResult = await this.appraisalService.finalize(id, pdfPostId, publicUrl, usingCompletedSheet, false);
             
             // Validate PDF URLs
             if (!pdfResult.pdfLink || pdfResult.pdfLink.includes('placeholder')) {

@@ -93,7 +93,7 @@ class AppraisalService {
       if (!skipSheetOperations) {
         await this.updateStatus(id, 'Finalizing', 'Creating PDF document', wpUsingCompletedSheet);
       }
-      const pdfResult = await this.finalize(id, postId, publicUrl, skipSheetOperations ? null : wpUsingCompletedSheet);
+      const pdfResult = await this.finalize(id, postId, publicUrl, skipSheetOperations ? null : wpUsingCompletedSheet, true);
       
       // Mark as complete only if not from completed sheet and not skipping sheet operations
       if (!skipSheetOperations && !usingCompletedSheet) {
@@ -436,7 +436,7 @@ class AppraisalService {
     }
   }
 
-  async finalize(id, postId, publicUrl, usingCompletedSheet = false) {
+  async finalize(id, postId, publicUrl, usingCompletedSheet = false, sendNotification = true) {
     try {
       // Generate PDF with proper waiting
       const { pdfLink, docLink } = await this.pdfService.generatePDF(postId);
@@ -450,11 +450,18 @@ class AppraisalService {
       await this.sheetsService.updateValues(`M${id}:N${id}`, [[pdfLink, docLink]], usingCompletedSheet);
       this.logger.info(`PDF generated: ${pdfLink}`);
       
+      // Also update the WordPress post ACF fields so editors can access the links directly
+      try {
+        await this.wordpressService.updateAppraisalPost(postId, { pdfLink, docLink });
+      } catch (wpErr) {
+        this.logger.warn(`Failed to update WordPress ACF pdf/doc links: ${wpErr.message}`);
+      }
+      
       // Get customer data directly using the known sheet information
       const customerData = await this.getCustomerData(id, usingCompletedSheet);
       
       // Only send notification if we have a valid PDF URL
-      if (pdfLink && !pdfLink.includes('placeholder')) {
+      if (sendNotification && pdfLink && !pdfLink.includes('placeholder')) {
         // Check if CRM service is initialized before attempting to send notifications
         if (!this.crmService || !this.crmService.isInitialized) {
           this.logger.warn(`CRM service not initialized. Skipping notification for customer ${customerData.email}`);

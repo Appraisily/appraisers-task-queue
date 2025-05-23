@@ -111,7 +111,9 @@ class WordPressService {
         medium,
         condition_summary,
         condition,
-        age_text
+        age_text,
+        pdfLink,
+        docLink
       } = updateData;
       
       // Prepare the update payload
@@ -159,6 +161,10 @@ class WordPressService {
       if (medium) acfData.medium = medium;
       if (condition_summary) acfData.condition_summary = condition_summary;
       if (condition) acfData.condition = condition;
+      
+      // Map PDF and HTML links to their respective ACF fields if provided
+      if (pdfLink) acfData.pdflink = pdfLink;
+      if (docLink) acfData.doclink = docLink;
       
       // Only add the acf field to payload if we have ACF data
       if (Object.keys(acfData).length > 0) {
