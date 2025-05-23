@@ -6,7 +6,18 @@ class PDFService {
     this.logger = createLogger('PDFService');
     // Initialize immediately in constructor
     this.initialized = true;
-    this.pdfServiceUrl = 'https://appraisals-backend-856401495068.us-central1.run.app/api/pdf/generate-pdf';
+    // Determine PDF backend URL. Prefer runtime variable but fall back to the default Cloud Run deployment
+    const envUrl = process.env.PDF_BACKEND_URL;
+
+    if (envUrl && envUrl.trim()) {
+      // Ensure we point to the correct endpoint (append /render-pdf when needed)
+      this.pdfServiceUrl = envUrl.trim().endsWith('/render-pdf')
+        ? envUrl.trim()
+        : `${envUrl.trim().replace(/\/$/, '')}/render-pdf`;
+    } else {
+      // Default Cloud Run service URL
+      this.pdfServiceUrl = 'https://pdf-backend-856401495068.us-central1.run.app/render-pdf';
+    }
     this.logger.info('PDF service initialized immediately');
   }
 
@@ -31,7 +42,7 @@ class PDFService {
       const response = await fetch(this.pdfServiceUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ postId, session_ID: sessionId }),
+        body: JSON.stringify({ postId }),
         signal: controller.signal,
         timeout: 900000 // 15 minute timeout
       });
@@ -47,18 +58,22 @@ class PDFService {
 
       const data = await response.json();
       
-      // Verify we have actual URLs, not placeholders
-      if (!data.pdfLink || data.pdfLink.includes('placeholder') || 
-          !data.docLink || data.docLink.includes('placeholder')) {
-        this.logger.error(`PDF generation returned placeholder URLs: ${JSON.stringify(data)}`);
-        throw new Error(`PDF generation returned invalid placeholder URLs`);
+      // Map new response keys to legacy ones expected by the rest of the codebase
+      const pdfUrl = data.pdfUrl || data.pdfLink; // Support transitional keys
+      const htmlUrl = data.htmlUrl || data.docLink;
+
+      // Validate we have actual URLs, not placeholders
+      if (!pdfUrl || pdfUrl.includes('placeholder') ||
+          !htmlUrl || htmlUrl.includes('placeholder')) {
+        this.logger.error(`PDF generation returned invalid URLs: ${JSON.stringify(data)}`);
+        throw new Error(`PDF generation returned invalid or placeholder URLs`);
       }
       
-      this.logger.info(`PDF generated successfully for post ${postId}: ${data.pdfLink}`);
+      this.logger.info(`PDF generated successfully for post ${postId}: ${pdfUrl}`);
       
       return {
-        pdfLink: data.pdfLink,
-        docLink: data.docLink
+        pdfLink: pdfUrl,
+        docLink: htmlUrl // We keep the legacy name 'docLink' for compatibility (stores HTML link now)
       };
     } catch (error) {
       // Don't swallow the error - let it propagate to stop the process
