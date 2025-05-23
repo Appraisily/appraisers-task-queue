@@ -15,8 +15,8 @@ class PDFService {
         ? envUrl.trim()
         : `${envUrl.trim().replace(/\/$/, '')}/render-pdf`;
     } else {
-      // Default Cloud Run service URL
-      this.pdfServiceUrl = 'https://pdf-backend-856401495068.us-central1.run.app/render-pdf';
+      // Updated default region to europe-west1 to match current deployment
+      this.pdfServiceUrl = 'https://pdf-backend-856401495068.europe-west1.run.app/render-pdf';
     }
     this.logger.info('PDF service initialized immediately');
   }
